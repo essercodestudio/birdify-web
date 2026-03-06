@@ -18,11 +18,9 @@ function Leaderboard() {
   const [playerScores, setPlayerScores] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // NOVO: Estados para o Carrossel de Patrocinadores
+  // Estados para o Carrossel de Patrocinadores
   const [sponsors, setSponsors] = useState([]);
   const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0);
-
-  const loggedUser = localStorage.getItem("user");
 
   // Tema Elegante e de Alto Contraste
   const theme = {
@@ -42,7 +40,6 @@ function Leaderboard() {
         `http://localhost:3001/api/tournaments/${actualId}`,
       );
       
-      // Salva os patrocinadores vindos do banco
       if (res.data.sponsors) {
         setSponsors(res.data.sponsors);
       }
@@ -74,7 +71,7 @@ function Leaderboard() {
       const dataWithNet = res.data.map((p) => {
         const total = parseInt(p.total_strokes || 0);
         const hc = parseFloat(p.handicap || 0);
-        const toPar = parseInt(p.score_to_par || 0); // Puxa o saldo exato do banco (-1, +2, etc)
+        const toPar = parseInt(p.score_to_par || 0); 
 
         return {
           ...p,
@@ -83,7 +80,7 @@ function Leaderboard() {
           net_strokes: total > 0 ? total - hc : 0,
           holes_played: parseInt(p.holes_played || 0),
           gross_to_par: toPar,
-          net_to_par: toPar - hc // Se for categoria NET, desconta o handicap do saldo
+          net_to_par: toPar - hc
         };
       });
       setRanking(dataWithNet);
@@ -92,7 +89,6 @@ function Leaderboard() {
     }
   }, [actualId]);
 
-  // Atualiza o ranking a cada 10s
   useEffect(() => {
     fetchTournamentInfo();
     fetchRanking();
@@ -100,7 +96,6 @@ function Leaderboard() {
     return () => clearInterval(interval);
   }, [fetchTournamentInfo, fetchRanking]);
 
-  // NOVO: Cronômetro independente para o Carrossel (8s)
   useEffect(() => {
     let interval;
     if (sponsors && sponsors.length > 1) {
@@ -134,11 +129,9 @@ function Leaderboard() {
       if (activeTab === "Absoluto Gross" || activeTab === "Absoluto Net")
         return true;
 
-      // Regras de Categoria (M1, M2, etc)
       if (sexo === "M" || sexo === "Masculino") {
         if (activeTab.includes("Feminino")) return false;
-        if (activeTab.includes("Masculino Livre") || activeTab.includes("M0"))
-          return true;
+        if (activeTab.includes("Masculino Livre") || activeTab.includes("M0")) return true;
         if (activeTab.includes("M1") && hc >= 0 && hc <= 8.5) return true;
         if (activeTab.includes("M2") && hc >= 8.6 && hc <= 14.0) return true;
         if (activeTab.includes("M3") && hc >= 14.1 && hc <= 22.1) return true;
@@ -146,8 +139,7 @@ function Leaderboard() {
       }
       if (sexo === "F" || sexo === "Feminino") {
         if (activeTab.includes("Masculino")) return false;
-        if (activeTab.includes("Feminino Livre") || activeTab.includes("F0"))
-          return true;
+        if (activeTab.includes("Feminino Livre") || activeTab.includes("F0")) return true;
         if (activeTab.includes("F1") && hc >= 0 && hc <= 16.1) return true;
         if (activeTab.includes("F2") && hc >= 16.1 && hc <= 23.7) return true;
         if (activeTab.includes("F3") && hc >= 23.8 && hc <= 36.4) return true;
@@ -161,30 +153,31 @@ function Leaderboard() {
       const holesA = a.holes_played || 0;
       const holesB = b.holes_played || 0;
 
-      // 1. Se NENHUM dos dois começou a jogar, usa a ordem alfabética
-      if (holesA === 0 && holesB === 0) {
-        return a.name.localeCompare(b.name);
-      }
-
-      // 2. Quem já tem buraco jogado tem prioridade (vai pro topo)
+      if (holesA === 0 && holesB === 0) return a.name.localeCompare(b.name);
       if (holesA > 0 && holesB === 0) return -1;
       if (holesA === 0 && holesB > 0) return 1;
 
-      // 3. Compara o saldo em relação ao Par (A LÓGICA DE TOUR)
       const scoreA = isNet ? a.net_to_par : a.gross_to_par;
       const scoreB = isNet ? b.net_to_par : b.gross_to_par;
 
-      if (scoreA !== scoreB) {
-          return scoreA - scoreB; // Menor saldo ganha (ex: -3 ganha de +1)
-      }
-
-      // 4. DESEMPATE DE MESTRE: Quem jogou MENOS buracos fica na frente!
+      if (scoreA !== scoreB) return scoreA - scoreB; 
       return holesA - holesB;
     });
-
+    
     return { data: filtered, isNet };
   };
   const { data: displayedRanking, isNet } = getFilteredRanking();
+
+  // --- MÁGICA DE CORES DO CARTÃO (PGA TOUR STYLE) ---
+  const getScoreStyle = (strokes, par) => {
+    if (!strokes || !par) return { color: theme.textMain, bg: theme.bg, border: theme.cardLight };
+    const diff = strokes - par;
+    
+    if (diff <= -2) return { color: theme.gold, bg: 'rgba(234, 179, 8, 0.15)', border: theme.gold }; // Eagle/Hole-in-one
+    if (diff === -1) return { color: theme.accent, bg: 'rgba(34, 197, 94, 0.15)', border: theme.accent }; // Birdie
+    if (diff === 0) return { color: theme.textMain, bg: theme.cardLight, border: theme.cardLight }; // Par
+    return { color: theme.danger, bg: 'rgba(239, 68, 68, 0.15)', border: theme.danger }; // Bogey ou Pior
+  };
 
   const styles = {
     container: {
@@ -194,7 +187,7 @@ function Leaderboard() {
       fontFamily: "'Segoe UI', Roboto, sans-serif",
       color: theme.textMain,
       display: "flex",
-      flexDirection: "column", // Para empurrar o carrossel pro fundo
+      flexDirection: "column", 
     },
     topBar: {
       display: "flex",
@@ -203,25 +196,17 @@ function Leaderboard() {
       marginBottom: "20px",
     },
     btnBack: {
-      backgroundColor: theme.cardLight,
-      color: "#fff",
-      border: "none",
-      padding: "10px 18px",
+      backgroundColor: "transparent",
+      color: theme.gold,
+      border: `1px solid ${theme.gold}`,
+      padding: "8px 16px",
       borderRadius: "8px",
+      fontWeight: "bold",
       cursor: "pointer",
-      fontWeight: "600",
+      display: "flex",
+      alignItems: "center",
+      gap: "5px",
     },
-    btnLog: {
-      backgroundColor: theme.accent,
-      color: "#fff",
-      border: "none",
-      padding: "10px 18px",
-      borderRadius: "8px",
-      fontWeight: "600",
-      cursor: "pointer",
-    },
-
-    // Grid de Categorias (Sem Scroll)
     tabsGrid: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
@@ -239,14 +224,13 @@ function Leaderboard() {
       color: isActive ? "#000" : theme.textMuted,
       transition: "0.2s",
     }),
-
     tableCard: {
       backgroundColor: theme.card,
       borderRadius: "12px",
       overflow: "hidden",
       boxShadow: "0 8px 30px rgba(0,0,0,0.4)",
-      flex: 1, // Faz a tabela ocupar o espaço disponível e empurra o carrossel pra baixo
-      marginBottom: "30px", // Espaço antes do carrossel
+      flex: 1, 
+      marginBottom: "30px", 
     },
     row: {
       display: "grid",
@@ -262,64 +246,34 @@ function Leaderboard() {
       fontWeight: "bold",
       textTransform: "uppercase",
     },
-
     nameLabel: {
       fontSize: "15px",
       fontWeight: "600",
       color: theme.accent,
       cursor: "pointer",
-      textDecoration: "none",
     },
     scoreCell: { textAlign: "center", fontSize: "15px", fontWeight: "bold" },
-
     badge: (val) => ({
       textAlign: "center",
       padding: "4px 0",
       borderRadius: "6px",
       fontSize: "13px",
       fontWeight: "800",
-      backgroundColor:
-        val < 0
-          ? "rgba(34, 197, 94, 0.15)"
-          : val > 0
-            ? "rgba(239, 68, 68, 0.15)"
-            : "rgba(255,255,255,0.05)",
+      backgroundColor: val < 0 ? "rgba(34, 197, 94, 0.15)" : val > 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(255,255,255,0.05)",
       color: val < 0 ? theme.accent : val > 0 ? theme.danger : theme.textMuted,
     }),
-
-    // Modal
     modalOverlay: {
-      position: "fixed",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: "rgba(0,0,0,0.9)",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      zIndex: 2000,
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 2000,
     },
     modalContent: {
-      backgroundColor: theme.card,
-      padding: "25px",
-      borderRadius: "15px",
-      width: "90%",
-      maxWidth: "500px",
-      border: `1px solid ${theme.cardLight}`,
+      backgroundColor: theme.card, padding: "25px", borderRadius: "15px", width: "90%", maxWidth: "500px", border: `1px solid ${theme.cardLight}`,
     },
     scoreGrid: {
-      display: "grid",
-      gridTemplateColumns: "repeat(9, 1fr)",
-      gap: "4px",
-      marginBottom: "15px",
+      display: "grid", gridTemplateColumns: "repeat(9, 1fr)", gap: "6px", marginBottom: "15px",
     },
     scoreBox: {
-      backgroundColor: theme.bg,
-      padding: "8px 2px",
-      textAlign: "center",
-      borderRadius: "4px",
-      border: `1px solid ${theme.cardLight}`,
+      padding: "6px 2px", textAlign: "center", borderRadius: "6px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center"
     },
   };
 
@@ -327,11 +281,23 @@ function Leaderboard() {
     <div style={styles.scoreGrid}>
       {Array.from({ length: 9 }, (_, i) => start + i).map((num) => {
         const hole = playerScores.find((h) => h.hole_number === num);
+        const strokes = hole ? hole.strokes : null;
+        const par = hole ? hole.par : null; 
+        
+        // Aplica o estilo baseado na diferença de tacadas e par
+        const styling = getScoreStyle(strokes, par);
+
         return (
-          <div key={num} style={styles.scoreBox}>
-            <div style={{ fontSize: "9px", color: theme.textMuted }}>{num}</div>
-            <div style={{ fontSize: "14px", fontWeight: "bold" }}>
-              {hole ? hole.strokes : "-"}
+          <div key={num} style={{ ...styles.scoreBox, backgroundColor: styling.bg, border: `1px solid ${styling.border}` }}>
+            <div style={{ fontSize: "10px", color: theme.textMuted, fontWeight: "bold" }}>B{num}</div>
+            
+            {/* Exibe o PAR do buraco logo abaixo do número do buraco */}
+            <div style={{ fontSize: "9px", color: theme.textMuted, marginBottom: '2px' }}>
+              {par ? `Par ${par}` : "-"}
+            </div>
+            
+            <div style={{ fontSize: "16px", fontWeight: "900", color: styling.color, marginTop: '2px' }}>
+              {strokes ? strokes : "-"}
             </div>
           </div>
         );
@@ -341,26 +307,14 @@ function Leaderboard() {
 
   return (
     <div style={styles.container}>
+      
+      {/* CABEÇALHO UNIFICADO E LIMPO */}
       <div style={styles.topBar}>
-        {loggedUser ? (
-          <button onClick={() => navigate("/player")} style={styles.btnBack}>
-            ⬅ VOLTAR
-          </button>
-        ) : (
-          <button onClick={() => navigate("/login")} style={styles.btnLog}>
-            LOGAR
-          </button>
-        )}
-        <div
-          style={{
-            color: theme.danger,
-            fontWeight: "bold",
-            fontSize: "12px",
-            display: "flex",
-            alignItems: "center",
-            gap: "5px",
-          }}
-        >
+        <button onClick={() => navigate(-1)} style={styles.btnBack}>
+          ⬅ VOLTAR AO JOGO
+        </button>
+        
+        <div style={{ color: theme.danger, fontWeight: "bold", fontSize: "12px", display: "flex", alignItems: "center", gap: "5px" }}>
           <span className="dot"></span> LIVE
         </div>
       </div>
@@ -388,36 +342,17 @@ function Leaderboard() {
 
       {displayedRanking.map((row, index) => {
           const score = isNet ? row.net_strokes : row.total_strokes;
-          
-          // 🏆 PUXA O SALDO EXATO QUE VEIO DO BANCO (-1, +2, etc)
           const relativePar = isNet ? row.net_to_par : row.gross_to_par;
 
           return (
             <div key={index} style={styles.row}>
-              <div
-                style={{
-                  fontWeight: "800",
-                  color:
-                    row.holes_played > 0 && index === 0
-                      ? theme.gold
-                      : theme.textMuted,
-                }}
-              >
+              <div style={{ fontWeight: "800", color: row.holes_played > 0 && index === 0 ? theme.gold : theme.textMuted }}>
                 {row.holes_played > 0 ? index + 1 : "-"}
               </div>
-              <div
-                style={styles.nameLabel}
-                onClick={() => handlePlayerClick(row)}
-              >
+              <div style={styles.nameLabel} onClick={() => handlePlayerClick(row)}>
                 {row.name}
                 {isNet && (
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      color: theme.textMuted,
-                      marginLeft: "5px",
-                    }}
-                  >
+                  <span style={{ fontSize: "10px", color: theme.textMuted, marginLeft: "5px" }}>
                     (HC {row.handicap})
                   </span>
                 )}
@@ -430,54 +365,33 @@ function Leaderboard() {
                 {row.holes_played === 0 ? "--" : score}
               </div>
 
-              {/* AQUI A MÁGICA ACONTECE NO BADGE */}
               <div style={styles.badge(relativePar)}>
-                {row.holes_played === 0
-                  ? "--"
-                  : relativePar > 0
-                    ? `+${relativePar}`
-                    : relativePar < 0
-                      ? relativePar
-                      : "E"}
+                {row.holes_played === 0 ? "--" : relativePar > 0 ? `+${relativePar}` : relativePar < 0 ? relativePar : "E"}
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* --- CARROSSEL DE PATROCINADORES NO RODAPÉ --- */}
+      {/* CARROSSEL DE PATROCINADORES */}
       {sponsors && sponsors.length > 0 && (
         <div style={{ textAlign: 'center', paddingBottom: '20px' }}>
           <p style={{fontSize: '11px', color: theme.textMuted, marginBottom: '15px', letterSpacing: '2px', fontWeight: 'bold'}}>PATROCÍNIO OFICIAL</p>
-          
           <div style={{ height: '70px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <img 
               key={currentSponsorIndex} 
               src={sponsors[currentSponsorIndex].image_url} 
               alt={sponsors[currentSponsorIndex].name || 'Patrocinador'} 
-              style={{
-                maxHeight: '100%', 
-                maxWidth: '220px',
-                objectFit: 'contain',
-                animation: 'fadeIn 0.5s ease-in'
-              }}
+              style={{ maxHeight: '100%', maxWidth: '220px', objectFit: 'contain', animation: 'fadeIn 0.5s ease-in' }}
             />
           </div>
-
           {sponsors.length > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '15px' }}>
               {sponsors.map((_, idx) => (
                 <div 
                   key={idx}
                   onClick={() => setCurrentSponsorIndex(idx)}
-                  style={{
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
-                    backgroundColor: currentSponsorIndex === idx ? theme.gold : theme.cardLight,
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease'
-                  }}
+                  style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: currentSponsorIndex === idx ? theme.gold : theme.cardLight, cursor: 'pointer', transition: 'all 0.3s ease' }}
                 />
               ))}
             </div>
@@ -489,61 +403,26 @@ function Leaderboard() {
       {isModalOpen && selectedPlayer && (
         <div style={styles.modalOverlay} onClick={() => setIsModalOpen(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: "20px",
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
               <h3 style={{ margin: 0, color: theme.accent }}>
                 {selectedPlayer.name}
               </h3>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#fff",
-                  cursor: "pointer",
-                  fontSize: "20px",
-                }}
-              >
+              <button onClick={() => setIsModalOpen(false)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "20px" }}>
                 ×
               </button>
             </div>
 
-            <p
-              style={{
-                color: theme.textMuted,
-                fontSize: "12px",
-                marginBottom: "5px",
-              }}
-            >
+            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px" }}>
               IDA (FRONT 9)
             </p>
             {renderNine(1)}
 
-            <p
-              style={{
-                color: theme.textMuted,
-                fontSize: "12px",
-                marginBottom: "5px",
-                marginTop: "15px",
-              }}
-            >
+            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px", marginTop: "15px" }}>
               VOLTA (BACK 9)
             </p>
             {renderNine(10)}
 
-            <div
-              style={{
-                marginTop: "20px",
-                paddingTop: "15px",
-                borderTop: `1px solid ${theme.cardLight}`,
-                textAlign: "center",
-              }}
-            >
+            <div style={{ marginTop: "20px", paddingTop: "15px", borderTop: `1px solid ${theme.cardLight}`, textAlign: "center" }}>
               <span style={{ fontSize: "18px" }}>
                 Total Gross: <strong>{selectedPlayer.total_strokes}</strong>
               </span>

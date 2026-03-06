@@ -58,6 +58,22 @@ function Scorecard() {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
       });
       setScores(scoresMap);
+      // A MÁGICA DO RETORNO: Descobre o último buraco jogado
+      if (scoresRes.data && scoresRes.data.length > 0) {
+        // Pega todos os buracos que já têm marcação
+        const playedHoleNumbers = scoresRes.data.map(s => s.hole_number);
+        const maxHole = Math.max(...playedHoleNumbers);
+        
+        // Se já jogou algum, volta exatamente para ele!
+        if (maxHole >= 1 && maxHole <= 18) {
+           setCurrentHole(maxHole);
+           
+           // E reconstrói a lista de buracos já jogados para o marcador não travar
+           const reconstructedHistory = [];
+           for (let i = savedGroup.starting_hole; i <= maxHole; i++) reconstructedHistory.push(i);
+           setPlayedHoles(reconstructedHistory);
+        }
+      }
     } catch (error) { console.error("Erro ao carregar dados", error); }
   }, [groupId, navigate]);
 
@@ -156,7 +172,8 @@ function Scorecard() {
   };
 
   const openLeaderboard = () => {
-    window.open(`/leaderboard/${group.tournament_id}`, '_blank');
+    // Agora ele abre na mesma aba, como um App de verdade!
+    navigate(`/leaderboard/${group.tournament_id}`);
   };
 
   const styles = {

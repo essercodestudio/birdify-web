@@ -9,24 +9,45 @@ exports.listCourses = (req, res) => {
     });
 };
 
-// 2. Pegar buracos
+// 2. Pegar buracos (Cura Automática: Se não tiver buracos na tabela nova, cria na hora!)
 exports.getCourseHoles = (req, res) => {
-    const { courseId } = req.params;
-    const query = 'SELECT * FROM course_holes WHERE course_id = ? ORDER BY hole_number ASC';
-    db.query(query, [courseId], (err, results) => {
+    const { id } = req.params; 
+    const query = 'SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number ASC';
+    
+    db.query(query, [id], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(results);
+        
+        // Se o banco não achar os buracos, nós criamos eles na hora para não sumir da tela!
+        if (results.length === 0) {
+            console.log(`⚠️ Campo ID ${id} estava sem buracos. Criando 18 buracos zerados...`);
+            
+            const holesData = Array.from({ length: 18 }, (_, i) => [id, i + 1, 4, 0, 0, 0, 0]);
+            const insertQuery = "INSERT INTO holes (course_id, hole_number, par, yards_white, yards_yellow, yards_blue, yards_red) VALUES ?";
+            
+            db.query(insertQuery, [holesData], (insertErr) => {
+                if (insertErr) return res.status(500).json({ error: insertErr.message });
+                
+                // Agora que criou, busca de novo e manda pra tela
+                db.query(query, [id], (err2, newResults) => {
+                    if (err2) return res.status(500).json({ error: err2.message });
+                    res.json(newResults);
+                });
+            });
+        } else {
+            // Se já tiver os buracos, só envia normal
+            res.json(results);
+        }
     });
 };
+
+// 3. Criar Campo e Buracos
 exports.createCourse = (req, res) => {
-  // Agora recebemos name, city e state do Front-end
   const { name, city, state } = req.body;
 
   if (!name || !city || !state) {
       return res.status(400).json({ error: "Nome, cidade e estado são obrigatórios." });
   }
 
-  // Atualizamos a query para inserir as 3 informações
   const query = "INSERT INTO courses (name, city, state) VALUES (?, ?, ?)";
 
   db.query(query, [name, city, state], (err, result) => {
@@ -34,7 +55,7 @@ exports.createCourse = (req, res) => {
     
     const courseId = result.insertId;
     
-    // O resto continua igual: criando os 18 buracos zerados...
+    // Inserindo os 18 buracos na tabela 'holes'
     const holesQuery = "INSERT INTO holes (course_id, hole_number, par, yards_white, yards_yellow, yards_blue, yards_red) VALUES ?";
     const holesData = Array.from({ length: 18 }, (_, i) => [courseId, i + 1, 4, 0, 0, 0, 0]);
 
@@ -45,14 +66,14 @@ exports.createCourse = (req, res) => {
   });
 };
 
-// 4. ATUALIZAR BURACOS (Salva Par e as 4 Jardas)
+// 4. ATUALIZAR BURACOS (CORRIGIDO: Salvando na tabela 'holes')
 exports.updateHoles = (req, res) => {
     const { holes } = req.body;
 
     const updates = holes.map(h => {
         return new Promise((resolve, reject) => {
             const query = `
-                UPDATE course_holes 
+                UPDATE holes 
                 SET par = ?, 
                     yards_white = ?, 
                     yards_yellow = ?, 
@@ -71,15 +92,28 @@ exports.updateHoles = (req, res) => {
         .then(() => res.json({ message: 'Configuração do campo atualizada!' }))
         .catch(err => res.status(500).json({ error: err.message }));
 };
-// EXCLUIR CAMPO
+
+// 5. EXCLUIR CAMPO (CORRIGIDO: Apagando os buracos da tabela 'holes')
 exports.deleteCourse = (req, res) => {
     const { id } = req.params;
-    // Apaga os buracos primeiro, depois o campo
-    db.query('DELETE FROM course_holes WHERE course_id = ?', [id], (err) => {
+    db.query('DELETE FROM holes WHERE course_id = ?', [id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
         db.query('DELETE FROM courses WHERE id = ?', [id], (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ message: 'Campo excluído com sucesso!' });
         });
+    });
+};
+
+// 6. ATUALIZAR NOME, CIDADE E ESTADO DO CAMPO
+exports.updateCourse = (req, res) => {
+    const { id } = req.params;
+    const { name, city, state } = req.body;
+
+    const query = 'UPDATE courses SET name = ?, city = ?, state = ? WHERE id = ?';
+    
+    db.query(query, [name, city, state, id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Informações do campo atualizadas com sucesso!' });
     });
 };

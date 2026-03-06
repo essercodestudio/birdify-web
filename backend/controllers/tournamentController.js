@@ -1,10 +1,20 @@
 // backend/controllers/tournamentController.js
 const db = require('../db');
 
-// 1. LISTAR TORNEIOS
 exports.listTournaments = (req, res) => {
-    const query = 'SELECT * FROM tournaments ORDER BY start_date DESC';
-    db.query(query, (err, results) => {
+    // Pega o ID do jogador que a tela enviou para saber se ele já está inscrito
+    const userId = req.query.user_id || 0; 
+
+    const query = `
+        SELECT t.*, 
+               c.name as course_name, c.city as course_city, c.state as course_state,
+               (SELECT COUNT(*) FROM inscriptions i WHERE i.tournament_id = t.id AND i.user_id = ?) as is_subscribed
+        FROM tournaments t
+        LEFT JOIN courses c ON t.course_id = c.id
+        ORDER BY t.start_date DESC
+    `;
+    
+    db.query(query, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(results);
     });
@@ -35,20 +45,18 @@ exports.getTournament = (req, res) => {
     });
 };
 
-// 3. CRIAR TORNEIO 
 exports.createTournament = (req, res) => {
     const { 
-        name, start_date, course_id, 
-        description, payment_info, whatsapp_contact, registration_deadline, 
-        categories, sponsors 
+        name, start_date, course_id, description, payment_info, pix_key_type,
+        whatsapp_contact, registration_deadline, categories, sponsors 
     } = req.body;
 
     const query = `
         INSERT INTO tournaments 
-        (name, start_date, course_id, description, payment_info, whatsapp_contact, registration_deadline) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    const values = [name, start_date, course_id, description, payment_info, whatsapp_contact, registration_deadline];
+    const values = [name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline];
 
     db.query(query, values, (err, result) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -65,24 +73,29 @@ exports.createTournament = (req, res) => {
             db.query('INSERT INTO tournament_sponsors (tournament_id, name, image_url) VALUES ?', [sponValues], () => {});
         }
 
-        res.json({ message: 'Torneio criado com sucesso!', id: tournamentId });
+        res.json({ message: 'Torneio criado!', id: tournamentId });
     });
 };
 
-// 4. ATUALIZAR TORNEIO (CORRIGIDO: Sem Buraco Negro)
+/// 4. ATUALIZAR TORNEIO (CORRIGIDO: Sem Buraco Negro + Tipo de PIX)
 exports.updateTournament = (req, res) => {
     const { id } = req.params;
+    
+    // 1. Recebemos o pix_key_type do Front-end
     const { 
-        name, start_date, course_id, description, payment_info, 
+        name, start_date, course_id, description, payment_info, pix_key_type, 
         whatsapp_contact, registration_deadline, categories, sponsors 
     } = req.body;
 
+    // 2. Adicionamos o pix_key_type=? na query do Banco de Dados
     const query = `
         UPDATE tournaments SET 
-        name=?, start_date=?, course_id=?, description=?, payment_info=?, whatsapp_contact=?, registration_deadline=? 
+        name=?, start_date=?, course_id=?, description=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=? 
         WHERE id=?
     `;
-    const values = [name, start_date, course_id, description, payment_info, whatsapp_contact, registration_deadline, id];
+    
+    // 3. Colocamos a variável na mesma ordem da query (antes do whatsapp e do id)
+    const values = [name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id];
 
     db.query(query, values, (err) => {
         if (err) return res.status(500).json({ error: err.message });

@@ -9,12 +9,16 @@ function Dashboard() {
   const [tournaments, setTournaments] = useState([]);
   const [courses, setCourses] = useState([]); 
 
-  // Estados do Formulário (Todos restaurados)
+  // Estados do Formulário
   const [newTournamentName, setNewTournamentName] = useState('');
   const [newTournamentDate, setNewTournamentDate] = useState('');
   const [selectedCourseId, setSelectedCourseId] = useState('');
   const [description, setDescription] = useState('');
   const [paymentInfo, setPaymentInfo] = useState('');
+  
+  // NOVO: Estado para o Tipo de Chave PIX
+  const [pixKeyType, setPixKeyType] = useState('Chave Aleatória'); 
+  
   const [whatsappContact, setWhatsappContact] = useState('');
   const [registrationDeadline, setRegistrationDeadline] = useState('');
   
@@ -72,7 +76,6 @@ function Dashboard() {
     fetchCourses();
   }, [navigate, fetchTournaments, fetchCourses]);
 
-  // FUNÇÕES DE AÇÃO
   const handleCopyLink = (id) => {
     const link = `${window.location.origin}/leaderboard/${id}`;
     navigator.clipboard.writeText(link).then(() => alert("✅ Link copiado!"));
@@ -109,12 +112,15 @@ function Dashboard() {
 
   const handleSubmitTournament = async (e) => {
     e.preventDefault();
-    if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios."); return; }
+    if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
+    
+    // NOVO: Adicionado pix_key_type no payload
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
-      description, payment_info: paymentInfo, whatsapp_contact: whatsappContact,
+      description, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
       registration_deadline: registrationDeadline, categories: selectedCategories, sponsors
     };
+    
     try {
       if (isEditing) await axios.put(`http://localhost:3001/api/tournaments/update/${editTournamentId}`, payload);
       else await axios.post('http://localhost:3001/api/tournaments/create', payload);
@@ -128,11 +134,16 @@ function Dashboard() {
       const res = await axios.get(`http://localhost:3001/api/tournaments/${id}`);
       const t = res.data;
       const formatDate = (d) => d ? new Date(new Date(d).getTime() - new Date(d).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+      
       setNewTournamentName(t.name); setNewTournamentDate(formatDate(t.start_date));
       setSelectedCourseId(t.course_id); setDescription(t.description || '');
       setPaymentInfo(t.payment_info || ''); setWhatsappContact(t.whatsapp_contact || '');
       setRegistrationDeadline(formatDate(t.registration_deadline));
       setSelectedCategories(t.categories || []); setSponsors(t.sponsors || []);
+      
+      // NOVO: Carrega o tipo de chave pix para a edição
+      setPixKeyType(t.pix_key_type || 'Chave Aleatória');
+      
       setIsEditing(true); setEditTournamentId(t.id); window.scrollTo(0, 0);
     } catch (error) { alert('Erro ao carregar dados.'); }
   };
@@ -140,7 +151,8 @@ function Dashboard() {
   const handleCancelEdit = () => {
     setNewTournamentName(''); setNewTournamentDate(''); setSelectedCourseId('');
     setDescription(''); setPaymentInfo(''); setWhatsappContact(''); setRegistrationDeadline('');
-    setSelectedCategories([]); setSponsors([]); setIsEditing(false); setEditTournamentId(null);
+    setSelectedCategories([]); setSponsors([]); setPixKeyType('Chave Aleatória');
+    setIsEditing(false); setEditTournamentId(null);
   };
 
   const styles = {
@@ -184,7 +196,11 @@ function Dashboard() {
               <label style={styles.label}>CAMPO DE GOLFE</label>
               <select style={styles.input} value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)} required>
                 <option value="">Selecione...</option>
-                {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.city ? `- ${c.city}/${c.state}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
             <div style={styles.inputGroup}>
@@ -210,11 +226,22 @@ function Dashboard() {
           </div>
 
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>3. INSCRIÇÃO E PAGAMENTO</div>
+          
           <div style={styles.formGrid}>
+            {/* NOVO COMBOBOX E TEXTAREA DO PIX */}
             <div style={styles.inputGroup}>
-              <label style={styles.label}>DADOS PIX / PAGAMENTO</label>
-              <textarea style={{...styles.textarea, minHeight: '60px'}} value={paymentInfo} onChange={e => setPaymentInfo(e.target.value)} />
+              <label style={styles.label}>TIPO E CHAVE PIX</label>
+              <select style={{...styles.input, marginBottom: '5px', fontWeight: 'bold', color: theme.gold}} value={pixKeyType} onChange={e => setPixKeyType(e.target.value)}>
+                <option value="Chave Aleatória">Chave Aleatória</option>
+                <option value="CPF">CPF</option>
+                <option value="CNPJ">CNPJ</option>
+                <option value="Celular">Celular</option>
+                <option value="E-mail">E-mail</option>
+                <option value="Copia e Cola">PIX Copia e Cola</option>
+              </select>
+              <textarea style={{...styles.textarea, minHeight: '60px'}} placeholder="Digite apenas a chave..." value={paymentInfo} onChange={e => setPaymentInfo(e.target.value)} />
             </div>
+            
             <div style={styles.inputGroup}>
               <label style={styles.label}>WHATSAPP PARA COMPROVANTE</label>
               <input style={styles.input} type="text" value={whatsappContact} onChange={e => setWhatsappContact(e.target.value)} />
@@ -254,7 +281,12 @@ function Dashboard() {
         <div key={t.id} style={{...styles.tournamentItem, borderLeft: `6px solid ${t.status === 'concluido' ? theme.danger : theme.accent}`}}>
           <div>
             <div style={{fontSize: '18px', fontWeight: 'bold'}}>{t.name}</div>
-            <div style={{fontSize: '12px', color: theme.textMuted}}>{new Date(t.start_date).toLocaleString()}</div>
+            <div style={{fontSize: '13px', color: theme.textMuted, marginTop: '4px'}}>
+              📍 {t.course_name || 'Local não definido'} {t.course_city ? `- ${t.course_city}/${t.course_state}` : ''}
+            </div>
+            <div style={{fontSize: '12px', color: theme.textMuted, marginTop: '2px'}}>
+              📅 {new Date(t.start_date).toLocaleString()}
+            </div>
             <div style={{marginTop: '8px'}}>
               <span style={{backgroundColor: t.status === 'concluido' ? theme.danger : theme.accent, color: '#000', fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold'}}>
                 {t.status === 'concluido' ? 'FINALIZADO' : 'ATIVO'}

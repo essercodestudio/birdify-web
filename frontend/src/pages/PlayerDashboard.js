@@ -1,5 +1,5 @@
 // frontend/src/pages/PlayerDashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
@@ -18,7 +18,7 @@ function PlayerDashboard() {
   const [whatsappLink, setWhatsappLink] = useState('');
   const [copied, setCopied] = useState(false); 
   
-  // NOVO: Controle do Carrossel de Patrocinadores
+  // Controle do Carrossel de Patrocinadores
   const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0); 
   
   // TEMA PADRONIZADO BIRDIFY
@@ -35,24 +35,30 @@ function PlayerDashboard() {
     whatsapp: '#25D366'
   };
 
+  // 1. Usamos useCallback para o React parar de reclamar do aviso ESLint
+  const fetchTournaments = useCallback(async (userId) => {
+    try {
+      const res = await axios.get(`http://localhost:3001/api/tournaments/list?user_id=${userId}`);
+      setTournaments(res.data);
+    } catch (error) {
+      console.error("Erro ao buscar torneios Birdify", error);
+    }
+  }, []);
+
+  // 2. useEffect principal (Carrega usuário e chama os torneios)
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     if (!storedUser) {
       navigate('/login');
       return;
     }
-    setUser(JSON.parse(storedUser));
-    fetchTournaments();
-  }, [navigate]);
-
-  const fetchTournaments = async () => {
-    try {
-      const res = await axios.get('http://localhost:3001/api/tournaments/list');
-      setTournaments(res.data);
-    } catch (error) {
-      console.error("Erro ao buscar torneios Birdify", error);
-    }
-  };
+    
+    const parsedUser = JSON.parse(storedUser);
+    setUser(parsedUser);
+    
+    // Passa o ID exato para a busca
+    fetchTournaments(parsedUser.id); 
+  }, [navigate, fetchTournaments]); // <-- Dependências corretas, sem erros no ESLint!
 
   // --- EFEITO BIRDIFY: Roda o carrossel de patrocinadores a cada 8 segundos ---
   useEffect(() => {
@@ -62,23 +68,32 @@ function PlayerDashboard() {
         setCurrentSponsorIndex((prev) => 
           prev === selectedTournament.sponsors.length - 1 ? 0 : prev + 1
         );
-      }, 8000); // 8000 ms = 8 segundos
+      }, 8000); 
     }
-    return () => clearInterval(interval); // Limpa o cronômetro ao fechar
+    return () => clearInterval(interval); 
   }, [selectedTournament]);
 
   const activeTournaments = tournaments.filter(t => t.status === 'OPEN');
   const pastTournaments = tournaments.filter(t => t.status === 'concluido');
 
-  const openDetails = async (tournamentId) => {
+  const openDetails = async (t) => {
     try {
-      const res = await axios.get(`http://localhost:3001/api/inscriptions/tournament/${tournamentId}`);
-      setSelectedTournament(res.data);
+      const res = await axios.get(`http://localhost:3001/api/inscriptions/tournament/${t.id}`);
+      
+      // Mescla as informações do torneio detalhado com as da lista (Cidade, Estado, Tipo Pix)
+      setSelectedTournament({ 
+          ...res.data, 
+          course_name: t.course_name, 
+          course_city: t.course_city, 
+          course_state: t.course_state,
+          pix_key_type: t.pix_key_type 
+      });
+      
       setSelectedCategoryId('');
-      setIsSubscribed(false);
+      setIsSubscribed(t.is_subscribed > 0); 
       setWhatsappLink('');
       setCopied(false); 
-      setCurrentSponsorIndex(0); // Reseta o carrossel para o primeiro logo
+      setCurrentSponsorIndex(0); 
     } catch (error) {
       alert("Erro ao carregar detalhes do evento Birdify.");
     }
@@ -106,6 +121,9 @@ function PlayerDashboard() {
       
       setWhatsappLink(`https://wa.me/${cleanNumber}?text=${encodedMessage}`);
       setIsSubscribed(true);
+      
+      // Atualiza a lista por trás para o selo verde aparecer quando fechar
+      fetchTournaments(user.id);
 
     } catch (error) {
       if (error.response && error.response.status === 400) {
@@ -116,7 +134,6 @@ function PlayerDashboard() {
     }
   };
 
-  // --- FUNÇÃO BIRDIFY: Copiar PIX ---
   const handleCopyPix = () => {
     if (selectedTournament && selectedTournament.payment_info) {
       navigator.clipboard.writeText(selectedTournament.payment_info);
@@ -129,11 +146,7 @@ function PlayerDashboard() {
     if (!dateString) return '--';
     const date = new Date(dateString);
     return date.toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
     }).replace(',', ' às');
   };
 
@@ -166,15 +179,7 @@ function PlayerDashboard() {
 
   return (
     <div style={styles.container}>
-      {/* Estilo CSS embutido para a animação suave do Carrossel */}
-      <style>
-        {`
-          @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-          }
-        `}
-      </style>
+      <style>{`@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }`}</style>
 
       <div style={styles.header}>
         <div>
@@ -198,8 +203,22 @@ function PlayerDashboard() {
             <div style={{textAlign: 'center', padding: '40px', color: theme.textMuted}}>Nenhum torneio Birdify aberto no momento.</div>
           ) : (
             activeTournaments.map(t => (
-              <div key={t.id} style={styles.card} onClick={() => openDetails(t.id)}>
-                <h3 style={{margin: '0 0 12px 0', color: theme.gold}}>{t.name}</h3>
+              <div key={t.id} style={styles.card} onClick={() => openDetails(t)}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+                    <h3 style={{margin: '0 0 5px 0', color: theme.gold}}>{t.name}</h3>
+                    
+                    {/* SELO DE JÁ INSCRITO */}
+                    {t.is_subscribed > 0 && (
+                        <span style={{backgroundColor: 'rgba(34, 197, 94, 0.2)', color: theme.accent, padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', border: `1px solid ${theme.accent}`}}>
+                            ✅ INSCRITO
+                        </span>
+                    )}
+                </div>
+                
+                {/* LOCAL E CIDADE */}
+                <p style={{margin: '0 0 15px 0', fontSize: '13px', color: theme.textMain}}>
+                    📍 {t.course_name || 'Local a definir'} {t.course_city ? `- ${t.course_city}/${t.course_state}` : ''}
+                </p>
                 
                 <div style={{display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px', color: theme.textMuted}}>
                   <span>📅 Início: <strong style={{color: theme.textMain}}>{formatDateTime(t.start_date)}</strong></span>
@@ -212,23 +231,11 @@ function PlayerDashboard() {
       ) : (
         <div>
           {pastTournaments.map(t => {
-            const slug = t.name
-              .toLowerCase()
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/(^-|-$)+/g, '');
-
+            const slug = t.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
             return (
-              <div 
-                key={t.id} 
-                style={styles.cardFinalizado} 
-                onClick={() => navigate(`/leaderboard/${t.id}-${slug}`)}
-              >
+              <div key={t.id} style={styles.cardFinalizado} onClick={() => navigate(`/leaderboard/${t.id}-${slug}`)}>
                 <h3 style={{margin: '0 0 5px 0', color: theme.danger}}>{t.name}</h3>
-                <p style={{margin: 0, fontSize: '12px', color: theme.textMuted}}>
-                  Clique para ver o Hall da Fama e resultados oficiais.
-                </p>
+                <p style={{margin: 0, fontSize: '12px', color: theme.textMuted}}>Clique para ver o Hall da Fama e resultados.</p>
               </div>
             );
           })}
@@ -238,7 +245,12 @@ function PlayerDashboard() {
       {selectedTournament && (
         <div style={styles.modalOverlay} onClick={closeModal}>
           <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
-            <h2 style={{marginTop: 0, color: theme.gold}}>{selectedTournament.name}</h2>
+            
+            {/* TÍTULO E BOTÃO FECHAR */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+                <h2 style={{marginTop: 0, marginBottom: 0, color: theme.gold}}>{selectedTournament.name}</h2>
+                <button onClick={closeModal} style={{ background: 'none', border: 'none', color: theme.textMuted, fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
             
             <div style={styles.infoBox}>
               <p style={{fontSize: '14px', color: theme.textMuted, marginBottom: '5px', fontWeight: 'bold'}}>SOBRE O EVENTO</p>
@@ -252,7 +264,11 @@ function PlayerDashboard() {
 
             <div style={{...styles.infoBox, borderLeft: `4px solid ${theme.whatsapp}`}}>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-                <p style={{fontSize: '14px', color: theme.whatsapp, margin: 0, fontWeight: 'bold'}}>PAGAMENTO (CHAVE PIX)</p>
+                
+                {/* TÍTULO PUXANDO O TIPO DA CHAVE */}
+                <p style={{fontSize: '14px', color: theme.whatsapp, margin: 0, fontWeight: 'bold'}}>
+                    PIX ({selectedTournament.pix_key_type || 'Chave Aleatória'})
+                </p>
                 
                 <button 
                   onClick={handleCopyPix}
@@ -268,10 +284,10 @@ function PlayerDashboard() {
                     transition: 'all 0.2s'
                   }}
                 >
-                  {copied ? '✅ COPIADO!' : '📋 COPIAR PIX'}
+                  {copied ? '✅ COPIADO!' : '📋 COPIAR CHAVE'}
                 </button>
               </div>
-              <p style={{margin: 0, fontSize: '14px', fontWeight: 'bold'}}>{selectedTournament.payment_info}</p>
+              <p style={{margin: 0, fontSize: '16px', fontWeight: 'bold'}}>{selectedTournament.payment_info}</p>
             </div>
 
             {!isSubscribed ? (
@@ -284,11 +300,13 @@ function PlayerDashboard() {
                 <button style={styles.submitBtn} onClick={handleInscription}>CONFIRMAR MINHA VAGA</button>
               </>
             ) : (
-              <div style={{textAlign: 'center', padding: '10px'}}>
-                <div style={{fontSize: '40px', marginBottom: '10px'}}>🎉</div>
-                <h3 style={{margin: '0 0 10px 0', color: theme.accent}}>Inscrição Registrada!</h3>
-                <p style={{fontSize: '14px', color: theme.textMuted, marginBottom: '20px'}}>Sua vaga está pré-reservada. Envie o comprovante agora:</p>
-                <a href={whatsappLink} target="_blank" rel="noreferrer" style={styles.whatsappBtn}>ENVIAR COMPROVANTE VIA WHATSAPP</a>
+              <div style={{textAlign: 'center', padding: '10px', backgroundColor: 'rgba(34, 197, 94, 0.1)', borderRadius: '12px', border: `1px solid ${theme.accent}`}}>
+                <div style={{fontSize: '30px', marginBottom: '5px'}}>✅</div>
+                <h3 style={{margin: '0 0 5px 0', color: theme.accent}}>Você já está inscrito!</h3>
+                <p style={{fontSize: '13px', color: theme.textMain, marginBottom: '15px'}}>Sua vaga está garantida neste evento.</p>
+                {whatsappLink && (
+                  <a href={whatsappLink} target="_blank" rel="noreferrer" style={styles.whatsappBtn}>ENVIAR COMPROVANTE VIA WHATSAPP</a>
+                )}
               </div>
             )}
 
@@ -309,7 +327,6 @@ function PlayerDashboard() {
                       animation: 'fadeIn 0.5s ease-in' 
                     }} 
                   />
-                
                 </div>
 
                 {selectedTournament.sponsors.length > 1 && (

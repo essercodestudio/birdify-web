@@ -52,14 +52,25 @@ function JoinGame() {
       const myGroup = allGroups.find(g => g.id === group.id) || group;
 
       if (myGroup.players && myGroup.players.length > 0) {
-        setPendingGroup(group);
-        setGroupPlayers(myGroup.players);
         
-        const initialHandicaps = {};
-        myGroup.players.forEach(p => { initialHandicaps[p.id] = ''; });
-        setHandicaps(initialHandicaps);
-        
-        setShowModal(true);
+        // Verifica se o primeiro jogador do grupo já tem um handicap salvo no banco
+        const alreadyHasHandicap = myGroup.players[0].handicap !== null && myGroup.players[0].handicap !== undefined;
+
+        if (alreadyHasHandicap) {
+            // Se já tem, pula o painel chato e vai direto pro cartão!
+            localStorage.setItem('activeGroup', JSON.stringify(group));
+            navigate(`/scorecard/${group.id}`);
+        } else {
+            // Se for a primeira vez, abre o modal para preencher
+            setPendingGroup(group);
+            setGroupPlayers(myGroup.players);
+            
+            const initialHandicaps = {};
+            myGroup.players.forEach(p => { initialHandicaps[p.id] = ''; });
+            setHandicaps(initialHandicaps);
+            
+            setShowModal(true);
+        }
       } else {
         localStorage.setItem('activeGroup', JSON.stringify(group));
         navigate(`/scorecard/${group.id}`);
