@@ -58,20 +58,38 @@ function Scorecard() {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
       });
       setScores(scoresMap);
-      // A MÁGICA DO RETORNO: Descobre o último buraco jogado
-      if (scoresRes.data && scoresRes.data.length > 0) {
-        // Pega todos os buracos que já têm marcação
-        const playedHoleNumbers = scoresRes.data.map(s => s.hole_number);
-        const maxHole = Math.max(...playedHoleNumbers);
+     // A MÁGICA DO RETORNO: Descobre o último buraco jogado (AGORA SÓ DO SEU GRUPO)
+      if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
         
-        // Se já jogou algum, volta exatamente para ele!
-        if (maxHole >= 1 && maxHole <= 18) {
-           setCurrentHole(maxHole);
-           
-           // E reconstrói a lista de buracos já jogados para o marcador não travar
-           const reconstructedHistory = [];
-           for (let i = savedGroup.starting_hole; i <= maxHole; i++) reconstructedHistory.push(i);
-           setPlayedHoles(reconstructedHistory);
+        // 1. Pega os IDs apenas dos jogadores do grupo atual
+        const groupPlayerIds = myGroupData.players.map(p => p.id);
+
+        // 2. Filtra os scores para mostrar SÓ os pontos desses jogadores
+        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
+
+        if (scoresDoMeuGrupo.length > 0) {
+          // 3. Agora sim, pega o buraco mais alto que O SEU GRUPO já anotou
+          const playedHoleNumbers = scoresDoMeuGrupo.map(s => s.hole_number);
+          const maxHole = Math.max(...playedHoleNumbers);
+          
+          if (maxHole >= 1 && maxHole <= 18) {
+             setCurrentHole(maxHole);
+             
+             // Reconstrói a lista do histórico para permitir a navegação livre para trás
+             const reconstructedHistory = [];
+             
+             // Se saiu do 1, a lista é simples (ex: 1, 2, 3...)
+             if (savedGroup.starting_hole <= maxHole) {
+               for (let i = savedGroup.starting_hole; i <= maxHole; i++) reconstructedHistory.push(i);
+             } 
+             // Se saiu do 10 (Shotgun/Crossover) e já passou da virada do 18 pro 1, a lista dá a volta!
+             else {
+               for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
+               for (let i = 1; i <= maxHole; i++) reconstructedHistory.push(i);
+             }
+
+             setPlayedHoles(reconstructedHistory);
+          }
         }
       }
     } catch (error) { console.error("Erro ao carregar dados", error); }
@@ -83,7 +101,8 @@ function Scorecard() {
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
 
-  const handleScoreChange = async (userId, delta) => {
+  // Só mexe no número na tela (Visual)
+  const handleScoreChange = (userId, delta) => {
     const key = `${userId}-${currentHole}`;
     const currentScore = scores[key];
     let newScore;
@@ -97,20 +116,12 @@ function Scorecard() {
     if (newScore < 1) newScore = 1;
 
     setScores((prev) => ({ ...prev, [key]: newScore }));
-
-    try {
-      await axios.post("http://localhost:3001/api/scores/save", {
-        tournament_id: group.tournament_id,
-        user_id: userId,
-        hole_number: currentHole,
-        strokes: newScore,
-      });
-    } catch (error) { console.error("Erro ao salvar", error); }
   };
 
-  // --- TRAVA DE NAVEGAÇÃO BIRDIFY (PGA STYLE) ---
-  const changeHole = (delta) => {
-    // SE TENTAR AVANÇAR (Próximo Buraco)
+  // --- TRAVA DE NAVEGAÇÃO E SALVAMENTO BIRDIFY (PGA STYLE) ---
+  const changeHole = async (delta) => {
+    
+    // 1. SE TENTAR AVANÇAR: Confere se todo mundo do grupo tem nota
     if (delta > 0) {
       const missingPlayer = players.find((p) => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -119,9 +130,35 @@ function Scorecard() {
 
       if (missingPlayer) {
         alert(`⚠️ Falta anotar o score de: ${missingPlayer.name}`);
-        return;
+        return; // Trava a tela e não deixa avançar
       }
+    }
 
+    // 2. MÁGICA DO SALVAMENTO: Salva todos os scores da tela de uma vez só!
+    try {
+      const savePromises = players.map(p => {
+        const score = scores[`${p.id}-${currentHole}`];
+        if (score && score > 0) {
+          return axios.post("http://localhost:3001/api/scores/save", {
+            tournament_id: group.tournament_id,
+            user_id: p.id,
+            hole_number: currentHole,
+            strokes: score,
+          });
+        }
+        return Promise.resolve(); 
+      });
+      
+      await Promise.all(savePromises); // Espera salvar os 4 jogadores
+
+    } catch (error) {
+      console.error("Erro ao salvar os scores do buraco", error);
+      alert("Erro ao salvar no banco de dados. Verifique a internet.");
+      return; // Se estiver sem internet, não deixa mudar de buraco!
+    }
+
+    // 3. AGORA SIM, MUDA O BURACO
+    if (delta > 0) {
       // Verifica se finalizou os 18 buracos
       if (!isReviewMode && playedHoles.length >= 18) {
         setShowSummary(true);
@@ -136,15 +173,12 @@ function Scorecard() {
           setPlayedHoles([...playedHoles, nextHole]);
       }
       setCurrentHole(nextHole);
-      return;
-    }
 
-    // SE TENTAR VOLTAR (Buraco Anterior)
-    if (delta < 0) {
+    } else if (delta < 0) {
       let prevHole = currentHole - 1;
       if (prevHole < 1) prevHole = 18;
 
-      // Trava: Só pode voltar para buracos que ele já acessou (que estão no histórico)
+      // Trava: Só pode voltar para buracos que ele já acessou
       if (!playedHoles.includes(prevHole)) {
         alert("🛑 Você não pode voltar para um buraco antes do seu tee de saída.");
         return;

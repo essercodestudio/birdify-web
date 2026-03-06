@@ -375,16 +375,18 @@ function Leaderboard() {
 
       {/* CARROSSEL DE PATROCINADORES */}
       {sponsors && sponsors.length > 0 && (
-        <div style={{ textAlign: 'center', paddingBottom: '20px' }}>
+        <div style={{ textAlign: 'center', paddingBottom: '20px', marginTop: '20px' }}>
           <p style={{fontSize: '11px', color: theme.textMuted, marginBottom: '15px', letterSpacing: '2px', fontWeight: 'bold'}}>PATROCÍNIO OFICIAL</p>
-          <div style={{ height: '70px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          
+          <div style={{ height: '90px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <img 
               key={currentSponsorIndex} 
               src={sponsors[currentSponsorIndex].image_url} 
               alt={sponsors[currentSponsorIndex].name || 'Patrocinador'} 
-              style={{ maxHeight: '100%', maxWidth: '220px', objectFit: 'contain', animation: 'fadeIn 0.5s ease-in' }}
+              style={{ maxHeight: '100%', maxWidth: '250px', objectFit: 'contain', animation: 'fadeIn 0.5s ease-in' }}
             />
           </div>
+
           {sponsors.length > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '15px' }}>
               {sponsors.map((_, idx) => (

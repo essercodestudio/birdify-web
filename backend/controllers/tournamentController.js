@@ -45,18 +45,19 @@ exports.getTournament = (req, res) => {
     });
 };
 
+// 3. CRIAR TORNEIO
 exports.createTournament = (req, res) => {
     const { 
-        name, start_date, course_id, description, payment_info, pix_key_type,
+        name, start_date, course_id, description, fee, payment_info, pix_key_type,
         whatsapp_contact, registration_deadline, categories, sponsors 
     } = req.body;
 
     const query = `
         INSERT INTO tournaments 
-        (name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    const values = [name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline];
+    const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline];
 
     db.query(query, values, (err, result) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -77,58 +78,43 @@ exports.createTournament = (req, res) => {
     });
 };
 
-/// 4. ATUALIZAR TORNEIO (CORRIGIDO: Sem Buraco Negro + Tipo de PIX)
+// 4. ATUALIZAR TORNEIO
 exports.updateTournament = (req, res) => {
     const { id } = req.params;
-    
-    // 1. Recebemos o pix_key_type do Front-end
     const { 
-        name, start_date, course_id, description, payment_info, pix_key_type, 
+        name, start_date, course_id, description, fee, payment_info, pix_key_type, 
         whatsapp_contact, registration_deadline, categories, sponsors 
     } = req.body;
 
-    // 2. Adicionamos o pix_key_type=? na query do Banco de Dados
     const query = `
         UPDATE tournaments SET 
-        name=?, start_date=?, course_id=?, description=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=? 
+        name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=? 
         WHERE id=?
     `;
-    
-    // 3. Colocamos a variável na mesma ordem da query (antes do whatsapp e do id)
-    const values = [name, start_date, course_id, description, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id];
+    const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id];
 
     db.query(query, values, (err) => {
         if (err) return res.status(500).json({ error: err.message });
 
-        // 1. Apaga e recria as Categorias
         db.query('DELETE FROM tournament_categories WHERE tournament_id = ?', [id], () => {
             if (categories && categories.length > 0) {
                 const catValues = categories.map(cat => [id, cat]);
                 db.query('INSERT INTO tournament_categories (tournament_id, name) VALUES ?', [catValues], () => {});
             }
 
-            // 2. Apaga e recria os Patrocinadores
             db.query('DELETE FROM tournament_sponsors WHERE tournament_id = ?', [id], () => {
                 if (sponsors && sponsors.length > 0) {
-                    
-                    // Tratamento de segurança: Garante que name e image_url existam
                     const sponValues = sponsors.map(s => [id, s.name || 'Patrocinador', s.image_url || '']);
-                    
-                    db.query('INSERT INTO tournament_sponsors (tournament_id, name, image_url) VALUES ?', [sponValues], (insertErr) => {
-                        if (insertErr) console.error("Erro SQL Patrocinadores:", insertErr);
-                        
-                        // SÓ AVISA O FRONTEND QUE TERMINOU AQUI DENTRO (Depois de salvar!)
+                    db.query('INSERT INTO tournament_sponsors (tournament_id, name, image_url) VALUES ?', [sponValues], () => {
                         return res.json({ message: 'Torneio atualizado com sucesso!' });
                     });
                 } else {
-                    // Se não tiver patrocinador pra salvar, avisa que terminou
                     return res.json({ message: 'Torneio atualizado com sucesso!' });
                 }
             });
         });
     });
 };
-
 // 5. EXCLUIR TORNEIO
 exports.deleteTournament = (req, res) => {
     const { id } = req.params;

@@ -16,7 +16,8 @@ function Dashboard() {
   const [description, setDescription] = useState('');
   const [paymentInfo, setPaymentInfo] = useState('');
   
-  // NOVO: Estado para o Tipo de Chave PIX
+  // NOVO: Estados de Valor e Chave PIX
+  const [fee, setFee] = useState('');
   const [pixKeyType, setPixKeyType] = useState('Chave Aleatória'); 
   
   const [whatsappContact, setWhatsappContact] = useState('');
@@ -114,10 +115,10 @@ function Dashboard() {
     e.preventDefault();
     if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
     
-    // NOVO: Adicionado pix_key_type no payload
+    // NOVO: Adicionado fee (valor) no payload
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
-      description, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
+      description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
       registration_deadline: registrationDeadline, categories: selectedCategories, sponsors
     };
     
@@ -137,11 +138,10 @@ function Dashboard() {
       
       setNewTournamentName(t.name); setNewTournamentDate(formatDate(t.start_date));
       setSelectedCourseId(t.course_id); setDescription(t.description || '');
+      setFee(t.fee || ''); // Puxa o valor do banco
       setPaymentInfo(t.payment_info || ''); setWhatsappContact(t.whatsapp_contact || '');
       setRegistrationDeadline(formatDate(t.registration_deadline));
       setSelectedCategories(t.categories || []); setSponsors(t.sponsors || []);
-      
-      // NOVO: Carrega o tipo de chave pix para a edição
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
       
       setIsEditing(true); setEditTournamentId(t.id); window.scrollTo(0, 0);
@@ -150,7 +150,7 @@ function Dashboard() {
 
   const handleCancelEdit = () => {
     setNewTournamentName(''); setNewTournamentDate(''); setSelectedCourseId('');
-    setDescription(''); setPaymentInfo(''); setWhatsappContact(''); setRegistrationDeadline('');
+    setDescription(''); setFee(''); setPaymentInfo(''); setWhatsappContact(''); setRegistrationDeadline('');
     setSelectedCategories([]); setSponsors([]); setPixKeyType('Chave Aleatória');
     setIsEditing(false); setEditTournamentId(null);
   };
@@ -228,7 +228,12 @@ function Dashboard() {
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>3. INSCRIÇÃO E PAGAMENTO</div>
           
           <div style={styles.formGrid}>
-            {/* NOVO COMBOBOX E TEXTAREA DO PIX */}
+            {/* NOVO CAMPO DE VALOR DA INSCRIÇÃO */}
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>VALOR DA INSCRIÇÃO</label>
+              <input style={styles.input} type="text" placeholder="Ex: R$ 150,00" value={fee} onChange={e => setFee(e.target.value)} />
+            </div>
+
             <div style={styles.inputGroup}>
               <label style={styles.label}>TIPO E CHAVE PIX</label>
               <select style={{...styles.input, marginBottom: '5px', fontWeight: 'bold', color: theme.gold}} value={pixKeyType} onChange={e => setPixKeyType(e.target.value)}>

@@ -4,6 +4,7 @@ const router = express.Router();
 const groupController = require("../controllers/groupController");
 
 // Rotas antigas que já funcionam
+router.get('/export/:tournamentId', groupController.exportGroupsToExcel);
 router.post("/create", groupController.createGroup);
 router.get("/list/:tournamentId", groupController.getGroupsByTournament);
 router.post("/add-player", groupController.addPlayerToGroup);

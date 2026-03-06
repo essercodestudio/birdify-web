@@ -228,3 +228,86 @@ exports.saveGroupHandicaps = (req, res) => {
     );
   });
 };
+// ==========================================
+// MÁGICA DO EXCEL: EXPORTAR TEE SHEET (DRAW)
+// ==========================================
+const ExcelJS = require('exceljs');
+
+exports.exportGroupsToExcel = (req, res) => {
+    const { tournamentId } = req.params;
+
+    const query = `
+        SELECT 
+            g.starting_hole as hole, 
+            g.group_name as time_or_group, 
+            g.access_code,
+            u.name as player_name, 
+            u.gender, 
+            c.name as category_name,
+            t.name as tournament_name
+        FROM tournament_groups g
+        JOIN tournaments t ON g.tournament_id = t.id
+        JOIN group_players gp ON g.id = gp.group_id
+        JOIN users u ON gp.user_id = u.id
+        LEFT JOIN inscriptions i ON i.user_id = u.id AND i.tournament_id = g.tournament_id AND i.status = 'APPROVED'
+        LEFT JOIN tournament_categories c ON i.category_id = c.id
+        WHERE g.tournament_id = ?
+        ORDER BY CAST(g.starting_hole AS UNSIGNED) ASC, g.group_name ASC, u.name ASC
+    `;
+
+    db.query(query, [tournamentId], async (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (results.length === 0) return res.status(404).json({ message: "Nenhum grupo encontrado." });
+
+        const tournamentName = results[0].tournament_name;
+
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Saídas - Draw');
+
+        // Configura as colunas
+        sheet.columns = [
+            { header: 'Buraco', key: 'hole', width: 10 },
+            { header: 'Horário / Grupo', key: 'time', width: 20 },
+            { header: 'Cód. Acesso', key: 'code', width: 15 },
+            { header: 'Jogador', key: 'player', width: 35 },
+            { header: 'Categoria', key: 'cat', width: 25 },
+            { header: 'Sexo', key: 'gender', width: 10 }
+        ];
+
+        // Estilo do Cabeçalho Preto Padrão Birdify
+        sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0f172a' } };
+        sheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+        let currentHoleAndGroup = null;
+
+        results.forEach(row => {
+            let holeGroupCombo = `${row.hole}-${row.time_or_group}`;
+            
+            // A MÁGICA DE PULAR LINHA: Se o grupo mudou, insere uma linha vazia!
+            if (currentHoleAndGroup !== null && currentHoleAndGroup !== holeGroupCombo) {
+                sheet.addRow([]); 
+            }
+            currentHoleAndGroup = holeGroupCombo;
+
+            const newRow = sheet.addRow({
+                hole: row.hole || '-',
+                time: row.time_or_group || '-',
+                code: row.access_code || '-',
+                player: row.player_name || 'Desconhecido',
+                cat: row.category_name || 'Sem Categoria',
+                gender: row.gender === 'M' || row.gender === 'Masculino' ? 'Masc' : 'Fem'
+            });
+
+            // Centraliza tudo, exceto o nome do jogador
+            newRow.alignment = { horizontal: 'center', vertical: 'middle' };
+            newRow.getCell('player').alignment = { horizontal: 'left', vertical: 'middle' };
+        });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="Draw_${tournamentName.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx"`);
+        
+        await workbook.xlsx.write(res);
+        res.end();
+    });
+};

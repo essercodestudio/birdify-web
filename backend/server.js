@@ -1,4 +1,4 @@
-// backend/server.js
+require('dotenv').config(); // Carrega as variáveis do arquivo .env
 const express = require('express');
 const cors = require('cors');
 
@@ -8,7 +8,7 @@ const tournamentRoutes = require('./routes/tournamentRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 const scoreRoutes = require('./routes/scoreRoutes');
 const courseRoutes = require('./routes/courseRoutes');
-const leaderboardRoutes = require('./routes/leaderboardRoutes'); // <--- A QUE FALTAVA
+const leaderboardRoutes = require('./routes/leaderboardRoutes');
 const exportRoutes = require('./routes/exportRoutes');
 const inscriptionRoutes = require('./routes/inscriptionRoutes');
 
@@ -18,26 +18,21 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- 3. USO DAS ROTAS (Ligar os endereços aos arquivos) ---
+// --- 3. USO DAS ROTAS ---
 app.use('/api/auth', authRoutes);
 app.use('/api/tournaments', tournamentRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/scores', scoreRoutes);
 app.use('/api/courses', courseRoutes);
-app.use('/api/leaderboard', leaderboardRoutes); // <--- A LINHA MÁGICA QUE CORRIGE O ERRO 404
+app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/inscriptions', inscriptionRoutes);
 
 // --- 4. INICIALIZAR O SERVIDOR ---
-const PORT = 3001;
+// Usa a porta da Hostinger ou a 3001 por padrão
+const PORT = process.env.PORT || 3001;
+
 app.listen(PORT, () => {
-    console.log(`✅ Servidor rodando na porta ${PORT}`);
-    console.log(`📡 Rotas ativas:`);
-    console.log(`   - /api/auth`);
-    console.log(`   - /api/tournaments`);
-    console.log(`   - /api/groups`);
-    console.log(`   - /api/scores`);
-    console.log(`   - /api/courses`);
-    console.log(`   - /api/leaderboard`);
-    console.log(`   - /api/export`);
+    console.log(`🚀 Birdify Engine rodando na porta ${PORT}`);
+    console.log(`📡 Endpoints verificados e online.`);
 });
