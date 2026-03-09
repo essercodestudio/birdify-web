@@ -1,19 +1,18 @@
+// backend/db.js (Versão com Pool - Mais resistente)
 const mysql = require('mysql2');
 require('dotenv').config();
 
-const connection = mysql.createConnection({
+const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-connection.connect((err) => {
-    if (err) {
-        console.error('❌ Erro ao conectar: ' + err.stack);
-        return;
-    }
-    console.log('✅ Conectado ao MySQL com sucesso! ID da conexão: ' + connection.threadId);
-});
+// O Pool não precisa de ".connect", ele conecta sob demanda.
+console.log('✅ Pool de conexões MySQL configurado!');
 
-module.exports = connection;
+module.exports = pool.promise(); // O .promise() permite usar async/await no backend

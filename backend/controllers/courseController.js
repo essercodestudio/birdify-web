@@ -2,76 +2,98 @@
 const db = require('../db');
 
 // 1. Listar todos os campos
-exports.listCourses = (req, res) => {
-    db.query('SELECT * FROM courses', (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(results);
-    });
+exports.listCourses = async (req, res) => {
+    try {
+        const [courses] = await db.execute('SELECT * FROM courses');
+        res.json(courses);
+    } catch (error) {
+        console.error('Erro ao listar cursos:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
 
 // 2. Pegar buracos (Cura Automática: Se não tiver buracos na tabela nova, cria na hora!)
-exports.getCourseHoles = (req, res) => {
-    const { id } = req.params; 
-    const query = 'SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number ASC';
-    
-    db.query(query, [id], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+exports.getCourseHoles = async (req, res) => {
+    try {
+        const { id } = req.params; 
+        const query = 'SELECT * FROM holes WHERE course_id = ? ORDER BY hole_number ASC';
+        
+        const [holes] = await db.execute(query, [id]);
         
         // Se o banco não achar os buracos, nós criamos eles na hora para não sumir da tela!
-        if (results.length === 0) {
+        if (holes.length === 0) {
             console.log(`⚠️ Campo ID ${id} estava sem buracos. Criando 18 buracos zerados...`);
             
             const holesData = Array.from({ length: 18 }, (_, i) => [id, i + 1, 4, 0, 0, 0, 0]);
             const insertQuery = "INSERT INTO holes (course_id, hole_number, par, yards_white, yards_yellow, yards_blue, yards_red) VALUES ?";
             
-            db.query(insertQuery, [holesData], (insertErr) => {
-                if (insertErr) return res.status(500).json({ error: insertErr.message });
-                
-                // Agora que criou, busca de novo e manda pra tela
-                db.query(query, [id], (err2, newResults) => {
-                    if (err2) return res.status(500).json({ error: err2.message });
-                    res.json(newResults);
-                });
-            });
+            await db.query(insertQuery, [holesData]);
+            
+            // Agora que criou, busca de novo e manda pra tela
+            const [newHoles] = await db.execute(query, [id]);
+            res.json(newHoles);
         } else {
             // Se já tiver os buracos, só envia normal
-            res.json(results);
+            res.json(holes);
         }
-    });
+    } catch (error) {
+        console.error('Erro ao buscar buracos:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
 
 // 3. Criar Campo e Buracos
-exports.createCourse = (req, res) => {
-  const { name, city, state } = req.body;
+exports.createCourse = async (req, res) => {
+    try {
+        const { name, city, state } = req.body;
 
-  if (!name || !city || !state) {
-      return res.status(400).json({ error: "Nome, cidade e estado são obrigatórios." });
-  }
+        if (!name || !city || !state) {
+            return res.status(400).json({ error: "Nome, cidade e estado são obrigatórios." });
+        }
 
-  const query = "INSERT INTO courses (name, city, state) VALUES (?, ?, ?)";
+        const query = "INSERT INTO courses (name, city, state) VALUES (?, ?, ?)";
+        const [result] = await db.execute(query, [name, city, state]);
+        
+        const courseId = result.insertId;
+        
+        // Inserindo os 18 buracos na tabela 'holes'
+        const holesQuery = "INSERT INTO holes (course_id, hole_number, par, yards_white, yards_yellow, yards_blue, yards_red) VALUES ?";
+        const holesData = Array.from({ length: 18 }, (_, i) => [courseId, i + 1, 4, 0, 0, 0, 0]);
 
-  db.query(query, [name, city, state], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    const courseId = result.insertId;
-    
-    // Inserindo os 18 buracos na tabela 'holes'
-    const holesQuery = "INSERT INTO holes (course_id, hole_number, par, yards_white, yards_yellow, yards_blue, yards_red) VALUES ?";
-    const holesData = Array.from({ length: 18 }, (_, i) => [courseId, i + 1, 4, 0, 0, 0, 0]);
-
-    db.query(holesQuery, [holesData], (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ message: "Campo e buracos criados com sucesso!", courseId });
-    });
-  });
+        await db.query(holesQuery, [holesData]);
+        
+        res.status(201).json({ 
+            message: "Campo e buracos criados com sucesso!", 
+            courseId 
+        });
+        
+    } catch (error) {
+        console.error('Erro ao criar campo:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
 
 // 4. ATUALIZAR BURACOS (CORRIGIDO: Salvando na tabela 'holes')
-exports.updateHoles = (req, res) => {
-    const { holes } = req.body;
+exports.updateHoles = async (req, res) => {
+    try {
+        const { holes } = req.body;
 
-    const updates = holes.map(h => {
-        return new Promise((resolve, reject) => {
+        // Verifica se holes foi enviado e é um array
+        if (!holes || !Array.isArray(holes) || holes.length === 0) {
+            return res.status(400).json({ error: "Dados dos buracos são obrigatórios." });
+        }
+
+        // Usando Promise.all para executar todas as atualizações em paralelo
+        const updatePromises = holes.map(async (h) => {
             const query = `
                 UPDATE holes 
                 SET par = ?, 
@@ -81,39 +103,75 @@ exports.updateHoles = (req, res) => {
                     yards_red = ? 
                 WHERE id = ?
             `;
-            db.query(query, [h.par, h.yards_white, h.yards_yellow, h.yards_blue, h.yards_red, h.id], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
+            await db.execute(query, [h.par, h.yards_white, h.yards_yellow, h.yards_blue, h.yards_red, h.id]);
         });
-    });
 
-    Promise.all(updates)
-        .then(() => res.json({ message: 'Configuração do campo atualizada!' }))
-        .catch(err => res.status(500).json({ error: err.message }));
+        await Promise.all(updatePromises);
+        
+        res.json({ message: 'Configuração do campo atualizada!' });
+        
+    } catch (error) {
+        console.error('Erro ao atualizar buracos:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
 
 // 5. EXCLUIR CAMPO (CORRIGIDO: Apagando os buracos da tabela 'holes')
-exports.deleteCourse = (req, res) => {
-    const { id } = req.params;
-    db.query('DELETE FROM holes WHERE course_id = ?', [id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        db.query('DELETE FROM courses WHERE id = ?', [id], (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ message: 'Campo excluído com sucesso!' });
+exports.deleteCourse = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Primeiro deleta os buracos (foreign key)
+        await db.execute('DELETE FROM holes WHERE course_id = ?', [id]);
+        
+        // Depois deleta o campo
+        const [result] = await db.execute('DELETE FROM courses WHERE id = ?', [id]);
+        
+        // Verifica se algum registro foi realmente deletado
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Campo não encontrado.' });
+        }
+        
+        res.json({ message: 'Campo excluído com sucesso!' });
+        
+    } catch (error) {
+        console.error('Erro ao excluir campo:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
         });
-    });
+    }
 };
 
 // 6. ATUALIZAR NOME, CIDADE E ESTADO DO CAMPO
-exports.updateCourse = (req, res) => {
-    const { id } = req.params;
-    const { name, city, state } = req.body;
+exports.updateCourse = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, city, state } = req.body;
 
-    const query = 'UPDATE courses SET name = ?, city = ?, state = ? WHERE id = ?';
-    
-    db.query(query, [name, city, state, id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        // Validação básica
+        if (!name || !city || !state) {
+            return res.status(400).json({ error: "Nome, cidade e estado são obrigatórios." });
+        }
+
+        const query = 'UPDATE courses SET name = ?, city = ?, state = ? WHERE id = ?';
+        const [result] = await db.execute(query, [name, city, state, id]);
+        
+        // Verifica se o campo foi encontrado e atualizado
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Campo não encontrado.' });
+        }
+        
         res.json({ message: 'Informações do campo atualizadas com sucesso!' });
-    });
+        
+    } catch (error) {
+        console.error('Erro ao atualizar campo:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };

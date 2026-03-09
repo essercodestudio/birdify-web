@@ -2,19 +2,20 @@
 const db = require('../db');
 const ExcelJS = require('exceljs');
 
-const queryAsync = (sql, params) => new Promise((resolve, reject) => {
-    db.query(sql, params, (err, results) => {
-        if (err) reject(err); else resolve(results);
-    });
-});
-
 exports.exportTournamentToExcel = async (req, res) => {
     const { tournamentId } = req.params;
 
     try {
         // 1. Busca os Dados Básicos
-        const tournament = (await queryAsync('SELECT * FROM tournaments WHERE id = ?', [tournamentId]))[0];
-        const categories = await queryAsync('SELECT name FROM tournament_categories WHERE tournament_id = ?', [tournamentId]);
+        const [tournamentRows] = await db.execute('SELECT * FROM tournaments WHERE id = ?', [tournamentId]);
+        
+        if (tournamentRows.length === 0) {
+            return res.status(404).json({ error: 'Torneio não encontrado.' });
+        }
+        
+        const tournament = tournamentRows[0];
+        
+        const [categories] = await db.execute('SELECT name FROM tournament_categories WHERE tournament_id = ?', [tournamentId]);
         
         console.log("🔍 [ESPIÃO EXCEL] ID DO CAMPO (course_id):", tournament.course_id);
 
@@ -22,7 +23,8 @@ exports.exportTournamentToExcel = async (req, res) => {
         let holes = [];
         if (tournament.course_id) {
             try {
-                holes = await queryAsync('SELECT * FROM holes WHERE course_id = ?', [tournament.course_id]);
+                const [holesRows] = await db.execute('SELECT * FROM holes WHERE course_id = ?', [tournament.course_id]);
+                holes = holesRows;
             } catch (err) {
                 console.log("A tabela não se chama 'holes'...");
             }
@@ -30,19 +32,18 @@ exports.exportTournamentToExcel = async (req, res) => {
             // Se não achou na primeira, tenta na segunda
             if (holes.length === 0) {
                 try {
-                    holes = await queryAsync('SELECT * FROM course_holes WHERE course_id = ?', [tournament.course_id]);
+                    const [courseHolesRows] = await db.execute('SELECT * FROM course_holes WHERE course_id = ?', [tournament.course_id]);
+                    holes = courseHolesRows;
                 } catch (err) {
-                    // Ignora o erro se a tabela também não existir
+                    console.log("Tabela 'course_holes' também não encontrada");
                 }
             }
         }
 
         console.log("🔍 [ESPIÃO EXCEL] BURACOS ENCONTRADOS:", holes.length);
         if (holes.length > 0) {
-            console.log("⛳ [RAIO-X] DADOS DO BURACO 1:", holes[0]); // <--- O Raio-X
+            console.log("⛳ [RAIO-X] DADOS DO BURACO 1:", holes[0]);
         }
-
-        // 3. Busca os Jogadores e os seus Handicaps
 
         // 3. Busca os Jogadores e os seus Handicaps
         const playersQuery = `
@@ -52,10 +53,10 @@ exports.exportTournamentToExcel = async (req, res) => {
             JOIN tournament_groups tg ON gp.group_id = tg.id
             WHERE tg.tournament_id = ?
         `;
-        const playersData = await queryAsync(playersQuery, [tournamentId]);
+        const [playersData] = await db.execute(playersQuery, [tournamentId]);
 
         // 4. Busca os Scores
-        const scoresData = await queryAsync('SELECT user_id, hole_number, strokes FROM scores WHERE tournament_id = ?', [tournamentId]);
+        const [scoresData] = await db.execute('SELECT user_id, hole_number, strokes FROM scores WHERE tournament_id = ?', [tournamentId]);
 
         // 5. Monta o Objeto de cada Jogador
         const players = playersData.map(p => {
@@ -239,7 +240,7 @@ exports.exportTournamentToExcel = async (req, res) => {
         });
 
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="Torneio_${tournament.name}.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Torneio_${tournament.name || 'export'}.xlsx"`);
         
         await workbook.xlsx.write(res);
         res.end();

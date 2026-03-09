@@ -2,21 +2,21 @@
 const db = require('../db');
 const bcrypt = require('bcryptjs');
 
-exports.register = (req, res) => {
-    // Recebe os dados do aplicativo/site
-    const { name, email, password, gender, role } = req.body;
+exports.register = async (req, res) => {
+    try {
+        // Recebe os dados do aplicativo/site
+        const { name, email, password, gender, role } = req.body;
 
-    // 1. Validação simples
-    if (!name || !email || !password || !gender) {
-        return res.status(400).json({ message: 'Preencha todos os campos!' });
-    }
+        // 1. Validação simples
+        if (!name || !email || !password || !gender) {
+            return res.status(400).json({ message: 'Preencha todos os campos!' });
+        }
 
-    // 2. Verifica se o e-mail já existe
-    const checkQuery = 'SELECT email FROM users WHERE email = ?';
-    db.query(checkQuery, [email], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+        // 2. Verifica se o e-mail já existe
+        const checkQuery = 'SELECT email FROM users WHERE email = ?';
+        const [existingUsers] = await db.execute(checkQuery, [email]);
         
-        if (results.length > 0) {
+        if (existingUsers.length > 0) {
             return res.status(400).json({ message: 'E-mail já está em uso.' });
         }
 
@@ -29,33 +29,37 @@ exports.register = (req, res) => {
 
         // 5. Salva no Banco
         const insertQuery = 'INSERT INTO users (name, email, password_hash, gender, role) VALUES (?, ?, ?, ?, ?)';
+        const [result] = await db.execute(insertQuery, [name, email, hash, gender, userRole]);
         
-        db.query(insertQuery, [name, email, hash, gender, userRole], (err, result) => {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            res.status(201).json({ 
-                message: 'Usuário criado com sucesso!',
-                userId: result.insertId 
-            });
+        res.status(201).json({ 
+            message: 'Usuário criado com sucesso!',
+            userId: result.insertId 
         });
-    });
-};
-// LOGIN DO USUÁRIO
-exports.login = (req, res) => {
-    const { email, password } = req.body;
 
-    // 1. Verificar se o usuário existe
-    const query = 'SELECT * FROM users WHERE email = ?';
-    
-    db.query(query, [email], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+    } catch (error) {
+        console.error('Erro no registro:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
+};
+
+// LOGIN DO USUÁRIO
+exports.login = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // 1. Verificar se o usuário existe
+        const query = 'SELECT * FROM users WHERE email = ?';
+        const [users] = await db.execute(query, [email]);
         
         // Se não encontrou ninguém com esse email
-        if (results.length === 0) {
+        if (users.length === 0) {
             return res.status(404).json({ message: 'Usuário não encontrado.' });
         }
 
-        const user = results[0];
+        const user = users[0];
 
         // 2. Comparar a senha (A mágica do Bcrypt)
         // Ele pega a senha "senha123" e vê se bate com o hash "$2a$10$..."
@@ -76,17 +80,29 @@ exports.login = (req, res) => {
                 gender: user.gender
             }
         });
-    });
+
+    } catch (error) {
+        console.error('Erro no login:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
-exports.getAllPlayers = (req, res) => {
-    // Busca apenas ID e Nome de quem não é ADMIN (ou traga todos se preferir)
-    const query = "SELECT id, name FROM users ORDER BY name ASC";
-    
-    db.query(query, (err, results) => {
-        if (err) {
-            console.error("Erro ao listar jogadores:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(results);
-    });
+
+exports.getAllPlayers = async (req, res) => {
+    try {
+        // Busca apenas ID e Nome de quem não é ADMIN (ou traga todos se preferir)
+        const query = "SELECT id, name FROM users ORDER BY name ASC";
+        const [players] = await db.execute(query);
+        
+        res.json(players);
+        
+    } catch (error) {
+        console.error("Erro ao listar jogadores:", error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };

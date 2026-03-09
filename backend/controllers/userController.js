@@ -1,11 +1,19 @@
 const db = require('../db');
 
-exports.getAllPlayers = (req, res) => {
-    // Busca apenas quem NÃO é admin
-    const query = 'SELECT id, name, email FROM users WHERE role = "PLAYER" ORDER BY name';
+exports.getAllPlayers = async (req, res) => {
+    try {
+        // Busca apenas quem NÃO é admin
+        const query = 'SELECT id, name, email FROM users WHERE role = "PLAYER" ORDER BY name';
 
-    db.query(query, (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+        const [results] = await db.execute(query);
+        
         res.json(results);
-    });
+        
+    } catch (error) {
+        console.error('Erro ao buscar jogadores:', error);
+        res.status(500).json({ 
+            error: 'Erro interno do servidor',
+            message: error.message 
+        });
+    }
 };
