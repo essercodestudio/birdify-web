@@ -13,9 +13,16 @@ import Leaderboard from './pages/Leaderboard';
 import CourseManager from './pages/CourseManager';
 import PlayerDashboard from './pages/PlayerDashboard';
 
+// --- 1. IMPORTAR OS NOVOS ARQUIVOS DA LGPD ---
+import LGPDBanner from './pages/LGPDBanner';
+import Privacidade from './pages/Privacidade';
+
 function App() {
   return (
     <Router>
+      {/* --- 2. O BANNER APARECE EM TODO O SITE --- */}
+      <LGPDBanner />
+
       <Routes>
         {/* Tela Inicial */}
         <Route path="/" element={<JoinGame />} />
@@ -31,12 +38,12 @@ function App() {
         {/* Área do Jogo */}
         <Route path="/scorecard/:groupId" element={<Scorecard />} />
         
-        {/* --- 2. ESTA LINHA É A QUE FALTA PARA O ERRO SUMIR --- */}
         <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
-
         <Route path="/courses" element={<CourseManager />} />
-
         <Route path="/player" element={<PlayerDashboard />} />
+
+        {/* --- 3. NOVA ROTA PARA A POLÍTICA DE PRIVACIDADE --- */}
+        <Route path="/privacidade" element={<Privacidade />} />
         
       </Routes>
     </Router>

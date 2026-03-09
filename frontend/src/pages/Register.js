@@ -1,6 +1,6 @@
 // frontend/src/pages/Register.js
 import React, { useState } from 'react';
-import api from '../services/api'; // Ajuste o caminho se necessário
+import api from '../services/api'; 
 import { useNavigate, Link } from 'react-router-dom';
 
 function Register() {
@@ -10,15 +10,17 @@ function Register() {
     name: '',
     email: '',
     password: '',
-    gender: 'M' // Padrão Masculino
+    gender: 'M' 
   });
 
-  // TEMA PADRONIZADO
+  // --- NOVO ESTADO PARA LGPD ---
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+
   const theme = {
     bg: '#0f172a',
     card: '#1e293b',
     cardLight: '#334155',
-    accent: '#22c55e', // Verde Golf
+    accent: '#22c55e', 
     gold: '#eab308',
     textMain: '#f8fafc',
     textMuted: '#94a3b8',
@@ -31,8 +33,14 @@ function Register() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    
+    // Validação extra de segurança
+    if (!acceptedTerms) {
+      alert("Você precisa aceitar a Política de Privacidade para continuar.");
+      return;
+    }
+
     try {
-      // LOGICA ORIGINAL PRESERVADA: Envia como PLAYER
       await api.post('/auth/register', {
         ...formData,
         role: 'PLAYER' 
@@ -71,10 +79,25 @@ function Register() {
       border: `2px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: 'white', 
       appearance: 'none', cursor: 'pointer', outline: 'none' 
     },
+    // --- ESTILO DO CHECKBOX LGPD ---
+    checkboxContainer: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      textAlign: 'left',
+      gap: '10px',
+      marginBottom: '20px',
+      padding: '0 5px'
+    },
     button: { 
-      width: '100%', padding: '16px', backgroundColor: theme.accent, color: '#0f172a', 
-      border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: '800', 
-      fontSize: '16px', marginTop: '10px', boxShadow: '0 10px 15px -3px rgba(34, 197, 94, 0.3)' 
+      width: '100%', padding: '16px', 
+      backgroundColor: acceptedTerms ? theme.accent : '#475569', // Cinza se desativado
+      color: acceptedTerms ? '#0f172a' : '#94a3b8', 
+      border: 'none', borderRadius: '12px', 
+      cursor: acceptedTerms ? 'pointer' : 'not-allowed', 
+      fontWeight: '800', 
+      fontSize: '16px', marginTop: '10px', 
+      boxShadow: acceptedTerms ? '0 10px 15px -3px rgba(34, 197, 94, 0.3)' : 'none',
+      transition: 'all 0.3s ease'
     },
     footer: { marginTop: '25px', borderTop: `1px solid ${theme.cardLight}`, paddingTop: '20px' },
     link: { color: theme.gold, textDecoration: 'none', fontSize: '14px', fontWeight: '600' }
@@ -83,7 +106,7 @@ function Register() {
   return (
     <div style={styles.container}>
       <div style={styles.formBox}>
-       <div style={styles.logo}>Birdify</div>
+        <div style={styles.logo}>Birdify</div>
         <p style={styles.subtitle}>Crie seu perfil de jogador</p>
 
         <form onSubmit={handleRegister}>
@@ -113,7 +136,27 @@ function Register() {
             </select>
           </div>
 
-          <button type="submit" style={styles.button}>CRIAR CONTA AGORA</button>
+          {/* --- NOVO CAMPO: CHECKBOX LGPD --- */}
+          <div style={styles.checkboxContainer}>
+            <input 
+              type="checkbox" 
+              id="acceptedTerms"
+              checked={acceptedTerms}
+              onChange={(e) => setAcceptedTerms(e.target.checked)}
+              style={{ marginTop: '4px', cursor: 'pointer' }}
+            />
+            <label htmlFor="acceptedTerms" style={{ fontSize: '13px', color: theme.textMuted, cursor: 'pointer' }}>
+              Eu li e aceito a <Link to="/privacidade" target="_blank" style={{ color: theme.accent, textDecoration: 'none', fontWeight: 'bold' }}>Política de Privacidade</Link> e autorizo o uso dos meus dados para gestão de torneios.
+            </label>
+          </div>
+
+          <button 
+            type="submit" 
+            style={styles.button}
+            disabled={!acceptedTerms}
+          >
+            CRIAR CONTA AGORA
+          </button>
         </form>
         
         <div style={styles.footer}>
