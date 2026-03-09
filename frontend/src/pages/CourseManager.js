@@ -1,6 +1,6 @@
 // frontend/src/pages/CourseManager.js
 import React, { useState, useEffect } from "react";
-import axios from "axios";
+import api from "../services/api"; // Ajuste o caminho se necessário
 import { useNavigate } from "react-router-dom";
 
 function CourseManager() {
@@ -38,7 +38,7 @@ function CourseManager() {
 
   const loadCourses = async () => {
     try {
-      const res = await axios.get("http://localhost:3001/api/courses/list");
+      const res = await api.get("/courses/list");
       setCourses(res.data);
     } catch (error) {
       console.error(error);
@@ -52,7 +52,7 @@ function CourseManager() {
       return;
     }
     try {
-      await axios.post("http://localhost:3001/api/courses/create", {
+      await api.post("/courses/create", {
         name: newCourseName,
         city: newCourseCity,
         state: newCourseState,
@@ -79,9 +79,7 @@ function CourseManager() {
     }
 
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/courses/${id}/holes`,
-      );
+      const res = await api.get(`/courses/${id}/holes`);
       setHoles(res.data);
     } catch (error) {
       alert("Erro ao carregar buracos");
@@ -95,14 +93,11 @@ function CourseManager() {
       return;
     }
     try {
-      await axios.put(
-        `http://localhost:3001/api/courses/update/${selectedCourseId}`,
-        {
-          name: editCourseName,
-          city: editCourseCity,
-          state: editCourseState,
-        },
-      );
+      await api.put(`/courses/update/${selectedCourseId}`, {
+        name: editCourseName,
+        city: editCourseCity,
+        state: editCourseState,
+      });
       alert("✅ Dados do campo atualizados com sucesso!");
       loadCourses(); // Recarrega a lista lateral para mostrar o novo nome
     } catch (error) {
@@ -118,9 +113,7 @@ function CourseManager() {
         )
       ) {
         try {
-          await axios.delete(
-            `http://localhost:3001/api/courses/delete/${courseId}`,
-          );
+          await api.delete(`/courses/delete/${courseId}`);
           alert("Campo excluído com sucesso!");
           if (selectedCourseId === courseId) {
             setSelectedCourseId(null);
@@ -155,7 +148,7 @@ function CourseManager() {
 
   const handleSave = async () => {
     try {
-      await axios.post("http://localhost:3001/api/courses/update-holes", {
+      await api.post("/courses/update-holes", {
         holes,
       });
       alert("✅ Configuração de buracos salva com sucesso!");

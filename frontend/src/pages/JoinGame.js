@@ -1,6 +1,6 @@
 // frontend/src/pages/JoinGame.js
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../services/api'; // Ajuste o caminho se necessário
 import { useNavigate } from 'react-router-dom';
 
 function JoinGame() {
@@ -40,14 +40,14 @@ function JoinGame() {
     e.preventDefault();
     try {
       // 1. A MÁGICA DE SEGURANÇA: Agora enviamos o código E quem está tentando entrar!
-      const res = await axios.post('http://localhost:3001/api/groups/join', { 
+      const res = await api.post('/groups/join', { 
         access_code: accessCode,
         user_id: user.id 
       });
       
       const group = res.data.group;
 
-      const listRes = await axios.get(`http://localhost:3001/api/groups/list/${group.tournament_id}`);
+      const listRes = await api.get(`/groups/list/${group.tournament_id}`);
       const allGroups = listRes.data;
       const myGroup = allGroups.find(g => g.id === group.id) || group;
 
@@ -109,7 +109,7 @@ function JoinGame() {
     }));
 
     try {
-      await axios.put('http://localhost:3001/api/groups/save-handicaps', {
+      await api.put('/groups/save-handicaps', {
         group_id: pendingGroup.id,
         players_data: playersData
       });

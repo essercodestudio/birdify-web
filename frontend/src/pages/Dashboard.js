@@ -1,6 +1,6 @@
 // frontend/src/pages/Dashboard.js
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../services/api'; // Ajuste o caminho se necessário
 import { useNavigate } from 'react-router-dom';
 
 function Dashboard() {
@@ -56,14 +56,14 @@ function Dashboard() {
 
   const fetchTournaments = useCallback(async () => {
     try {
-      const response = await axios.get('http://localhost:3001/api/tournaments/list');
+      const response = await api.get('/tournaments/list');
       setTournaments(response.data);
     } catch (error) { console.error("Erro ao buscar torneios:", error); }
   }, []);
 
   const fetchCourses = useCallback(async () => {
     try {
-      const response = await axios.get('http://localhost:3001/api/courses/list');
+      const response = await api.get('/courses/list');
       setCourses(response.data);
     } catch (error) { console.error("Erro ao buscar campos:", error); }
   }, []);
@@ -98,7 +98,7 @@ function Dashboard() {
 
   const handleDeleteTournament = async (id, name) => {
     if (window.confirm(`ATENÇÃO: Deseja excluir "${name}"?`) && window.confirm(`TEM CERTEZA ABSOLUTA?`)) {
-        try { await axios.delete(`http://localhost:3001/api/tournaments/delete/${id}`); fetchTournaments(); }
+        try { await api.delete(`/tournaments/delete/${id}`); fetchTournaments(); }
         catch (e) { alert('Erro ao excluir.'); }
     }
   };
@@ -106,7 +106,7 @@ function Dashboard() {
   const handleToggleStatus = async (id, status) => {
     const newStatus = status === 'OPEN' ? 'concluido' : 'OPEN';
     if (window.confirm(`Deseja alterar o status?`)) {
-        try { await axios.put(`http://localhost:3001/api/tournaments/status/${id}`, { status: newStatus }); fetchTournaments(); }
+        try { await api.put(`/tournaments/status/${id}`, { status: newStatus }); fetchTournaments(); }
         catch (e) { alert('Erro no status.'); }
     }
   };
@@ -123,8 +123,8 @@ function Dashboard() {
     };
     
     try {
-      if (isEditing) await axios.put(`http://localhost:3001/api/tournaments/update/${editTournamentId}`, payload);
-      else await axios.post('http://localhost:3001/api/tournaments/create', payload);
+      if (isEditing) await api.put(`/tournaments/update/${editTournamentId}`, payload);
+      else await api.post('/tournaments/create', payload);
       handleCancelEdit(); fetchTournaments();
       alert('Sucesso!');
     } catch (error) { alert('Erro ao salvar.'); }
@@ -132,7 +132,7 @@ function Dashboard() {
 
   const handleEditClick = async (id) => {
     try {
-      const res = await axios.get(`http://localhost:3001/api/tournaments/${id}`);
+      const res = await api.get(`/tournaments/${id}`);
       const t = res.data;
       const formatDate = (d) => d ? new Date(new Date(d).getTime() - new Date(d).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
       

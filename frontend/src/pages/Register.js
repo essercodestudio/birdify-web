@@ -1,6 +1,6 @@
 // frontend/src/pages/Register.js
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../services/api'; // Ajuste o caminho se necessário
 import { useNavigate, Link } from 'react-router-dom';
 
 function Register() {
@@ -33,7 +33,7 @@ function Register() {
     e.preventDefault();
     try {
       // LOGICA ORIGINAL PRESERVADA: Envia como PLAYER
-      await axios.post('http://localhost:3001/api/auth/register', {
+      await api.post('/auth/register', {
         ...formData,
         role: 'PLAYER' 
       });

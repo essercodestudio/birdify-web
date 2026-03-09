@@ -1,6 +1,6 @@
 // frontend/src/pages/TournamentManager.js
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "axios";
+import api from "../services/api"; // Ajuste o caminho se necessário
 import { useParams, useNavigate } from "react-router-dom";
 
 function TournamentManager() {
@@ -32,9 +32,7 @@ function TournamentManager() {
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/groups/list/${id}`,
-      );
+      const res = await api.get(`/groups/list/${id}`);
       setGroups(res.data);
     } catch (error) {
       console.error("Erro ao buscar grupos", error);
@@ -43,9 +41,7 @@ function TournamentManager() {
 
   const fetchInscriptions = useCallback(async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/inscriptions/list/${id}`,
-      );
+      const res = await api.get(`/inscriptions/list/${id}`);
       setInscriptions(res.data);
     } catch (error) {
       console.error("Erro ao buscar inscrições", error);
@@ -60,7 +56,7 @@ function TournamentManager() {
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     try {
-      await axios.post("http://localhost:3001/api/groups/create", {
+      await api.post("/groups/create", {
         tournament_id: id,
         group_name: newGroupName,
         starting_hole: startingHole,
@@ -76,9 +72,7 @@ function TournamentManager() {
   const handleDeleteGroup = async (groupId, groupName) => {
     if (window.confirm(`Deseja mesmo apagar o "${groupName}"?`)) {
       try {
-        await axios.delete(
-          `http://localhost:3001/api/groups/delete/${groupId}`,
-        );
+        await api.delete(`/groups/delete/${groupId}`);
         fetchGroups();
       } catch (error) {
         alert("Erro ao excluir grupo.");
@@ -92,7 +86,7 @@ function TournamentManager() {
       return;
     }
     try {
-      await axios.post("http://localhost:3001/api/groups/add-player", {
+      await api.post("/groups/add-player", {
         group_id: groupId,
         user_id: selectedPlayerId,
       });
@@ -107,9 +101,7 @@ function TournamentManager() {
   const handleRemovePlayer = async (groupId, userId, playerName) => {
     if (window.confirm(`Remover ${playerName} deste grupo?`)) {
       try {
-        await axios.delete(
-          `http://localhost:3001/api/groups/remove-player/${groupId}/${userId}`,
-        );
+        await api.delete(`/groups/remove-player/${groupId}/${userId}`);
         fetchGroups();
       } catch (error) {
         alert("Erro ao remover jogador.");
@@ -119,10 +111,7 @@ function TournamentManager() {
 
   const generateAccessCode = async (groupId) => {
     try {
-      const res = await axios.post(
-        "http://localhost:3001/api/groups/generate-code",
-        { group_id: groupId },
-      );
+      const res = await api.post("/groups/generate-code", { group_id: groupId });
       alert(`Código Gerado: ${res.data.access_code}`);
       fetchGroups();
     } catch (error) {
@@ -132,10 +121,7 @@ function TournamentManager() {
 
   const handleUpdateStatus = async (inscriptionId, newStatus) => {
     try {
-      await axios.put(
-        `http://localhost:3001/api/inscriptions/update-status/${inscriptionId}`,
-        { status: newStatus },
-      );
+      await api.put(`/inscriptions/update-status/${inscriptionId}`, { status: newStatus });
       fetchInscriptions();
     } catch (error) {
       alert("Erro ao atualizar status.");

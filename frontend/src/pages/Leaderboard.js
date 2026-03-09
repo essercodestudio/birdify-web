@@ -1,6 +1,6 @@
 // frontend/src/pages/Leaderboard.js
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "axios";
+import api from "../services/api"; // Ajuste o caminho se necessário
 import { useParams, useNavigate } from "react-router-dom";
 
 function Leaderboard() {
@@ -36,9 +36,7 @@ function Leaderboard() {
 
   const fetchTournamentInfo = useCallback(async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/tournaments/${actualId}`,
-      );
+      const res = await api.get(`/tournaments/${actualId}`);
       
       if (res.data.sponsors) {
         setSponsors(res.data.sponsors);
@@ -64,9 +62,7 @@ function Leaderboard() {
 
   const fetchRanking = useCallback(async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/leaderboard/${actualId}`,
-      );
+      const res = await api.get(`/leaderboard/${actualId}`);
 
       const dataWithNet = res.data.map((p) => {
         const total = parseInt(p.total_strokes || 0);
@@ -111,9 +107,7 @@ function Leaderboard() {
   const handlePlayerClick = async (player) => {
     setSelectedPlayer(player);
     try {
-      const res = await axios.get(
-        `http://localhost:3001/api/leaderboard/details/${actualId}/${player.id}`,
-      );
+      const res = await api.get(`/leaderboard/details/${actualId}/${player.id}`);
       setPlayerScores(res.data);
       setIsModalOpen(true);
     } catch (error) {

@@ -1,6 +1,6 @@
 // frontend/src/pages/Scorecard.js
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "axios";
+import api from "../services/api"; // Ajuste o caminho se necessário
 import { useParams, useNavigate } from "react-router-dom";
 
 function Scorecard() {
@@ -38,21 +38,21 @@ function Scorecard() {
       // Inicia a lista de buracos permitidos para revisão
       setPlayedHoles([savedGroup.starting_hole]);
 
-      const groupList = await axios.get(`http://localhost:3001/api/groups/list/${savedGroup.tournament_id}`);
+      const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
       const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
 
       if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
 
       // --- CORREÇÃO: Busca o Course ID direto do torneio para não dar erro ---
-      const tourRes = await axios.get(`http://localhost:3001/api/tournaments/${savedGroup.tournament_id}`);
+      const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
       const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
 
       if (actualCourseId) {
-          const courseRes = await axios.get(`http://localhost:3001/api/courses/${actualCourseId}/holes`);
+          const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
           setHolesData(courseRes.data);
       }
 
-      const scoresRes = await axios.get(`http://localhost:3001/api/scores/list/${savedGroup.tournament_id}`);
+      const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
       const scoresMap = {};
       scoresRes.data.forEach((s) => {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
@@ -139,7 +139,7 @@ function Scorecard() {
       const savePromises = players.map(p => {
         const score = scores[`${p.id}-${currentHole}`];
         if (score && score > 0) {
-          return axios.post("http://localhost:3001/api/scores/save", {
+          return api.post("/scores/save", {
             tournament_id: group.tournament_id,
             user_id: p.id,
             hole_number: currentHole,
