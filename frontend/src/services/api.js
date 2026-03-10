@@ -1,9 +1,13 @@
 import axios from 'axios';
 
-// O React busca automaticamente no arquivo .env a variável REACT_APP_API_URL
-// Se ela não existir (como no Git), ele usa o "http://localhost:3001/api" por padrão.
+// Se estivermos em produção (na Hostinger), usamos '/api'
+// Se estivermos em desenvolvimento (seu PC), usamos 'http://localhost:3001/api'
+const isProduction = process.env.NODE_ENV === 'production';
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || "http://localhost:3001/api"
+  baseURL: isProduction 
+    ? "/api" 
+    : "http://localhost:3001/api"
 });
 
 export default api;
