@@ -50,10 +50,13 @@ exports.createInscription = async (req, res) => {
             return res.status(400).json({ message: 'Já estás inscrito neste torneio!' });
         }
         
+        // AJUSTE DE SEGURANÇA: Se category_id vier undefined (ou null do JS), passamos o null pro banco
+        const safeCategoryId = category_id || null;
+
         // Insere a nova inscrição como PENDENTE
         const [result] = await db.execute(
             'INSERT INTO inscriptions (tournament_id, user_id, category_id, status) VALUES (?, ?, ?, "PENDING")', 
-            [tournament_id, user_id, category_id]
+            [tournament_id, user_id, safeCategoryId]
         );
         
         res.json({ 
@@ -75,11 +78,13 @@ exports.getInscriptions = async (req, res) => {
     try {
         const { tournamentId } = req.params;
         
+        // A MÁGICA: Trocamos o JOIN por LEFT JOIN na tabela de categorias.
+        // Assim, mesmo que category_id seja nulo, o jogador aparece na lista do painel!
         const query = `
             SELECT i.id, i.status, u.name as player_name, c.name as category_name, i.user_id 
             FROM inscriptions i
             JOIN users u ON i.user_id = u.id
-            JOIN tournament_categories c ON i.category_id = c.id
+            LEFT JOIN tournament_categories c ON i.category_id = c.id
             WHERE i.tournament_id = ?
         `;
         

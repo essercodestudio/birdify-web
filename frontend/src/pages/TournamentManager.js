@@ -274,7 +274,7 @@ function TournamentManager() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={{ margin: 0, fontSize: "28px" }}>🦅 Birdify Admin</h1>
+        <h1 style={{ margin: 0, fontSize: "28px" }}>Birdify Admin</h1>
         <button onClick={() => navigate("/dashboard")} style={styles.backBtn}>
           ⬅ Voltar ao Painel
         </button>

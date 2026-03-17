@@ -1,13 +1,12 @@
 // frontend/src/pages/Leaderboard.js
 import React, { useState, useEffect, useCallback } from "react";
-import api from "../services/api"; // Ajuste o caminho se necessário
+import api from "../services/api"; 
 import { useParams, useNavigate } from "react-router-dom";
 
 function Leaderboard() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
 
-  // Extrai apenas o número do ID antes do traço
   const actualId = tournamentId.split("-")[0];
 
   const [ranking, setRanking] = useState([]);
@@ -18,46 +17,25 @@ function Leaderboard() {
   const [playerScores, setPlayerScores] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Estados para o Carrossel de Patrocinadores
   const [sponsors, setSponsors] = useState([]);
   const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0);
 
-  // Tema Elegante e de Alto Contraste
   const theme = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    cardLight: "#334155",
-    accent: "#22c55e",
-    gold: "#eab308",
-    textMain: "#f8fafc",
-    textMuted: "#94a3b8",
-    danger: "#ef4444",
+    bg: "#0f172a", card: "#1e293b", cardLight: "#334155", accent: "#22c55e",
+    gold: "#eab308", textMain: "#f8fafc", textMuted: "#94a3b8", danger: "#ef4444",
   };
 
   const fetchTournamentInfo = useCallback(async () => {
     try {
       const res = await api.get(`/tournaments/${actualId}`);
-      
-      if (res.data.sponsors) {
-        setSponsors(res.data.sponsors);
-      }
+      if (res.data.sponsors) setSponsors(res.data.sponsors);
 
       let tournamentCategories = res.data.categories;
       if (typeof tournamentCategories === "string") {
-        try {
-          tournamentCategories = JSON.parse(tournamentCategories);
-        } catch (e) {
-          tournamentCategories = [];
-        }
+        try { tournamentCategories = JSON.parse(tournamentCategories); } catch (e) { tournamentCategories = []; }
       }
-      setTabs([
-        "Absoluto Gross",
-        "Absoluto Net",
-        ...(Array.isArray(tournamentCategories) ? tournamentCategories : []),
-      ]);
-    } catch (error) {
-      console.error("Erro info torneio", error);
-    }
+      setTabs(["Absoluto Gross", "Absoluto Net", ...(Array.isArray(tournamentCategories) ? tournamentCategories : [])]);
+    } catch (error) { console.error("Erro info torneio", error); }
   }, [actualId]);
 
   const fetchRanking = useCallback(async () => {
@@ -73,16 +51,13 @@ function Leaderboard() {
           ...p,
           handicap: hc,
           total_strokes: total,
-          net_strokes: total > 0 ? total - hc : 0,
           holes_played: parseInt(p.holes_played || 0),
           gross_to_par: toPar,
-          net_to_par: toPar - hc
+          net_to_par: toPar - hc // Aqui dava o número infinito, vamos tratar na renderização!
         };
       });
       setRanking(dataWithNet);
-    } catch (error) {
-      console.error("Erro ranking Birdify", error);
-    }
+    } catch (error) { console.error("Erro ranking Birdify", error); }
   }, [actualId]);
 
   useEffect(() => {
@@ -96,9 +71,7 @@ function Leaderboard() {
     let interval;
     if (sponsors && sponsors.length > 1) {
       interval = setInterval(() => {
-        setCurrentSponsorIndex((prev) => 
-          prev === sponsors.length - 1 ? 0 : prev + 1
-        );
+        setCurrentSponsorIndex((prev) => prev === sponsors.length - 1 ? 0 : prev + 1);
       }, 8000);
     }
     return () => clearInterval(interval);
@@ -110,9 +83,7 @@ function Leaderboard() {
       const res = await api.get(`/leaderboard/details/${actualId}/${player.id}`);
       setPlayerScores(res.data);
       setIsModalOpen(true);
-    } catch (error) {
-      alert("Erro ao carregar cartão do jogador.");
-    }
+    } catch (error) { alert("Erro ao carregar cartão do jogador."); }
   };
 
   const getFilteredRanking = () => {
@@ -120,8 +91,7 @@ function Leaderboard() {
     filtered = filtered.filter((p) => {
       const hc = p.handicap || 0;
       const sexo = p.gender || p.sexo || "M";
-      if (activeTab === "Absoluto Gross" || activeTab === "Absoluto Net")
-        return true;
+      if (activeTab === "Absoluto Gross" || activeTab === "Absoluto Net") return true;
 
       if (sexo === "M" || sexo === "Masculino") {
         if (activeTab.includes("Feminino")) return false;
@@ -162,113 +132,34 @@ function Leaderboard() {
   };
   const { data: displayedRanking, isNet } = getFilteredRanking();
 
-  // --- MÁGICA DE CORES DO CARTÃO (PGA TOUR STYLE) ---
   const getScoreStyle = (strokes, par) => {
     if (!strokes || !par) return { color: theme.textMain, bg: theme.bg, border: theme.cardLight };
     const diff = strokes - par;
-    
-    if (diff <= -2) return { color: theme.gold, bg: 'rgba(234, 179, 8, 0.15)', border: theme.gold }; // Eagle/Hole-in-one
-    if (diff === -1) return { color: theme.accent, bg: 'rgba(34, 197, 94, 0.15)', border: theme.accent }; // Birdie
-    if (diff === 0) return { color: theme.textMain, bg: theme.cardLight, border: theme.cardLight }; // Par
-    return { color: theme.danger, bg: 'rgba(239, 68, 68, 0.15)', border: theme.danger }; // Bogey ou Pior
+    if (diff <= -2) return { color: theme.gold, bg: 'rgba(234, 179, 8, 0.15)', border: theme.gold }; 
+    if (diff === -1) return { color: theme.accent, bg: 'rgba(34, 197, 94, 0.15)', border: theme.accent }; 
+    if (diff === 0) return { color: theme.textMain, bg: theme.cardLight, border: theme.cardLight }; 
+    return { color: theme.danger, bg: 'rgba(239, 68, 68, 0.15)', border: theme.danger }; 
   };
 
   const styles = {
-    container: {
-      padding: "20px",
-      backgroundColor: theme.bg,
-      minHeight: "100vh",
-      fontFamily: "'Segoe UI', Roboto, sans-serif",
-      color: theme.textMain,
-      display: "flex",
-      flexDirection: "column", 
-    },
-    topBar: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: "20px",
-    },
-    btnBack: {
-      backgroundColor: "transparent",
-      color: theme.gold,
-      border: `1px solid ${theme.gold}`,
-      padding: "8px 16px",
-      borderRadius: "8px",
-      fontWeight: "bold",
-      cursor: "pointer",
-      display: "flex",
-      alignItems: "center",
-      gap: "5px",
-    },
-    tabsGrid: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-      gap: "8px",
-      marginBottom: "25px",
-    },
-    tabBtn: (isActive) => ({
-      padding: "12px 10px",
-      borderRadius: "8px",
-      border: "none",
-      fontSize: "12px",
-      fontWeight: "bold",
-      cursor: "pointer",
-      backgroundColor: isActive ? theme.accent : theme.card,
-      color: isActive ? "#000" : theme.textMuted,
-      transition: "0.2s",
-    }),
-    tableCard: {
-      backgroundColor: theme.card,
-      borderRadius: "12px",
-      overflow: "hidden",
-      boxShadow: "0 8px 30px rgba(0,0,0,0.4)",
-      flex: 1, 
-      marginBottom: "30px", 
-    },
-    row: {
-      display: "grid",
-      gridTemplateColumns: "50px 1fr 70px 70px 70px",
-      padding: "15px 20px",
-      borderBottom: `1px solid ${theme.cardLight}`,
-      alignItems: "center",
-    },
-    headerRow: {
-      backgroundColor: theme.cardLight,
-      color: theme.textMuted,
-      fontSize: "11px",
-      fontWeight: "bold",
-      textTransform: "uppercase",
-    },
-    nameLabel: {
-      fontSize: "15px",
-      fontWeight: "600",
-      color: theme.accent,
-      cursor: "pointer",
-    },
-    scoreCell: { textAlign: "center", fontSize: "15px", fontWeight: "bold" },
-    badge: (val) => ({
-      textAlign: "center",
-      padding: "4px 0",
-      borderRadius: "6px",
-      fontSize: "13px",
-      fontWeight: "800",
-      backgroundColor: val < 0 ? "rgba(34, 197, 94, 0.15)" : val > 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(255,255,255,0.05)",
-      color: val < 0 ? theme.accent : val > 0 ? theme.danger : theme.textMuted,
-    }),
-    modalOverlay: {
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 2000,
-    },
-    modalContent: {
-      backgroundColor: theme.card, padding: "25px", borderRadius: "15px", width: "90%", maxWidth: "500px", border: `1px solid ${theme.cardLight}`,
-    },
-    scoreGrid: {
-      display: "grid", gridTemplateColumns: "repeat(9, 1fr)", gap: "6px", marginBottom: "15px",
-    },
-    scoreBox: {
-      padding: "6px 2px", textAlign: "center", borderRadius: "6px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center"
-    },
+    container: { padding: "20px", backgroundColor: theme.bg, minHeight: "100vh", fontFamily: "'Segoe UI', Roboto, sans-serif", color: theme.textMain, display: "flex", flexDirection: "column" },
+    topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" },
+    btnBack: { backgroundColor: "transparent", color: theme.gold, border: `1px solid ${theme.gold}`, padding: "8px 16px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px" },
+    tabsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", marginBottom: "25px" },
+    tabBtn: (isActive) => ({ padding: "12px 10px", borderRadius: "8px", border: "none", fontSize: "12px", fontWeight: "bold", cursor: "pointer", backgroundColor: isActive ? theme.accent : theme.card, color: isActive ? "#000" : theme.textMuted, transition: "0.2s" }),
+    tableCard: { backgroundColor: theme.card, borderRadius: "12px", overflow: "hidden", boxShadow: "0 8px 30px rgba(0,0,0,0.4)", flex: 1, marginBottom: "30px" },
+    
+    // --- CORREÇÃO DO GRID PARA CABER NO CELULAR ---
+    row: { display: "grid", gridTemplateColumns: "35px 1fr 50px 50px 60px", padding: "15px 10px", borderBottom: `1px solid ${theme.cardLight}`, alignItems: "center", gap: "5px" },
+    headerRow: { backgroundColor: theme.cardLight, color: theme.textMuted, fontSize: "10px", fontWeight: "bold", textTransform: "uppercase" },
+    nameLabel: { fontSize: "14px", fontWeight: "600", color: theme.accent, cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+    scoreCell: { textAlign: "center", fontSize: "14px", fontWeight: "bold" },
+    
+    badge: (val) => ({ textAlign: "center", padding: "4px 0", borderRadius: "6px", fontSize: "13px", fontWeight: "800", backgroundColor: val < 0 ? "rgba(34, 197, 94, 0.15)" : val > 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(255,255,255,0.05)", color: val < 0 ? theme.accent : val > 0 ? theme.danger : theme.textMuted }),
+    modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 2000 },
+    modalContent: { backgroundColor: theme.card, padding: "25px", borderRadius: "15px", width: "90%", maxWidth: "500px", border: `1px solid ${theme.cardLight}` },
+    scoreGrid: { display: "grid", gridTemplateColumns: "repeat(9, 1fr)", gap: "6px", marginBottom: "15px" },
+    scoreBox: { padding: "6px 2px", textAlign: "center", borderRadius: "6px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
   };
 
   const renderNine = (start) => (
@@ -277,22 +168,13 @@ function Leaderboard() {
         const hole = playerScores.find((h) => h.hole_number === num);
         const strokes = hole ? hole.strokes : null;
         const par = hole ? hole.par : null; 
-        
-        // Aplica o estilo baseado na diferença de tacadas e par
         const styling = getScoreStyle(strokes, par);
 
         return (
           <div key={num} style={{ ...styles.scoreBox, backgroundColor: styling.bg, border: `1px solid ${styling.border}` }}>
             <div style={{ fontSize: "10px", color: theme.textMuted, fontWeight: "bold" }}>B{num}</div>
-            
-            {/* Exibe o PAR do buraco logo abaixo do número do buraco */}
-            <div style={{ fontSize: "9px", color: theme.textMuted, marginBottom: '2px' }}>
-              {par ? `Par ${par}` : "-"}
-            </div>
-            
-            <div style={{ fontSize: "16px", fontWeight: "900", color: styling.color, marginTop: '2px' }}>
-              {strokes ? strokes : "-"}
-            </div>
+            <div style={{ fontSize: "9px", color: theme.textMuted, marginBottom: '2px' }}>{par ? `Par ${par}` : "-"}</div>
+            <div style={{ fontSize: "16px", fontWeight: "900", color: styling.color, marginTop: '2px' }}>{strokes ? strokes : "-"}</div>
           </div>
         );
       })}
@@ -301,13 +183,8 @@ function Leaderboard() {
 
   return (
     <div style={styles.container}>
-      
-      {/* CABEÇALHO UNIFICADO E LIMPO */}
       <div style={styles.topBar}>
-        <button onClick={() => navigate(-1)} style={styles.btnBack}>
-          ⬅ VOLTAR AO JOGO
-        </button>
-        
+        <button onClick={() => navigate(-1)} style={styles.btnBack}>⬅ VOLTAR AO JOGO</button>
         <div style={{ color: theme.danger, fontWeight: "bold", fontSize: "12px", display: "flex", alignItems: "center", gap: "5px" }}>
           <span className="dot"></span> LIVE
         </div>
@@ -315,13 +192,7 @@ function Leaderboard() {
 
       <div style={styles.tabsGrid}>
         {tabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={styles.tabBtn(activeTab === tab)}
-          >
-            {tab}
-          </button>
+          <button key={tab} onClick={() => setActiveTab(tab)} style={styles.tabBtn(activeTab === tab)}>{tab}</button>
         ))}
       </div>
 
@@ -335,8 +206,17 @@ function Leaderboard() {
         </div>
 
       {displayedRanking.map((row, index) => {
-          const score = isNet ? row.net_strokes : row.total_strokes;
-          const relativePar = isNet ? row.net_to_par : row.gross_to_par;
+          // --- CORREÇÃO MATEMÁTICA AQUI ---
+          const score = row.total_strokes; // TOTAL agora sempre mostra as tacadas puras
+          const relativeParRaw = isNet ? row.net_to_par : row.gross_to_par;
+
+          // Arredonda para 1 casa decimal e remove o ".0" se for número redondo
+          let displayPar = "E";
+          if (row.holes_played > 0) {
+              if (relativeParRaw === 0) displayPar = "E";
+              else if (relativeParRaw > 0) displayPar = `+${relativeParRaw.toFixed(1).replace('.0', '')}`;
+              else displayPar = relativeParRaw.toFixed(1).replace('.0', '');
+          }
 
           return (
             <div key={index} style={styles.row}>
@@ -359,8 +239,8 @@ function Leaderboard() {
                 {row.holes_played === 0 ? "--" : score}
               </div>
 
-              <div style={styles.badge(relativePar)}>
-                {row.holes_played === 0 ? "--" : relativePar > 0 ? `+${relativePar}` : relativePar < 0 ? relativePar : "E"}
+              <div style={styles.badge(relativeParRaw)}>
+                {row.holes_played === 0 ? "--" : displayPar}
               </div>
             </div>
           );
@@ -371,24 +251,13 @@ function Leaderboard() {
       {sponsors && sponsors.length > 0 && (
         <div style={{ textAlign: 'center', paddingBottom: '20px', marginTop: '20px' }}>
           <p style={{fontSize: '11px', color: theme.textMuted, marginBottom: '15px', letterSpacing: '2px', fontWeight: 'bold'}}>PATROCÍNIO OFICIAL</p>
-          
           <div style={{ height: '90px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <img 
-              key={currentSponsorIndex} 
-              src={sponsors[currentSponsorIndex].image_url} 
-              alt={sponsors[currentSponsorIndex].name || 'Patrocinador'} 
-              style={{ maxHeight: '100%', maxWidth: '250px', objectFit: 'contain', animation: 'fadeIn 0.5s ease-in' }}
-            />
+            <img key={currentSponsorIndex} src={sponsors[currentSponsorIndex].image_url} alt="Patrocinador" style={{ maxHeight: '100%', maxWidth: '250px', objectFit: 'contain', animation: 'fadeIn 0.5s ease-in' }} />
           </div>
-
           {sponsors.length > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '15px' }}>
               {sponsors.map((_, idx) => (
-                <div 
-                  key={idx}
-                  onClick={() => setCurrentSponsorIndex(idx)}
-                  style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: currentSponsorIndex === idx ? theme.gold : theme.cardLight, cursor: 'pointer', transition: 'all 0.3s ease' }}
-                />
+                <div key={idx} onClick={() => setCurrentSponsorIndex(idx)} style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: currentSponsorIndex === idx ? theme.gold : theme.cardLight, cursor: 'pointer', transition: 'all 0.3s ease' }} />
               ))}
             </div>
           )}
@@ -400,28 +269,15 @@ function Leaderboard() {
         <div style={styles.modalOverlay} onClick={() => setIsModalOpen(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-              <h3 style={{ margin: 0, color: theme.accent }}>
-                {selectedPlayer.name}
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "20px" }}>
-                ×
-              </button>
+              <h3 style={{ margin: 0, color: theme.accent }}>{selectedPlayer.name}</h3>
+              <button onClick={() => setIsModalOpen(false)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "20px" }}>×</button>
             </div>
-
-            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px" }}>
-              IDA (FRONT 9)
-            </p>
+            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px" }}>IDA (FRONT 9)</p>
             {renderNine(1)}
-
-            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px", marginTop: "15px" }}>
-              VOLTA (BACK 9)
-            </p>
+            <p style={{ color: theme.textMuted, fontSize: "12px", marginBottom: "5px", marginTop: "15px" }}>VOLTA (BACK 9)</p>
             {renderNine(10)}
-
             <div style={{ marginTop: "20px", paddingTop: "15px", borderTop: `1px solid ${theme.cardLight}`, textAlign: "center" }}>
-              <span style={{ fontSize: "18px" }}>
-                Total Gross: <strong>{selectedPlayer.total_strokes}</strong>
-              </span>
+              <span style={{ fontSize: "18px" }}>Total Gross: <strong>{selectedPlayer.total_strokes}</strong></span>
             </div>
           </div>
         </div>

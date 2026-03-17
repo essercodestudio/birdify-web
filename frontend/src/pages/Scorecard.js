@@ -1,7 +1,27 @@
 // frontend/src/pages/Scorecard.js
 import React, { useState, useEffect, useCallback } from "react";
-import api from "../services/api"; // Ajuste o caminho se necessário
+import api from "../services/api"; 
 import { useParams, useNavigate } from "react-router-dom";
+
+// --- O CÉREBRO DAS CATEGORIAS E CORES DE TEE ---
+const calcularPerfilGolfista = (genero, handicap) => {
+  const hc = parseFloat(handicap) || 0;
+  let tee = { nome: "Verde", cor: "#22c55e" }; // Padrão Feminino
+  let cat = "F";
+
+  if (genero === "M" || genero === "Masculino") {
+    if (hc <= 8.5) { tee = { nome: "Preto", cor: "#000000" }; cat = "M1"; }
+    else if (hc <= 14.0) { tee = { nome: "Azul", cor: "#0000FF" }; cat = "M2"; }
+    else if (hc <= 22.1) { tee = { nome: "Branco", cor: "#ffffff" }; cat = "M3"; }
+    else { tee = { nome: "Branco", cor: "#ffffff" }; cat = "M4"; }
+  } else {
+    if (hc <= 16.1) cat = "F1";
+    else if (hc <= 23.7) cat = "F2";
+    else cat = "F3";
+  }
+
+  return { tee, cat };
+};
 
 function Scorecard() {
   const { groupId } = useParams();
@@ -13,7 +33,7 @@ function Scorecard() {
 
   const [currentHole, setCurrentHole] = useState(1);
   const [scores, setScores] = useState({});
-  const [playedHoles, setPlayedHoles] = useState([]); // Histórico de buracos jogados
+  const [playedHoles, setPlayedHoles] = useState([]);
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
@@ -34,8 +54,6 @@ function Scorecard() {
       }
       setGroup(savedGroup);
       setCurrentHole(savedGroup.starting_hole);
-      
-      // Inicia a lista de buracos permitidos para revisão
       setPlayedHoles([savedGroup.starting_hole]);
 
       const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
@@ -43,7 +61,6 @@ function Scorecard() {
 
       if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
 
-      // --- CORREÇÃO: Busca o Course ID direto do torneio para não dar erro ---
       const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
       const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
 
@@ -58,36 +75,25 @@ function Scorecard() {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
       });
       setScores(scoresMap);
-     // A MÁGICA DO RETORNO: Descobre o último buraco jogado (AGORA SÓ DO SEU GRUPO)
+      
       if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
-        
-        // 1. Pega os IDs apenas dos jogadores do grupo atual
         const groupPlayerIds = myGroupData.players.map(p => p.id);
-
-        // 2. Filtra os scores para mostrar SÓ os pontos desses jogadores
         const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
 
         if (scoresDoMeuGrupo.length > 0) {
-          // 3. Agora sim, pega o buraco mais alto que O SEU GRUPO já anotou
           const playedHoleNumbers = scoresDoMeuGrupo.map(s => s.hole_number);
           const maxHole = Math.max(...playedHoleNumbers);
           
           if (maxHole >= 1 && maxHole <= 18) {
              setCurrentHole(maxHole);
-             
-             // Reconstrói a lista do histórico para permitir a navegação livre para trás
              const reconstructedHistory = [];
              
-             // Se saiu do 1, a lista é simples (ex: 1, 2, 3...)
              if (savedGroup.starting_hole <= maxHole) {
                for (let i = savedGroup.starting_hole; i <= maxHole; i++) reconstructedHistory.push(i);
-             } 
-             // Se saiu do 10 (Shotgun/Crossover) e já passou da virada do 18 pro 1, a lista dá a volta!
-             else {
+             } else {
                for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
                for (let i = 1; i <= maxHole; i++) reconstructedHistory.push(i);
              }
-
              setPlayedHoles(reconstructedHistory);
           }
         }
@@ -101,7 +107,6 @@ function Scorecard() {
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
 
-  // Só mexe no número na tela (Visual)
   const handleScoreChange = (userId, delta) => {
     const key = `${userId}-${currentHole}`;
     const currentScore = scores[key];
@@ -114,14 +119,10 @@ function Scorecard() {
     }
 
     if (newScore < 1) newScore = 1;
-
     setScores((prev) => ({ ...prev, [key]: newScore }));
   };
 
-  // --- TRAVA DE NAVEGAÇÃO E SALVAMENTO BIRDIFY (PGA STYLE) ---
   const changeHole = async (delta) => {
-    
-    // 1. SE TENTAR AVANÇAR: Confere se todo mundo do grupo tem nota
     if (delta > 0) {
       const missingPlayer = players.find((p) => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -130,11 +131,10 @@ function Scorecard() {
 
       if (missingPlayer) {
         alert(`⚠️ Falta anotar o score de: ${missingPlayer.name}`);
-        return; // Trava a tela e não deixa avançar
+        return;
       }
     }
 
-    // 2. MÁGICA DO SALVAMENTO: Salva todos os scores da tela de uma vez só!
     try {
       const savePromises = players.map(p => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -149,17 +149,14 @@ function Scorecard() {
         return Promise.resolve(); 
       });
       
-      await Promise.all(savePromises); // Espera salvar os 4 jogadores
+      await Promise.all(savePromises);
 
     } catch (error) {
-      console.error("Erro ao salvar os scores do buraco", error);
       alert("Erro ao salvar no banco de dados. Verifique a internet.");
-      return; // Se estiver sem internet, não deixa mudar de buraco!
+      return; 
     }
 
-    // 3. AGORA SIM, MUDA O BURACO
     if (delta > 0) {
-      // Verifica se finalizou os 18 buracos
       if (!isReviewMode && playedHoles.length >= 18) {
         setShowSummary(true);
         return;
@@ -168,7 +165,6 @@ function Scorecard() {
       let nextHole = currentHole + 1;
       if (nextHole > 18) nextHole = 1;
       
-      // Adiciona o próximo buraco na lista de buracos já acessados
       if (!playedHoles.includes(nextHole)) {
           setPlayedHoles([...playedHoles, nextHole]);
       }
@@ -178,7 +174,6 @@ function Scorecard() {
       let prevHole = currentHole - 1;
       if (prevHole < 1) prevHole = 18;
 
-      // Trava: Só pode voltar para buracos que ele já acessou
       if (!playedHoles.includes(prevHole)) {
         alert("🛑 Você não pode voltar para um buraco antes do seu tee de saída.");
         return;
@@ -187,12 +182,35 @@ function Scorecard() {
     }
   };
 
-  const calculateTotal = (userId) => {
-    let total = 0;
+  const calculateTotal = (userId, handicap) => {
+    let totalGross = 0;
+    let totalPar = 0;
+
+    // Soma as tacadas reais (Gross) e os Pares dos buracos jogados
     for (let h = 1; h <= 18; h++) {
-      total += scores[`${userId}-${h}`] || 0;
+      const score = scores[`${userId}-${h}`];
+      if (score > 0) {
+        totalGross += score;
+        
+        // Acha o par desse buraco específico
+        const hole = holesData.find(hd => (hd.hole_number || hd.hole) === h);
+        if (hole) totalPar += hole.par;
+      }
     }
-    return total;
+
+    if (totalGross === 0) return { gross: 0, netVsPar: "E" };
+
+    // Calcula a relação ao Par usando o Handicap
+    const grossVsPar = totalGross - totalPar;
+    const netVsPar = grossVsPar - parseFloat(handicap || 0);
+
+    let formattedNet = "E";
+    if (netVsPar !== 0) {
+      formattedNet = netVsPar > 0 ? `+${netVsPar.toFixed(1)}` : netVsPar.toFixed(1);
+    }
+
+    // Retorna as tacadas REAIS e o NET separado
+    return { gross: totalGross, netVsPar: formattedNet };
   };
 
   const handleConfirmGame = () => {
@@ -206,7 +224,6 @@ function Scorecard() {
   };
 
   const openLeaderboard = () => {
-    // Agora ele abre na mesma aba, como um App de verdade!
     navigate(`/leaderboard/${group.tournament_id}`);
   };
 
@@ -242,14 +259,32 @@ function Scorecard() {
     return (
       <div style={styles.container}>
         <h2 style={{ color: theme.gold }}>📋 Conferência Final</h2>
-        <p style={{ color: theme.textMuted }}>Confira os totais com os parceiros.</p>
+        <p style={{ color: theme.textMuted }}>Net Score (Relação ao Par - Handicap)</p>
         <div style={styles.summaryCard}>
-          {players.map((p) => (
-            <div key={p.id} style={styles.summaryRow}>
-              <span>{p.name}</span>
-              <span style={styles.totalScore}>{calculateTotal(p.id)}</span>
-            </div>
-          ))}
+          {players.map((p) => {
+            const totals = calculateTotal(p.id, p.handicap);
+            return (
+              <div key={p.id} style={styles.summaryRow}>
+                <span>
+                  <div style={{ fontWeight: "bold" }}>{p.name}</div>
+                  <div style={{ fontSize: "12px", color: theme.textMuted }}>HDCP: {p.handicap || 0}</div>
+                </span>
+                <div style={{ textAlign: "right" }}>
+                  {/* EXIBE AS TACADAS PURAS AQUI */}
+                  <div style={{ ...styles.totalScore, color: "white" }}>
+                    {totals.gross} tacadas
+                  </div>
+                  {/* EXIBE A RELAÇÃO AO PAR COM HANDICAP AQUI */}
+                  <div style={{ 
+                    fontSize: "14px", fontWeight: "bold",
+                    color: totals.netVsPar.toString().includes("-") ? theme.accent : (totals.netVsPar === "E" ? theme.textMuted : theme.danger) 
+                  }}>
+                    NET: {totals.netVsPar}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <button style={styles.confirmBtn} onClick={handleConfirmGame}>✅ Assinar Cartão</button>
         <button style={styles.editBtn} onClick={handleEditMode}>✏️ Voltar e Editar</button>
@@ -275,8 +310,8 @@ function Scorecard() {
           <div style={styles.details}>
             {currentHoleData.yards_blue > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#0077b6", color: "white" }}>{currentHoleData.yards_blue} yds</span>}
             {currentHoleData.yards_white > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#ffffff", color: "black" }}>{currentHoleData.yards_white} yds</span>}
-            {currentHoleData.yards_yellow > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#ffd700", color: "black" }}>{currentHoleData.yards_yellow} yds</span>}
-            {currentHoleData.yards_red > 0 && <span style={{ ...styles.yardBadge, backgroundColor: theme.danger, color: "white" }}>{currentHoleData.yards_red} yds</span>}
+            {currentHoleData.yards_yellow > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#000000", color: "white" }}>{currentHoleData.yards_yellow} yds</span>}
+            {currentHoleData.yards_red > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#22c55e", color: "white" }}>{currentHoleData.yards_red} yds</span>}
           </div>
         </div>
         <button style={styles.navBtn} onClick={() => changeHole(1)}>▶</button>
@@ -285,9 +320,23 @@ function Scorecard() {
       <div>
         {players.map((p) => {
           const score = scores[`${p.id}-${currentHole}`];
+          const perfil = calcularPerfilGolfista(p.gender, p.handicap);
+
           return (
             <div key={p.id} style={styles.playerCard}>
-              <div style={styles.playerName}>{p.name}</div>
+              <div style={styles.playerName}>
+                <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
+                {/* --- MÁGICA VISUAL DO TEE --- */}
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
+                  <span style={{ 
+                    width: "10px", height: "10px", borderRadius: "50%", 
+                    backgroundColor: perfil.tee.cor,
+                    border: perfil.tee.nome === "Branco" ? "1px solid #94a3b8" : "none" 
+                  }}></span>
+                  TEE {perfil.tee.nome.toUpperCase()} • {perfil.cat} • HDCP {p.handicap || 0}
+                </div>
+              </div>
+
               <div style={styles.scoreControl}>
                 <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1)}>-</button>
                 <span style={{ ...styles.scoreValue, color: score ? (score < currentHoleData.par ? theme.accent : score > currentHoleData.par ? theme.danger : "white") : theme.cardLight }}>

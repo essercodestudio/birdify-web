@@ -499,17 +499,19 @@ function CourseManager() {
                 </div>
 
                 <div style={{ overflowX: "auto" }}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.th}>Buraco</th>
-                        <th style={styles.th}>PAR</th>
-                        <th style={styles.th}>⚪ Branco</th>
-                        <th style={styles.th}>🟡 Amarelo</th>
-                        <th style={styles.th}>🔵 Azul</th>
-                        <th style={styles.th}>🔴 Vermelho</th>
-                      </tr>
-                    </thead>
+  <table style={styles.table}>
+    <thead>
+      <tr>
+        <th style={styles.th}>Buraco</th>
+        <th style={styles.th}>PAR</th>
+        <th style={styles.th}>⚪ Branco</th>
+        {/* Mudamos Amarelo para Preto */}
+        <th style={styles.th}>⚫ Preto</th> 
+        <th style={styles.th}>🔵 Azul</th>
+        {/* Mudamos Vermelho para Verde */}
+        <th style={styles.th}>🟢 Verde</th> 
+      </tr>
+    </thead>
                     <tbody>
                       {holes.map((h, index) => (
                         <tr key={h.id}>

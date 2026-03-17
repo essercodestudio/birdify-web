@@ -1,7 +1,8 @@
-// frontend/src/pages/Register.js
 import React, { useState } from 'react';
 import api from '../services/api'; 
 import { useNavigate, Link } from 'react-router-dom';
+// 1. IMPORTAR A LOGO (Caminho para a pasta assets)
+import logoImg from '../assets/logo_birdify.png'; 
 
 function Register() {
   const navigate = useNavigate();
@@ -13,7 +14,6 @@ function Register() {
     gender: 'M' 
   });
 
-  // --- NOVO ESTADO PARA LGPD ---
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const theme = {
@@ -33,8 +33,6 @@ function Register() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    
-    // Validação extra de segurança
     if (!acceptedTerms) {
       alert("Você precisa aceitar a Política de Privacidade para continuar.");
       return;
@@ -45,7 +43,6 @@ function Register() {
         ...formData,
         role: 'PLAYER' 
       });
-      
       alert('Conta criada com sucesso! Faça login.');
       navigate('/login');
     } catch (error) {
@@ -63,7 +60,17 @@ function Register() {
       boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', width: '100%', maxWidth: '400px', 
       textAlign: 'center', border: `1px solid ${theme.cardLight}` 
     },
-    logo: { fontSize: '28px', fontWeight: '900', color: theme.gold, marginBottom: '5px' },
+    // 2. NOVOS ESTILOS PARA A LOGO (Igual ao Login)
+    logoContainer: {
+      marginBottom: '15px',
+      display: 'flex',
+      justifyContent: 'center'
+    },
+    logoImage: {
+      height: '150px', // Ajustado para ser levemente maior, mas você pode mudar para 150px ou 180px
+      width: 'auto',
+      filter: 'drop-shadow(0px 4px 10px rgba(0,0,0,0.3))'
+    },
     subtitle: { color: theme.textMuted, fontSize: '14px', marginBottom: '25px' },
     label: { 
       display: 'block', textAlign: 'left', fontSize: '11px', fontWeight: 'bold', 
@@ -79,7 +86,6 @@ function Register() {
       border: `2px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: 'white', 
       appearance: 'none', cursor: 'pointer', outline: 'none' 
     },
-    // --- ESTILO DO CHECKBOX LGPD ---
     checkboxContainer: {
       display: 'flex',
       alignItems: 'flex-start',
@@ -90,7 +96,7 @@ function Register() {
     },
     button: { 
       width: '100%', padding: '16px', 
-      backgroundColor: acceptedTerms ? theme.accent : '#475569', // Cinza se desativado
+      backgroundColor: acceptedTerms ? theme.accent : '#475569', 
       color: acceptedTerms ? '#0f172a' : '#94a3b8', 
       border: 'none', borderRadius: '12px', 
       cursor: acceptedTerms ? 'pointer' : 'not-allowed', 
@@ -106,7 +112,11 @@ function Register() {
   return (
     <div style={styles.container}>
       <div style={styles.formBox}>
-        <div style={styles.logo}>Birdify</div>
+        {/* 3. SUBSTITUIÇÃO DO TEXTO PELA LOGO */}
+        <div style={styles.logoContainer}>
+          <img src={logoImg} alt="Birdify Logo" style={styles.logoImage} />
+        </div>
+        
         <p style={styles.subtitle}>Crie seu perfil de jogador</p>
 
         <form onSubmit={handleRegister}>
@@ -136,7 +146,6 @@ function Register() {
             </select>
           </div>
 
-          {/* --- NOVO CAMPO: CHECKBOX LGPD --- */}
           <div style={styles.checkboxContainer}>
             <input 
               type="checkbox" 
@@ -146,7 +155,7 @@ function Register() {
               style={{ marginTop: '4px', cursor: 'pointer' }}
             />
             <label htmlFor="acceptedTerms" style={{ fontSize: '13px', color: theme.textMuted, cursor: 'pointer' }}>
-              Eu li e aceito a <Link to="/privacidade" target="_blank" style={{ color: theme.accent, textDecoration: 'none', fontWeight: 'bold' }}>Política de Privacidade</Link> e autorizo o uso dos meus dados para gestão de torneios.
+              Eu li e aceito a <Link to="/privacidade" target="_blank" style={{ color: theme.accent, textDecoration: 'none', fontWeight: 'bold' }}>Política de Privacidade</Link> e autorizo o uso dos meus dados.
             </label>
           </div>
 

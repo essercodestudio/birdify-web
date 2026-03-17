@@ -1,0 +1,33 @@
+.navbar {
+  background-color: #1a1a1a; /* Fundo escuro para destacar o logo verde */
+  height: 70px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 2px solid #2ecc71; /* Linha verde temática */
+}
+
+.navbar-logo {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.logo-img {
+  height: 45px; /* Altura ideal para um navbar */
+  width: auto;
+  margin-right: 10px;
+}
+
+.logo-text {
+  color: #ffffff;
+  font-size: 1.5rem;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.nav-menu {
+  margin-left: auto; /* Joga os links para a direita */
+  display: flex;
+  gap: 20px;
+}

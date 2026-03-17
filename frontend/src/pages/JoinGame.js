@@ -1,6 +1,6 @@
 // frontend/src/pages/JoinGame.js
 import React, { useState, useEffect } from 'react';
-import api from '../services/api'; // Ajuste o caminho se necessário
+import api from '../services/api'; 
 import { useNavigate } from 'react-router-dom';
 
 function JoinGame() {
@@ -14,7 +14,6 @@ function JoinGame() {
   const [groupPlayers, setGroupPlayers] = useState([]);
   const [handicaps, setHandicaps] = useState({});
 
-  // TEMA PADRONIZADO
   const theme = {
     bg: '#0f172a',
     card: '#1e293b',
@@ -39,49 +38,38 @@ function JoinGame() {
   const handleJoinGroup = async (e) => {
     e.preventDefault();
     try {
-      // 1. A MÁGICA DE SEGURANÇA: Agora enviamos o código E quem está tentando entrar!
       const res = await api.post('/groups/join', { 
         access_code: accessCode,
         user_id: user.id 
       });
       
       const group = res.data.group;
-
       const listRes = await api.get(`/groups/list/${group.tournament_id}`);
-      const allGroups = listRes.data;
-      const myGroup = allGroups.find(g => g.id === group.id) || group;
+      const myGroup = listRes.data.find(g => g.id === group.id) || group;
 
       if (myGroup.players && myGroup.players.length > 0) {
         
-        // Verifica se o primeiro jogador do grupo já tem um handicap salvo no banco
-        const alreadyHasHandicap = myGroup.players[0].handicap !== null && myGroup.players[0].handicap !== undefined;
-
-        if (alreadyHasHandicap) {
-            // Se já tem, pula o painel chato e vai direto pro cartão!
-            localStorage.setItem('activeGroup', JSON.stringify(group));
-            navigate(`/scorecard/${group.id}`);
-        } else {
-            // Se for a primeira vez, abre o modal para preencher
-            setPendingGroup(group);
-            setGroupPlayers(myGroup.players);
-            
-            const initialHandicaps = {};
-            myGroup.players.forEach(p => { initialHandicaps[p.id] = ''; });
-            setHandicaps(initialHandicaps);
-            
-            setShowModal(true);
-        }
+        // ❌ REMOVEMOS A TRAVA! O modal agora SEMPRE vai abrir para você confirmar.
+        setPendingGroup(group);
+        setGroupPlayers(myGroup.players);
+        
+        const initialHandicaps = {};
+        myGroup.players.forEach(p => { 
+            // Se a internet caiu e ele voltou, o campo já vem preenchido com o que estava no banco.
+            // Se for jogo novo, vem vazio para você digitar.
+            initialHandicaps[p.id] = (p.handicap !== null && p.handicap !== undefined) ? p.handicap : ''; 
+        });
+        
+        setHandicaps(initialHandicaps);
+        setShowModal(true); // 👉 Força o modal a aparecer!
+        
       } else {
         localStorage.setItem('activeGroup', JSON.stringify(group));
         navigate(`/scorecard/${group.id}`);
       }
     } catch (error) {
-      // 2. MENSAGEM INTELIGENTE: Mostra o erro exato (ex: "Você não faz parte deste grupo")
-      if (error.response && error.response.data && error.response.data.message) {
-        alert("🚨 Acesso Negado: " + error.response.data.message);
-      } else {
-        alert("❌ Erro de conexão. Verifique o código e tente novamente.");
-      }
+      const msg = error.response?.data?.message || "Erro de conexão.";
+      alert("🚨 " + msg);
     }
   };
 
@@ -90,18 +78,13 @@ function JoinGame() {
   };
 
   const submitHandicaps = async () => {
-    for (const playerId of groupPlayers.map(p => p.id)) {
-      if (handicaps[playerId] === '' || handicaps[playerId] === undefined) {
-        alert("Por favor, preencha o handicap de TODOS os jogadores (coloque 0 se não tiver).");
+    // Validação: todos devem ter handicap preenchido
+    for (const p of groupPlayers) {
+      if (handicaps[p.id] === '' || handicaps[p.id] === undefined) {
+        alert(`Por favor, insira o handicap de ${p.name}`);
         return;
       }
     }
-
-    const confirm1 = window.confirm("Tem certeza de que os Handicaps digitados estão corretos?");
-    if (!confirm1) return;
-
-    const confirm2 = window.confirm("⚠️ ATENÇÃO MÁXIMA: Após essa confirmação, os handicaps NÃO poderão ser alterados durante o jogo. Deseja prosseguir para o Scorecard?");
-    if (!confirm2) return;
 
     const playersData = groupPlayers.map(p => ({
       user_id: p.id,
@@ -118,7 +101,7 @@ function JoinGame() {
       setShowModal(false);
       navigate(`/scorecard/${pendingGroup.id}`);
     } catch (error) {
-      alert("🚨 ERRO DETALHADO: " + (error.response?.data?.error || error.message));
+      alert("Erro ao salvar: " + (error.response?.data?.error || error.message));
     }
   };
 
@@ -136,21 +119,19 @@ function JoinGame() {
     btnPlay: { padding: '18px', width: '100%', backgroundColor: theme.accent, color: '#000', border: 'none', borderRadius: '12px', fontSize: '18px', fontWeight: '800', cursor: 'pointer', boxShadow: `0 4px 14px 0 rgba(34, 197, 94, 0.39)` },
     btnPortal: { padding: '14px', width: '100%', backgroundColor: theme.blue, color: 'white', border: 'none', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
     btnAdmin: { padding: '14px', width: '100%', backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
-    
-    // Estilos do Modal
     modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.95)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(8px)' },
     modalContent: { backgroundColor: theme.card, padding: '30px', borderRadius: '24px', width: '100%', maxWidth: '420px', border: `1px solid ${theme.danger}`, boxShadow: '0 0 30px rgba(239, 68, 68, 0.2)' },
     playerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 0', borderBottom: `1px solid ${theme.cardLight}` },
     hcInput: { width: '90px', padding: '10px', borderRadius: '8px', border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.accent, textAlign: 'center', fontSize: '18px', fontWeight: 'bold' }
   };
 
-  if (!user) return <div style={styles.container}>Carregando...</div>;
+  if (!user) return null;
 
   return (
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={{ fontSize: '40px', marginBottom: '10px' }}>⛳</div>
-        <h1 style={styles.title}>Golf Scorer</h1>
+        <h1 style={styles.title}>Paraná Golf</h1>
         <p style={{ color: theme.textMuted, marginBottom: '30px' }}>Bem-vindo, <strong style={{color: theme.textMain}}>{user.name}</strong></p>
             
         <form onSubmit={handleJoinGroup} style={styles.form}>
@@ -183,15 +164,15 @@ function JoinGame() {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <h2 style={{ color: theme.danger, marginTop: 0, textAlign: 'center', fontWeight: '900' }}>HANDICAPS</h2>
-            <p style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center', marginBottom: '25px', lineHeight: '1.5' }}>
-              Confirme o handicap oficial para o cálculo do <strong style={{color: theme.textMain}}>Net Score</strong>. Use ponto para decimais.
+            <p style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center', marginBottom: '25px' }}>
+              Insira o handicap para o cálculo do <strong style={{color: theme.textMain}}>Net Score</strong>.
             </p>
 
             {groupPlayers.map(p => (
               <div key={p.id} style={styles.playerRow}>
                 <div style={{ textAlign: 'left' }}>
                   <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{p.name}</div>
-                  <div style={{ fontSize: '12px', color: theme.textMuted }}>Jogador</div>
+                  <div style={{ fontSize: '12px', color: theme.textMuted }}>{p.gender === 'M' || p.gender === 'Masculino' ? 'Masculino' : 'Feminino'}</div>
                 </div>
                 <input 
                   type="number" 
@@ -205,17 +186,11 @@ function JoinGame() {
             ))}
 
             <div style={{ display: 'flex', gap: '15px', marginTop: '30px' }}>
-              <button 
-                onClick={() => setShowModal(false)} 
-                style={{ flex: 1, padding: '15px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}
-              >
+              <button onClick={() => setShowModal(false)} style={{ flex: 1, padding: '15px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '12px', cursor: 'pointer' }}>
                 VOLTAR
               </button>
-              <button 
-                onClick={submitHandicaps} 
-                style={{ ...styles.btnPlay, flex: 2, padding: '15px', backgroundColor: theme.danger, color: 'white' }}
-              >
-                CONFIRMAR TUDO
+              <button onClick={submitHandicaps} style={{ ...styles.btnPlay, flex: 2, padding: '15px', backgroundColor: theme.danger, color: 'white' }}>
+                CONFIRMAR
               </button>
             </div>
           </div>

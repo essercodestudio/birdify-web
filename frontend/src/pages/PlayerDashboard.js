@@ -13,7 +13,6 @@ function PlayerDashboard() {
 
   // Estados do Modal
   const [selectedTournament, setSelectedTournament] = useState(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [whatsappLink, setWhatsappLink] = useState("");
   const [copied, setCopied] = useState(false);
@@ -91,7 +90,6 @@ function PlayerDashboard() {
       };
 
       setSelectedTournament(fullTournamentData);
-      setSelectedCategoryId("");
 
       const alreadySubscribed = t.is_subscribed > 0;
       setIsSubscribed(alreadySubscribed);
@@ -119,23 +117,16 @@ function PlayerDashboard() {
   const closeModal = () => setSelectedTournament(null);
 
   const handleInscription = async () => {
-    if (!selectedCategoryId) {
-      alert("Por favor, selecione uma Categoria para jogar.");
-      return;
-    }
-
     try {
       await api.post("/inscriptions/create", {
         tournament_id: selectedTournament.id,
         user_id: user.id,
-        category_id: selectedCategoryId,
+        category_id: null // 👈 ADICIONE ESTA LINHA AQUI! (Escreva null sem aspas)
       });
 
-      const categoryName = selectedTournament.categories.find(
-        (c) => c.id === Number(selectedCategoryId),
-      )?.name;
-      const message = `Olá! Acabei de me inscrever no torneio *${selectedTournament.name}*. \n\n👤 *Jogador:* ${user.name} \n⛳ *Categoria:* ${categoryName} \n\nSegue o meu comprovante de pagamento:`;
+      const message = `Olá! Acabei de me inscrever no torneio *${selectedTournament.name}*. \n\n👤 *Jogador:* ${user.name} \n\nSegue o meu comprovante de pagamento:`;
       const encodedMessage = encodeURIComponent(message);
+      
       const cleanNumber = selectedTournament.whatsapp_contact
         ? selectedTournament.whatsapp_contact.replace(/\D/g, "")
         : "";
@@ -152,7 +143,6 @@ function PlayerDashboard() {
       }
     }
   };
-
   const handleCopyPix = () => {
     if (selectedTournament && selectedTournament.payment_info) {
       navigator.clipboard.writeText(selectedTournament.payment_info);
@@ -307,7 +297,7 @@ function PlayerDashboard() {
       <div style={styles.header}>
         <div>
           <h1 style={{ margin: 0, fontSize: "24px" }}>
-            🦅 Olá, {user?.name.split(" ")[0]}
+            Olá, {user?.name.split(" ")[0]}
           </h1>
           <p style={{ color: theme.textMuted, fontSize: "14px", margin: 0 }}>
             Bem-vindo ao Portal Birdify
@@ -618,27 +608,7 @@ function PlayerDashboard() {
 
             {!isSubscribed ? (
               <>
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: theme.textMuted,
-                    marginBottom: "8px",
-                  }}
-                >
-                  Selecione sua categoria:
-                </p>
-                <select
-                  style={styles.select}
-                  value={selectedCategoryId}
-                  onChange={(e) => setSelectedCategoryId(e.target.value)}
-                >
-                  <option value="">Escolha uma...</option>
-                  {selectedTournament.categories?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                {/* O bloco de seleção de categoria foi totalmente removido daqui */}
                 <button style={styles.submitBtn} onClick={handleInscription}>
                   CONFIRMAR MINHA VAGA
                 </button>
