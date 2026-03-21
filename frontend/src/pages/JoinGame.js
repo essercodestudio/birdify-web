@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api'; 
 import { useNavigate } from 'react-router-dom';
+import logoImg from '../assets/logo_birdify.png'; // Substitua pela extensão correta da sua imagem
 
 function JoinGame() {
   const [accessCode, setAccessCode] = useState('');
@@ -130,8 +131,11 @@ function JoinGame() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <div style={{ fontSize: '40px', marginBottom: '10px' }}>⛳</div>
-        <h1 style={styles.title}>Paraná Golf</h1>
+        <img 
+          src={logoImg} 
+          alt="Logo Paraná Golf" 
+          style={{ width: '180px', height: 'auto', marginBottom: '20px' }}
+        />
         <p style={{ color: theme.textMuted, marginBottom: '30px' }}>Bem-vindo, <strong style={{color: theme.textMain}}>{user.name}</strong></p>
             
         <form onSubmit={handleJoinGroup} style={styles.form}>

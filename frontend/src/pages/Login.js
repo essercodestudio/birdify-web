@@ -72,7 +72,7 @@ function Login() {
       justifyContent: "center",
     },
     logoImage: {
-      height: "150px", // Ajuste a altura como preferir
+      height: "100px", // Ajuste a altura como preferir
       width: "auto",
       filter: "drop-shadow(0px 4px 10px rgba(0,0,0,0.3))", // Dá um relevo na logo
     },
@@ -152,7 +152,7 @@ function Login() {
           <span style={styles.label}>E-mail</span>
           <input
             type="email"
-            placeholder="exemplo@email.com"
+            placeholder="seu@email.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             style={styles.input}
@@ -173,6 +173,24 @@ function Login() {
             ENTRAR NO SISTEMA
           </button>
         </form>
+
+        {/* BOTAO DE ESQUECI A SENHA ADICIONADO AQUI 👇 */}
+        <div style={{ marginTop: "15px", textAlign: "center" }}>
+          <button
+            type="button"
+            onClick={() => navigate("/forgot-password")}
+            style={{
+              background: "none",
+              border: "none",
+              color: theme.textMuted,
+              cursor: "pointer",
+              textDecoration: "underline",
+              fontSize: "14px",
+            }}
+          >
+            Esqueceu sua senha?
+          </button>
+        </div>
 
         {error && <div style={styles.error}>⚠️ {error}</div>}
 

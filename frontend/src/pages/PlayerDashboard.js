@@ -121,12 +121,12 @@ function PlayerDashboard() {
       await api.post("/inscriptions/create", {
         tournament_id: selectedTournament.id,
         user_id: user.id,
-        category_id: null // 👈 ADICIONE ESTA LINHA AQUI! (Escreva null sem aspas)
+        category_id: null, // 👈 ADICIONE ESTA LINHA AQUI! (Escreva null sem aspas)
       });
 
       const message = `Olá! Acabei de me inscrever no torneio *${selectedTournament.name}*. \n\n👤 *Jogador:* ${user.name} \n\nSegue o meu comprovante de pagamento:`;
       const encodedMessage = encodeURIComponent(message);
-      
+
       const cleanNumber = selectedTournament.whatsapp_contact
         ? selectedTournament.whatsapp_contact.replace(/\D/g, "")
         : "";
@@ -177,9 +177,13 @@ function PlayerDashboard() {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: "30px",
+      marginBottom: "20px",
+      paddingBottom: "15px",
       borderBottom: `1px solid ${theme.cardLight}`,
-      paddingBottom: "20px",
+    },
+    userInfo: {
+      marginBottom: "25px",
+      paddingLeft: "5px",
     },
     tabsContainer: { display: "flex", gap: "10px", marginBottom: "25px" },
     tabBtn: (active) => ({
@@ -277,9 +281,8 @@ function PlayerDashboard() {
       borderRadius: "12px",
       cursor: "pointer",
     },
-    // NOVO: Estilo para a caixinha de Valor
     feeBox: {
-      backgroundColor: "rgba(234, 179, 8, 0.1)", // Um fundo dourado bem clarinho
+      backgroundColor: "rgba(234, 179, 8, 0.1)",
       border: `1px solid ${theme.gold}`,
       padding: "15px",
       borderRadius: "12px",
@@ -288,6 +291,20 @@ function PlayerDashboard() {
       justifyContent: "space-between",
       alignItems: "center",
     },
+    backButton: {
+      backgroundColor: "transparent",
+      color: theme.textMuted,
+      border: `1px solid ${theme.cardLight}`,
+      borderRadius: "8px",
+      padding: "8px 16px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      fontSize: "14px",
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      transition: "0.2s",
+    },
   };
 
   return (
@@ -295,14 +312,12 @@ function PlayerDashboard() {
       <style>{`@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }`}</style>
 
       <div style={styles.header}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: "24px" }}>
-            Olá, {user?.name.split(" ")[0]}
-          </h1>
-          <p style={{ color: theme.textMuted, fontSize: "14px", margin: 0 }}>
-            Bem-vindo ao Portal Birdify
-          </p>
-        </div>
+        <button
+          onClick={() => navigate('/')}
+          style={styles.backButton}
+        >
+          ← VOLTAR
+        </button>
         <button
           onClick={() => {
             localStorage.removeItem("user");
@@ -320,6 +335,15 @@ function PlayerDashboard() {
         >
           SAIR
         </button>
+      </div>
+
+      <div style={styles.userInfo}>
+        <h1 style={{ margin: 0, fontSize: "28px", fontWeight: "bold" }}>
+          Olá, {user?.name.split(" ")[0]}
+        </h1>
+        <p style={{ color: theme.textMuted, fontSize: "14px", margin: "5px 0 0 0" }}>
+          Bem-vindo ao Portal Birdify
+        </p>
       </div>
 
       <div style={styles.tabsContainer}>

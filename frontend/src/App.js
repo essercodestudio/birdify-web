@@ -17,6 +17,10 @@ import PlayerDashboard from "./pages/PlayerDashboard";
 import LGPDBanner from "./pages/LGPDBanner";
 import Privacidade from "./pages/Privacidade";
 
+// --- NOVAS IMPORTAÇÕES: RECUPERAÇÃO DE SENHA ---
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+
 function App() {
   return (
     <Router>
@@ -30,6 +34,10 @@ function App() {
         {/* Autenticação */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        
+        {/* --- NOVAS ROTAS: RECUPERAÇÃO DE SENHA --- */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
 
         {/* Área do Admin */}
         <Route path="/dashboard" element={<Dashboard />} />

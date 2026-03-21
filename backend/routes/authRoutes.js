@@ -6,5 +6,8 @@ router.post('/register', authController.register);
 router.post('/login', authController.login); 
 router.get('/list', authController.getAllPlayers);
 
-module.exports = router;
+// Novas rotas para recuperação de senha
+router.post('/forgot-password', authController.forgotPassword);
+router.post('/reset-password', authController.resetPassword);
 
+module.exports = router;

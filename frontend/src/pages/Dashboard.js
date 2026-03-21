@@ -33,8 +33,7 @@ function Dashboard() {
     "Masculino Gross (M0)", "Masculino Net (M1) - 0 a 8.5", "Masculino Net (M2) - 8.6 a 14.0",
     "Masculino Net (M3) - 14.1 a 22.1", "Masculino Net (M4) - 22.2 a 36.4",
     "Feminino Gross (F0)", "Feminino Net (F1) - 0 a 16.1", "Feminino Net (F2) - 16.1 a 23.7",
-    "Feminino Net (F3) - 23.8 a 36.4", "Sênior Masculino", "Sênior Feminino",
-    "Duplas Masculinas", "Duplas Femininas"
+    "Feminino Net (F3) - 23.8 a 36.4"
   ];
   const [selectedCategories, setSelectedCategories] = useState([]);
 
@@ -78,10 +77,13 @@ function Dashboard() {
   }, [navigate, fetchTournaments, fetchCourses]);
 
   const handleCopyLink = (id) => {
-    const link = `${window.location.origin}/leaderboard/${id}`;
-    navigator.clipboard.writeText(link).then(() => alert("✅ Link copiado!"));
+    // Adicionamos o ?public=true ao final da string do link
+    const link = `${window.location.origin}/leaderboard/${id}?public=true`;
+    
+    navigator.clipboard.writeText(link).then(() => {
+      alert("✅ Link Público copiado!");
+    });
   };
-
   const toggleCategory = (cat) => {
     setSelectedCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]);
   };
@@ -173,7 +175,7 @@ function Dashboard() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={{fontSize: '24px', margin: 0}}>⛳ Painel do Organizador</h1>
+        <h1 style={{fontSize: '24px', margin: 0}}>Painel do Organizador</h1>
         <div style={{display: 'flex', gap: '10px'}}>
           <button onClick={() => navigate('/courses')} style={{...styles.btnAction, backgroundColor: theme.info, padding: '10px 15px'}}>GERENCIAR CAMPOS</button>
           <button onClick={() => { localStorage.removeItem('user'); navigate('/login'); }} style={{...styles.btnAction, backgroundColor: theme.cardLight}}>SAIR</button>
@@ -182,7 +184,7 @@ function Dashboard() {
 
       <div style={styles.card}>
         <h2 style={{color: isEditing ? theme.info : theme.gold, marginTop: 0}}>
-          {isEditing ? '✏️ Editar Torneio' : '➕ Novo Torneio'}
+          {isEditing ? 'Editar Torneio' : 'Novo Torneio'}
         </h2>
 
         <form onSubmit={handleSubmitTournament}>
