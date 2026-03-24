@@ -37,69 +37,100 @@ function Scorecard() {
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // Estado para prevenir salvamentos duplicados
 
   const theme = {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent: '#22c55e', 
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444'
   };
 
-  const fetchData = useCallback(async () => {
-    try {
-      const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
+ const fetchData = useCallback(async () => {
+  try {
+    const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
 
-      if (!savedGroup || savedGroup.id !== Number(groupId)) {
-        alert("Sessão inválida. Digite o código novamente.");
-        navigate("/");
-        return;
-      }
-      setGroup(savedGroup);
-      setCurrentHole(savedGroup.starting_hole);
-      setPlayedHoles([savedGroup.starting_hole]);
+    if (!savedGroup || savedGroup.id !== Number(groupId)) {
+      alert("Sessão inválida. Digite o código novamente.");
+      navigate("/");
+      return;
+    }
+    setGroup(savedGroup);
+    setPlayedHoles([savedGroup.starting_hole]);
 
-      const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
-      const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
+    const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
+    const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
 
-      if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
+    if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
 
-      const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
-      const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
+    const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
+    const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
 
-      if (actualCourseId) {
-          const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
-          setHolesData(courseRes.data);
-      }
+    if (actualCourseId) {
+        const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
+        setHolesData(courseRes.data);
+    }
 
-      const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
-      const scoresMap = {};
-      scoresRes.data.forEach((s) => {
-        scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
-      });
-      setScores(scoresMap);
-      
-      if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
-        const groupPlayerIds = myGroupData.players.map(p => p.id);
-        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
+    const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
+    const scoresMap = {};
+    scoresRes.data.forEach((s) => {
+      scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
+    });
+    setScores(scoresMap);
+    
+    // CORREÇÃO 2: Encontrar o primeiro buraco sem pontuação
+    if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
+      const groupPlayerIds = myGroupData.players.map(p => p.id);
+      const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
 
-        if (scoresDoMeuGrupo.length > 0) {
-          const playedHoleNumbers = scoresDoMeuGrupo.map(s => s.hole_number);
-          const maxHole = Math.max(...playedHoleNumbers);
+      if (scoresDoMeuGrupo.length > 0) {
+        // CORREÇÃO: Removida variável não utilizada 'playedHoleNumbers'
+        
+        // Encontrar o primeiro buraco vazio após os já jogados
+        let nextHole = savedGroup.starting_hole;
+        for (let i = 1; i <= 18; i++) {
+          const holeToCheck = savedGroup.starting_hole + i - 1;
+          const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
           
-          if (maxHole >= 1 && maxHole <= 18) {
-             setCurrentHole(maxHole);
-             const reconstructedHistory = [];
-             
-             if (savedGroup.starting_hole <= maxHole) {
-               for (let i = savedGroup.starting_hole; i <= maxHole; i++) reconstructedHistory.push(i);
-             } else {
-               for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
-               for (let i = 1; i <= maxHole; i++) reconstructedHistory.push(i);
-             }
-             setPlayedHoles(reconstructedHistory);
+          // Verificar se todos os jogadores têm pontuação neste buraco
+          const allPlayersHaveScore = myGroupData.players.every(p => {
+            return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
+          });
+          
+          if (!allPlayersHaveScore) {
+            nextHole = actualHole;
+            break;
+          }
+          
+          if (i === 18) {
+            // Todos os buracos completos
+            nextHole = actualHole;
+            setShowSummary(true);
           }
         }
+        
+        setCurrentHole(nextHole);
+        
+        // Reconstruir histórico de buracos jogados
+        const reconstructedHistory = [];
+        if (savedGroup.starting_hole <= nextHole) {
+          for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
+        } else {
+          for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
+          for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
+        }
+        setPlayedHoles(reconstructedHistory);
+      } else {
+        // Nenhum score ainda, volta pro buraco inicial
+        setCurrentHole(savedGroup.starting_hole);
       }
-    } catch (error) { console.error("Erro ao carregar dados", error); }
-  }, [groupId, navigate]);
+    } else {
+      // Nenhum score ainda, volta pro buraco inicial
+      setCurrentHole(savedGroup.starting_hole);
+    }
+  } catch (error) { 
+    console.error("Erro ao carregar dados", error);
+    alert("Erro ao carregar dados. Verifique sua conexão com a internet.");
+  }
+}, [groupId, navigate]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -122,19 +153,8 @@ function Scorecard() {
     setScores((prev) => ({ ...prev, [key]: newScore }));
   };
 
-  const changeHole = async (delta) => {
-    if (delta > 0) {
-      const missingPlayer = players.find((p) => {
-        const score = scores[`${p.id}-${currentHole}`];
-        return !score || score === 0;
-      });
-
-      if (missingPlayer) {
-        alert(`⚠️ Falta anotar o score de: ${missingPlayer.name}`);
-        return;
-      }
-    }
-
+  const saveCurrentHoleScores = async () => {
+    setIsSaving(true);
     try {
       const savePromises = players.map(p => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -150,12 +170,46 @@ function Scorecard() {
       });
       
       await Promise.all(savePromises);
-
+      return true;
     } catch (error) {
-      alert("Erro ao salvar no banco de dados. Verifique a internet.");
-      return; 
+      console.error("Erro ao salvar scores:", error);
+      alert("❌ Erro ao salvar pontuação. Verifique sua conexão com a internet e tente novamente.");
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const changeHole = async (delta) => {
+    // CORREÇÃO 1: Validar se todos os scores estão preenchidos antes de tentar salvar
+    if (delta > 0) {
+      const missingPlayer = players.find((p) => {
+        const score = scores[`${p.id}-${currentHole}`];
+        return !score || score === 0;
+      });
+
+      if (missingPlayer) {
+        alert(`⚠️ Falta anotar o score de: ${missingPlayer.name}`);
+        return;
+      }
     }
 
+    // Para avançar ou voltar, primeiro salvamos os scores atuais (se houver)
+    if (delta !== 0) {
+      const hasScoresToSave = players.some(p => {
+        const score = scores[`${p.id}-${currentHole}`];
+        return score && score > 0;
+      });
+      
+      if (hasScoresToSave) {
+        const saveSuccess = await saveCurrentHoleScores();
+        if (!saveSuccess) {
+          return; // Não prossegue se falhou ao salvar
+        }
+      }
+    }
+
+    // CORREÇÃO 1: Agora sim, após salvar com sucesso, movemos o buraco
     if (delta > 0) {
       if (!isReviewMode && playedHoles.length >= 18) {
         setShowSummary(true);
@@ -213,7 +267,37 @@ function Scorecard() {
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
-  const handleConfirmGame = () => {
+  const handleConfirmGame = async () => {
+    // Salvar todos os scores pendentes antes de finalizar
+    const holesToSave = [...new Set(playedHoles)];
+    for (const hole of holesToSave) {
+      const hasScoresForHole = players.some(p => {
+        const score = scores[`${p.id}-${hole}`];
+        return score && score > 0;
+      });
+      
+      if (hasScoresForHole) {
+        try {
+          const savePromises = players.map(p => {
+            const score = scores[`${p.id}-${hole}`];
+            if (score && score > 0) {
+              return api.post("/scores/save", {
+                tournament_id: group.tournament_id,
+                user_id: p.id,
+                hole_number: hole,
+                strokes: score,
+              });
+            }
+            return Promise.resolve();
+          });
+          await Promise.all(savePromises);
+        } catch (error) {
+          alert(`❌ Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
+          return;
+        }
+      }
+    }
+    
     alert("✅ Cartão Assinado! Placar Oficializado.");
     navigate("/");
   };
@@ -233,7 +317,7 @@ function Scorecard() {
     headerInfo: { textAlign: "left" },
     leaderboardBtn: { backgroundColor: theme.gold, color: "black", border: "none", padding: "8px 12px", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", boxShadow: "0 2px 5px rgba(0,0,0,0.5)" },
     holeNav: { display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.card, padding: "15px", borderRadius: "10px", marginBottom: "20px", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" },
-    navBtn: { backgroundColor: theme.cardLight, color: "white", border: "none", padding: "10px 20px", borderRadius: "5px", fontSize: "20px", cursor: "pointer" },
+    navBtn: { backgroundColor: theme.cardLight, color: "white", border: "none", padding: "10px 20px", borderRadius: "5px", fontSize: "20px", cursor: "pointer", opacity: isSaving ? 0.5 : 1, pointerEvents: isSaving ? "none" : "auto" },
     holeTitle: { fontSize: "28px", fontWeight: "bold", color: theme.gold },
     parInfo: { color: theme.textMuted, fontSize: "16px", marginTop: "5px" },
     details: { fontSize: "14px", color: "#888", marginTop: "8px", display: "flex", justifyContent: "center", gap: "8px", flexWrap: "wrap" },
@@ -303,7 +387,7 @@ function Scorecard() {
       </div>
 
       <div style={styles.holeNav}>
-        <button style={styles.navBtn} onClick={() => changeHole(-1)}>◀</button>
+        <button style={styles.navBtn} onClick={() => changeHole(-1)} disabled={isSaving}>◀</button>
         <div>
           <div style={styles.holeTitle}>Buraco {currentHole}</div>
           <div style={styles.parInfo}>PAR {currentHoleData.par}</div>
@@ -314,7 +398,7 @@ function Scorecard() {
             {currentHoleData.yards_red > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#22c55e", color: "white" }}>{currentHoleData.yards_red} yds</span>}
           </div>
         </div>
-        <button style={styles.navBtn} onClick={() => changeHole(1)}>▶</button>
+        <button style={styles.navBtn} onClick={() => changeHole(1)} disabled={isSaving}>▶</button>
       </div>
 
       <div>
@@ -338,11 +422,11 @@ function Scorecard() {
               </div>
 
               <div style={styles.scoreControl}>
-                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1)}>-</button>
+                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1)} disabled={isSaving}>-</button>
                 <span style={{ ...styles.scoreValue, color: score ? (score < currentHoleData.par ? theme.accent : score > currentHoleData.par ? theme.danger : "white") : theme.cardLight }}>
                   {score ? score : "0"}
                 </span>
-                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1)}>+</button>
+                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1)} disabled={isSaving}>+</button>
               </div>
             </div>
           );
@@ -351,6 +435,10 @@ function Scorecard() {
 
       {isReviewMode && (
         <button style={styles.reviewBtn} onClick={() => setShowSummary(true)}>📋 Finalizar Cartão</button>
+      )}
+      
+      {isSaving && (
+        <div style={{ marginTop: "10px", color: theme.gold }}>Salvando...</div>
       )}
     </div>
   );
