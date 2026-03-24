@@ -37,100 +37,145 @@ function Scorecard() {
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
-  const [isSaving, setIsSaving] = useState(false); // Estado para prevenir salvamentos duplicados
+  const [isSaving, setIsSaving] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   const theme = {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent: '#22c55e', 
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444'
   };
 
- const fetchData = useCallback(async () => {
-  try {
-    const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
+  // AJUSTE 1: Funções para gerenciar rascunho no localStorage (fora do componente ou memoizadas)
+  const getDraftKey = useCallback((matchId, holeNumber) => {
+    return `draft_scores_match_${matchId}_hole_${holeNumber}`;
+  }, []);
 
-    if (!savedGroup || savedGroup.id !== Number(groupId)) {
-      alert("Sessão inválida. Digite o código novamente.");
-      navigate("/");
-      return;
-    }
-    setGroup(savedGroup);
-    setPlayedHoles([savedGroup.starting_hole]);
+  const saveDraftToLocalStorage = useCallback((matchId, holeNumber, scoresToSave) => {
+    if (!matchId) return;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    localStorage.setItem(draftKey, JSON.stringify(scoresToSave));
+  }, [getDraftKey]);
 
-    const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
-    const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
-
-    if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
-
-    const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
-    const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
-
-    if (actualCourseId) {
-        const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
-        setHolesData(courseRes.data);
-    }
-
-    const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
-    const scoresMap = {};
-    scoresRes.data.forEach((s) => {
-      scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
-    });
-    setScores(scoresMap);
-    
-    // CORREÇÃO 2: Encontrar o primeiro buraco sem pontuação
-    if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
-      const groupPlayerIds = myGroupData.players.map(p => p.id);
-      const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
-
-      if (scoresDoMeuGrupo.length > 0) {
-        // CORREÇÃO: Removida variável não utilizada 'playedHoleNumbers'
-        
-        // Encontrar o primeiro buraco vazio após os já jogados
-        let nextHole = savedGroup.starting_hole;
-        for (let i = 1; i <= 18; i++) {
-          const holeToCheck = savedGroup.starting_hole + i - 1;
-          const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
-          
-          // Verificar se todos os jogadores têm pontuação neste buraco
-          const allPlayersHaveScore = myGroupData.players.every(p => {
-            return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
-          });
-          
-          if (!allPlayersHaveScore) {
-            nextHole = actualHole;
-            break;
-          }
-          
-          if (i === 18) {
-            // Todos os buracos completos
-            nextHole = actualHole;
-            setShowSummary(true);
-          }
-        }
-        
-        setCurrentHole(nextHole);
-        
-        // Reconstruir histórico de buracos jogados
-        const reconstructedHistory = [];
-        if (savedGroup.starting_hole <= nextHole) {
-          for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
-        } else {
-          for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
-          for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
-        }
-        setPlayedHoles(reconstructedHistory);
-      } else {
-        // Nenhum score ainda, volta pro buraco inicial
-        setCurrentHole(savedGroup.starting_hole);
+  const loadDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+    if (!matchId) return null;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    const draftData = localStorage.getItem(draftKey);
+    if (draftData) {
+      try {
+        return JSON.parse(draftData);
+      } catch (e) {
+        console.error("Erro ao carregar rascunho:", e);
+        return null;
       }
-    } else {
-      // Nenhum score ainda, volta pro buraco inicial
-      setCurrentHole(savedGroup.starting_hole);
     }
-  } catch (error) { 
-    console.error("Erro ao carregar dados", error);
-    alert("Erro ao carregar dados. Verifique sua conexão com a internet.");
-  }
-}, [groupId, navigate]);
+    return null;
+  }, [getDraftKey]);
+
+  const clearDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+    if (!matchId) return;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    localStorage.removeItem(draftKey);
+  }, [getDraftKey]);
+
+  const clearAllDraftsForMatch = useCallback((matchId) => {
+    if (!matchId) return;
+    for (let i = 1; i <= 18; i++) {
+      const draftKey = getDraftKey(matchId, i);
+      localStorage.removeItem(draftKey);
+    }
+  }, [getDraftKey]);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
+
+      if (!savedGroup || savedGroup.id !== Number(groupId)) {
+        alert("Sessão inválida. Digite o código novamente.");
+        navigate("/");
+        return;
+      }
+      setGroup(savedGroup);
+      setPlayedHoles([savedGroup.starting_hole]);
+
+      const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
+      const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
+
+      if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
+
+      const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
+      const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
+
+      if (actualCourseId) {
+          const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
+          setHolesData(courseRes.data);
+      }
+
+      const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
+      const scoresMap = {};
+      scoresRes.data.forEach((s) => {
+        scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
+      });
+      setScores(scoresMap);
+      
+      // Encontrar o primeiro buraco sem pontuação
+      let finalCurrentHole = savedGroup.starting_hole;
+      
+      if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
+        const groupPlayerIds = myGroupData.players.map(p => p.id);
+        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
+
+        if (scoresDoMeuGrupo.length > 0) {
+          let nextHole = savedGroup.starting_hole;
+          for (let i = 1; i <= 18; i++) {
+            const holeToCheck = savedGroup.starting_hole + i - 1;
+            const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
+            
+            const allPlayersHaveScore = myGroupData.players.every(p => {
+              return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
+            });
+            
+            if (!allPlayersHaveScore) {
+              nextHole = actualHole;
+              break;
+            }
+            
+            if (i === 18) {
+              nextHole = actualHole;
+              setShowSummary(true);
+            }
+          }
+          
+          finalCurrentHole = nextHole;
+          
+          // Reconstruir histórico de buracos jogados
+          const reconstructedHistory = [];
+          if (savedGroup.starting_hole <= nextHole) {
+            for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
+          } else {
+            for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
+            for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
+          }
+          setPlayedHoles(reconstructedHistory);
+        }
+      }
+      
+      setCurrentHole(finalCurrentHole);
+      
+      // AJUSTE 1: Carregar rascunhos do localStorage para o buraco atual
+      if (savedGroup.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, finalCurrentHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
+        }
+      }
+      
+    } catch (error) { 
+      console.error("Erro ao carregar dados", error);
+      alert("Erro ao carregar dados. Verifique sua conexão com a internet.");
+    } finally {
+      setIsInitialLoading(false);
+    }
+  }, [groupId, navigate, loadDraftFromLocalStorage]); // CORREÇÃO: Adicionada dependência
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -150,7 +195,21 @@ function Scorecard() {
     }
 
     if (newScore < 1) newScore = 1;
-    setScores((prev) => ({ ...prev, [key]: newScore }));
+    
+    const updatedScores = { ...scores, [key]: newScore };
+    setScores(updatedScores);
+    
+    // AJUSTE 1: Salvar rascunho no localStorage sempre que o score mudar
+    if (group?.tournament_id) {
+      const currentHoleScores = {};
+      players.forEach(p => {
+        const scoreKey = `${p.id}-${currentHole}`;
+        if (updatedScores[scoreKey]) {
+          currentHoleScores[scoreKey] = updatedScores[scoreKey];
+        }
+      });
+      saveDraftToLocalStorage(group.tournament_id, currentHole, currentHoleScores);
+    }
   };
 
   const saveCurrentHoleScores = async () => {
@@ -170,6 +229,12 @@ function Scorecard() {
       });
       
       await Promise.all(savePromises);
+      
+      // AJUSTE 1: Limpar rascunho após salvar com sucesso
+      if (group?.tournament_id) {
+        clearDraftFromLocalStorage(group.tournament_id, currentHole);
+      }
+      
       return true;
     } catch (error) {
       console.error("Erro ao salvar scores:", error);
@@ -181,7 +246,6 @@ function Scorecard() {
   };
 
   const changeHole = async (delta) => {
-    // CORREÇÃO 1: Validar se todos os scores estão preenchidos antes de tentar salvar
     if (delta > 0) {
       const missingPlayer = players.find((p) => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -194,7 +258,6 @@ function Scorecard() {
       }
     }
 
-    // Para avançar ou voltar, primeiro salvamos os scores atuais (se houver)
     if (delta !== 0) {
       const hasScoresToSave = players.some(p => {
         const score = scores[`${p.id}-${currentHole}`];
@@ -204,12 +267,11 @@ function Scorecard() {
       if (hasScoresToSave) {
         const saveSuccess = await saveCurrentHoleScores();
         if (!saveSuccess) {
-          return; // Não prossegue se falhou ao salvar
+          return;
         }
       }
     }
 
-    // CORREÇÃO 1: Agora sim, após salvar com sucesso, movemos o buraco
     if (delta > 0) {
       if (!isReviewMode && playedHoles.length >= 18) {
         setShowSummary(true);
@@ -223,6 +285,14 @@ function Scorecard() {
           setPlayedHoles([...playedHoles, nextHole]);
       }
       setCurrentHole(nextHole);
+      
+      // AJUSTE 1: Carregar rascunho do próximo buraco se existir
+      if (group?.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
+        }
+      }
 
     } else if (delta < 0) {
       let prevHole = currentHole - 1;
@@ -233,6 +303,14 @@ function Scorecard() {
         return;
       }
       setCurrentHole(prevHole);
+      
+      // AJUSTE 1: Carregar rascunho do buraco anterior se existir
+      if (group?.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
+        }
+      }
     }
   };
 
@@ -240,13 +318,11 @@ function Scorecard() {
     let totalGross = 0;
     let totalPar = 0;
 
-    // Soma as tacadas reais (Gross) e os Pares dos buracos jogados
     for (let h = 1; h <= 18; h++) {
       const score = scores[`${userId}-${h}`];
       if (score > 0) {
         totalGross += score;
         
-        // Acha o par desse buraco específico
         const hole = holesData.find(hd => (hd.hole_number || hd.hole) === h);
         if (hole) totalPar += hole.par;
       }
@@ -254,7 +330,6 @@ function Scorecard() {
 
     if (totalGross === 0) return { gross: 0, netVsPar: "E" };
 
-    // Calcula a relação ao Par usando o Handicap
     const grossVsPar = totalGross - totalPar;
     const netVsPar = grossVsPar - parseFloat(handicap || 0);
 
@@ -263,12 +338,10 @@ function Scorecard() {
       formattedNet = netVsPar > 0 ? `+${netVsPar.toFixed(1)}` : netVsPar.toFixed(1);
     }
 
-    // Retorna as tacadas REAIS e o NET separado
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
   const handleConfirmGame = async () => {
-    // Salvar todos os scores pendentes antes de finalizar
     const holesToSave = [...new Set(playedHoles)];
     for (const hole of holesToSave) {
       const hasScoresForHole = players.some(p => {
@@ -291,11 +364,21 @@ function Scorecard() {
             return Promise.resolve();
           });
           await Promise.all(savePromises);
+          
+          // AJUSTE 1: Limpar rascunho de cada buraco salvo
+          if (group?.tournament_id) {
+            clearDraftFromLocalStorage(group.tournament_id, hole);
+          }
         } catch (error) {
           alert(`❌ Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
           return;
         }
       }
+    }
+    
+    // AJUSTE 1: Limpar todos os rascunhos após finalizar
+    if (group?.tournament_id) {
+      clearAllDraftsForMatch(group.tournament_id);
     }
     
     alert("✅ Cartão Assinado! Placar Oficializado.");
@@ -337,7 +420,9 @@ function Scorecard() {
     reviewBtn: { width: "100%", padding: "15px", backgroundColor: theme.cardLight, color: "white", fontSize: "18px", fontWeight: "bold", border: `2px solid ${theme.accent}`, borderRadius: "8px", cursor: "pointer", marginTop: "30px", marginBottom: "20px" },
   };
 
-  if (!group) return <div style={styles.container}>Carregando...</div>;
+  if (isInitialLoading || !group) {
+    return <div style={styles.container}>Carregando partida...</div>;
+  }
 
   if (showSummary) {
     return (
@@ -354,11 +439,9 @@ function Scorecard() {
                   <div style={{ fontSize: "12px", color: theme.textMuted }}>HDCP: {p.handicap || 0}</div>
                 </span>
                 <div style={{ textAlign: "right" }}>
-                  {/* EXIBE AS TACADAS PURAS AQUI */}
                   <div style={{ ...styles.totalScore, color: "white" }}>
                     {totals.gross} tacadas
                   </div>
-                  {/* EXIBE A RELAÇÃO AO PAR COM HANDICAP AQUI */}
                   <div style={{ 
                     fontSize: "14px", fontWeight: "bold",
                     color: totals.netVsPar.toString().includes("-") ? theme.accent : (totals.netVsPar === "E" ? theme.textMuted : theme.danger) 
@@ -410,7 +493,6 @@ function Scorecard() {
             <div key={p.id} style={styles.playerCard}>
               <div style={styles.playerName}>
                 <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
-                {/* --- MÁGICA VISUAL DO TEE --- */}
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
                   <span style={{ 
                     width: "10px", height: "10px", borderRadius: "50%", 
@@ -435,10 +517,6 @@ function Scorecard() {
 
       {isReviewMode && (
         <button style={styles.reviewBtn} onClick={() => setShowSummary(true)}>📋 Finalizar Cartão</button>
-      )}
-      
-      {isSaving && (
-        <div style={{ marginTop: "10px", color: theme.gold }}>Salvando...</div>
       )}
     </div>
   );
