@@ -161,7 +161,7 @@ function Scorecard() {
       
       setCurrentHole(finalCurrentHole);
       
-      // Carregar rascunhos do localStorage para o buraco atual (ANTES de qualquer falha)
+      // Carregar rascunhos do localStorage para o buraco atual
       if (savedGroup.tournament_id) {
         const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, finalCurrentHole);
         if (draftData) {
@@ -170,10 +170,10 @@ function Scorecard() {
       }
       
     } catch (error) { 
-      console.error("Modo Offline ativado ou oscilação de rede.", error);
-      // Removemos o "alert" chato aqui. O app agora vai simplesmente 
-      // usar o que já estava na memória e no localStorage silenciosamente.
+      console.error("Erro ao carregar dados", error);
+      // REGRA 4: Bloco catch apenas console.error, sem alert
     } finally {
+      // REGRA 4: Finally sempre seta isLoading false
       setIsInitialLoading(false);
     }
   }, [groupId, navigate, loadDraftFromLocalStorage]);
@@ -184,12 +184,13 @@ function Scorecard() {
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
 
+  // REGRA 1: handleScoreChange com anotação livre offline e bônus do PAR
   const handleScoreChange = (userId, delta) => {
     const key = `${userId}-${currentHole}`;
     const currentScore = parseInt(scores[key]) || 0;
     let newScore = currentScore + delta;
 
-    // Se tava 0 e clicou no +, já joga o PAR do buraco pra economizar cliques!
+    // Bônus: se tava 0 e clicou no +, joga o PAR do buraco
     if (currentScore === 0 && delta > 0) {
       newScore = currentHoleData.par || 4;
     }
@@ -200,7 +201,7 @@ function Scorecard() {
     }
     
     const updatedScores = { ...scores, [key]: newScore };
-    setScores(updatedScores);
+    setScores(updatedScores); // Atualiza state imediatamente, mesmo offline
     
     if (group?.tournament_id) {
       const currentHoleScores = {};
@@ -214,7 +215,14 @@ function Scorecard() {
     }
   };
 
+  // REGRA 2: saveCurrentHoleScores com trava offline e catch com alert
   const saveCurrentHoleScores = async () => {
+    // Trava offline: impede save e impede avanço
+    if (!navigator.onLine) {
+      alert("Conexão instável. Os pontos estão anotados na tela, aguarde o sinal voltar e clique na seta para salvar e avançar.");
+      return false;
+    }
+    
     setIsSaving(true);
     try {
       const savePromises = players.map(p => {
@@ -237,10 +245,10 @@ function Scorecard() {
       }
       return true;
     } catch (error) {
-      console.warn("Sem internet: Mantendo os dados no rascunho do celular.");
-      // O SEGREDO MÁGICO DO PWA: Mesmo dando erro de rede, nós devolvemos TRUE
-      // Isso engana o app e permite que o jogador vá para o próximo buraco normalmente!
-      return true; 
+      // REGRA 2: catch com alert de erro de servidor e retorna false
+      console.warn("Erro ao salvar pontuação:", error);
+      alert("Erro de servidor. Não foi possível salvar os pontos. Tente novamente.");
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -342,7 +350,14 @@ function Scorecard() {
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
+  // REGRA 3: handleConfirmGame com trava offline no início
   const handleConfirmGame = async () => {
+    // Trava offline: impede finalização sem conexão
+    if (!navigator.onLine) {
+      alert("⚠️ Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
+      return;
+    }
+    
     const holesToSave = [...new Set(playedHoles)];
     for (const hole of holesToSave) {
       const hasScoresForHole = players.some(p => {
