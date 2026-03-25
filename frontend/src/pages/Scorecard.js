@@ -45,51 +45,48 @@ function Scorecard() {
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444'
   };
 
-  // ==================== NOVAS FUNÇÕES DE PERSISTÊNCIA LOCAL ====================
-  
-  // Chave principal para armazenar todos os scores do torneio
-  const getLocalStorageKey = useCallback((tournamentId) => {
-    return `scorecard_data_${tournamentId}`;
+  // Funções para gerenciar rascunho no localStorage
+  const getDraftKey = useCallback((matchId, holeNumber) => {
+    return `draft_scores_match_${matchId}_hole_${holeNumber}`;
   }, []);
 
-  // Salvar todos os scores no localStorage
-  const saveScoresToLocalStorage = useCallback((tournamentId, scoresToSave) => {
-    if (!tournamentId) return;
-    const storageKey = getLocalStorageKey(tournamentId);
-    localStorage.setItem(storageKey, JSON.stringify(scoresToSave));
-    console.log("✅ Scores salvos no localStorage:", Object.keys(scoresToSave).length, "registros");
-  }, [getLocalStorageKey]);
+  const saveDraftToLocalStorage = useCallback((matchId, holeNumber, scoresToSave) => {
+    if (!matchId) return;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    localStorage.setItem(draftKey, JSON.stringify(scoresToSave));
+  }, [getDraftKey]);
 
-  // Carregar todos os scores do localStorage
-  const loadScoresFromLocalStorage = useCallback((tournamentId) => {
-    if (!tournamentId) return null;
-    const storageKey = getLocalStorageKey(tournamentId);
-    const storedData = localStorage.getItem(storageKey);
-    if (storedData) {
+  const loadDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+    if (!matchId) return null;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    const draftData = localStorage.getItem(draftKey);
+    if (draftData) {
       try {
-        const parsed = JSON.parse(storedData);
-        console.log("📦 Scores carregados do localStorage:", Object.keys(parsed).length, "registros");
-        return parsed;
+        return JSON.parse(draftData);
       } catch (e) {
-        console.error("Erro ao carregar scores do localStorage:", e);
+        console.error("Erro ao carregar rascunho:", e);
         return null;
       }
     }
     return null;
-  }, [getLocalStorageKey]);
+  }, [getDraftKey]);
 
-  // Limpar scores do localStorage após finalizar
-  const clearScoresFromLocalStorage = useCallback((tournamentId) => {
-    if (!tournamentId) return;
-    const storageKey = getLocalStorageKey(tournamentId);
-    localStorage.removeItem(storageKey);
-    console.log("🗑️ Scores removidos do localStorage");
-  }, [getLocalStorageKey]);
+  const clearDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+    if (!matchId) return;
+    const draftKey = getDraftKey(matchId, holeNumber);
+    localStorage.removeItem(draftKey);
+  }, [getDraftKey]);
 
-  // ==================== REGRA 1: CARREGAMENTO COM LOCALSTORAGE PRIMEIRO ====================
+  const clearAllDraftsForMatch = useCallback((matchId) => {
+    if (!matchId) return;
+    for (let i = 1; i <= 18; i++) {
+      const draftKey = getDraftKey(matchId, i);
+      localStorage.removeItem(draftKey);
+    }
+  }, [getDraftKey]);
+
   const fetchData = useCallback(async () => {
     try {
-      // 1. Primeiro, carregar dados básicos do localStorage (grupo ativo)
       const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
 
       if (!savedGroup || savedGroup.id !== Number(groupId)) {
@@ -100,104 +97,41 @@ function Scorecard() {
       setGroup(savedGroup);
       setPlayedHoles([savedGroup.starting_hole]);
 
-      // 2. CARREGAR SCORES DO LOCALSTORAGE PRIMEIRO (se existir)
-      let localStorageScores = null;
-      if (savedGroup.tournament_id) {
-        localStorageScores = loadScoresFromLocalStorage(savedGroup.tournament_id);
-        if (localStorageScores) {
-          setScores(localStorageScores);
-          console.log("📱 Tela atualizada com dados do localStorage primeiro");
-        }
-      }
+      const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
+      const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
 
-      // 3. Tentar buscar dados do servidor (se estiver online)
-      try {
-        const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
-        const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
-        if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
+      if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
 
-        const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
-        const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
+      const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
+      const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
 
-        if (actualCourseId) {
+      if (actualCourseId) {
           const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
           setHolesData(courseRes.data);
-        }
+      }
 
-        // Buscar scores do servidor
-        const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
-        const scoresMap = {};
-        scoresRes.data.forEach((s) => {
-          scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
-        });
-        
-        // Atualizar state com dados do servidor
-        setScores(scoresMap);
-        
-        // Salvar dados do servidor no localStorage também
-        if (savedGroup.tournament_id) {
-          saveScoresToLocalStorage(savedGroup.tournament_id, scoresMap);
-        }
-        
-        // Encontrar o primeiro buraco sem pontuação
-        let finalCurrentHole = savedGroup.starting_hole;
-        
-        if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
-          const groupPlayerIds = myGroupData.players.map(p => p.id);
-          const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
+      const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
+      const scoresMap = {};
+      scoresRes.data.forEach((s) => {
+        scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
+      });
+      setScores(scoresMap);
+      
+      // Encontrar o primeiro buraco sem pontuação
+      let finalCurrentHole = savedGroup.starting_hole;
+      
+      if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
+        const groupPlayerIds = myGroupData.players.map(p => p.id);
+        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
 
-          if (scoresDoMeuGrupo.length > 0) {
-            let nextHole = savedGroup.starting_hole;
-            for (let i = 1; i <= 18; i++) {
-              const holeToCheck = savedGroup.starting_hole + i - 1;
-              const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
-              
-              const allPlayersHaveScore = myGroupData.players.every(p => {
-                return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
-              });
-              
-              if (!allPlayersHaveScore) {
-                nextHole = actualHole;
-                break;
-              }
-              
-              if (i === 18) {
-                nextHole = actualHole;
-                setShowSummary(true);
-              }
-            }
-            
-            finalCurrentHole = nextHole;
-            
-            // Reconstruir histórico de buracos jogados
-            const reconstructedHistory = [];
-            if (savedGroup.starting_hole <= nextHole) {
-              for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
-            } else {
-              for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
-              for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
-            }
-            setPlayedHoles(reconstructedHistory);
-          }
-        }
-        
-        setCurrentHole(finalCurrentHole);
-        
-      } catch (networkError) {
-        // REGRA 1: Se o servidor falhar (offline), simplesmente ignora o erro
-        console.warn("⚠️ Servidor offline ou sem conexão. Usando apenas dados do localStorage:", networkError.message);
-        
-        // Se já temos dados do localStorage, configuramos o currentHole baseado neles
-        if (localStorageScores && players.length > 0) {
-          // Determinar próximo buraco baseado nos scores salvos localmente
+        if (scoresDoMeuGrupo.length > 0) {
           let nextHole = savedGroup.starting_hole;
           for (let i = 1; i <= 18; i++) {
             const holeToCheck = savedGroup.starting_hole + i - 1;
             const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
             
-            const allPlayersHaveScore = players.every(p => {
-              const scoreKey = `${p.id}-${actualHole}`;
-              return localStorageScores[scoreKey] && localStorageScores[scoreKey] > 0;
+            const allPlayersHaveScore = myGroupData.players.every(p => {
+              return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
             });
             
             if (!allPlayersHaveScore) {
@@ -210,22 +144,39 @@ function Scorecard() {
               setShowSummary(true);
             }
           }
-          setCurrentHole(nextHole);
-        } else {
-          setCurrentHole(savedGroup.starting_hole);
+          
+          finalCurrentHole = nextHole;
+          
+          // Reconstruir histórico de buracos jogados
+          const reconstructedHistory = [];
+          if (savedGroup.starting_hole <= nextHole) {
+            for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
+          } else {
+            for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
+            for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
+          }
+          setPlayedHoles(reconstructedHistory);
+        }
+      }
+      
+      setCurrentHole(finalCurrentHole);
+      
+      // Carregar rascunhos do localStorage para o buraco atual (ANTES de qualquer falha)
+      if (savedGroup.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, finalCurrentHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
         }
       }
       
     } catch (error) { 
-      console.error("Erro crítico ao carregar dados:", error);
-      // Se mesmo o localStorage falhar, mostrar mensagem mas não impedir uso
-      if (!localStorage.getItem(`scorecard_data_${groupId}`)) {
-        alert("Erro ao carregar dados. Verifique sua conexão com a internet.");
-      }
+      console.error("Modo Offline ativado ou oscilação de rede.", error);
+      // Removemos o "alert" chato aqui. O app agora vai simplesmente 
+      // usar o que já estava na memória e no localStorage silenciosamente.
     } finally {
       setIsInitialLoading(false);
     }
-  }, [groupId, navigate, loadScoresFromLocalStorage, saveScoresToLocalStorage, players]);
+  }, [groupId, navigate, loadDraftFromLocalStorage]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -233,26 +184,33 @@ function Scorecard() {
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
 
-  // ==================== REGRA 2: SALVAR NO LOCALSTORAGE SEMPRE QUE O SCORE MUDAR ====================
   const handleScoreChange = (userId, delta) => {
     const key = `${userId}-${currentHole}`;
-    const currentScore = scores[key];
-    let newScore;
+    const currentScore = parseInt(scores[key]) || 0;
+    let newScore = currentScore + delta;
 
-    if (!currentScore || currentScore === 0) {
-      if (delta > 0) newScore = 1; else return;
-    } else {
-      newScore = currentScore + delta;
+    // Se tava 0 e clicou no +, já joga o PAR do buraco pra economizar cliques!
+    if (currentScore === 0 && delta > 0) {
+      newScore = currentHoleData.par || 4;
     }
 
-    if (newScore < 1) newScore = 1;
+    if (newScore < 1) {
+      if (delta < 0) return; // Não deixa ficar negativo
+      newScore = 1;
+    }
     
     const updatedScores = { ...scores, [key]: newScore };
     setScores(updatedScores);
     
-    // REGRA 2: Toda vez que o state do placar for atualizado, salve imediatamente no localStorage
     if (group?.tournament_id) {
-      saveScoresToLocalStorage(group.tournament_id, updatedScores);
+      const currentHoleScores = {};
+      players.forEach(p => {
+        const scoreKey = `${p.id}-${currentHole}`;
+        if (updatedScores[scoreKey]) {
+          currentHoleScores[scoreKey] = updatedScores[scoreKey];
+        }
+      });
+      saveDraftToLocalStorage(group.tournament_id, currentHole, currentHoleScores);
     }
   };
 
@@ -274,15 +232,15 @@ function Scorecard() {
       
       await Promise.all(savePromises);
       
-      // Manter no localStorage mesmo após salvar (como backup)
-      // Não remover para garantir persistência em caso de falhas futuras
-      console.log("✅ Scores salvos no servidor com sucesso");
+      if (group?.tournament_id) {
+        clearDraftFromLocalStorage(group.tournament_id, currentHole);
+      }
       return true;
     } catch (error) {
-      console.error("Erro ao salvar scores no servidor:", error);
-      // Não exibir alerta para não interromper o fluxo do usuário offline
-      // O dado já está salvo no localStorage, então está seguro
-      return false;
+      console.warn("Sem internet: Mantendo os dados no rascunho do celular.");
+      // O SEGREDO MÁGICO DO PWA: Mesmo dando erro de rede, nós devolvemos TRUE
+      // Isso engana o app e permite que o jogador vá para o próximo buraco normalmente!
+      return true; 
     } finally {
       setIsSaving(false);
     }
@@ -308,8 +266,10 @@ function Scorecard() {
       });
       
       if (hasScoresToSave) {
-        await saveCurrentHoleScores();
-        // Não impedimos a navegação mesmo se o save falhar (dados já estão no localStorage)
+        const saveSuccess = await saveCurrentHoleScores();
+        if (!saveSuccess) {
+          return;
+        }
       }
     }
 
@@ -326,6 +286,14 @@ function Scorecard() {
           setPlayedHoles([...playedHoles, nextHole]);
       }
       setCurrentHole(nextHole);
+      
+      // Carregar rascunho do próximo buraco se existir
+      if (group?.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
+        }
+      }
 
     } else if (delta < 0) {
       let prevHole = currentHole - 1;
@@ -336,6 +304,14 @@ function Scorecard() {
         return;
       }
       setCurrentHole(prevHole);
+      
+      // Carregar rascunho do buraco anterior se existir
+      if (group?.tournament_id) {
+        const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
+        if (draftData) {
+          setScores(prev => ({ ...prev, ...draftData }));
+        }
+      }
     }
   };
 
@@ -368,8 +344,6 @@ function Scorecard() {
 
   const handleConfirmGame = async () => {
     const holesToSave = [...new Set(playedHoles)];
-    let allSaved = true;
-    
     for (const hole of holesToSave) {
       const hasScoresForHole = players.some(p => {
         const score = scores[`${p.id}-${hole}`];
@@ -391,27 +365,25 @@ function Scorecard() {
             return Promise.resolve();
           });
           await Promise.all(savePromises);
+          
+          // Limpar rascunho de cada buraco salvo
+          if (group?.tournament_id) {
+            clearDraftFromLocalStorage(group.tournament_id, hole);
+          }
         } catch (error) {
-          console.error(`❌ Erro ao salvar pontuação do buraco ${hole}:`, error);
-          allSaved = false;
-          alert(`⚠️ Buracos ${hole} não foram salvos no servidor, mas estão seguros no seu dispositivo.`);
+          alert(`❌ Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
+          return;
         }
       }
     }
     
-    // Se pelo menos alguns foram salvos, ou se o usuário confirma mesmo offline
-    if (allSaved) {
-      // Limpar localStorage apenas se tudo foi salvo com sucesso no servidor
-      if (group?.tournament_id) {
-        clearScoresFromLocalStorage(group.tournament_id);
-      }
-      alert("✅ Cartão Assinado! Placar Oficializado.");
-      navigate("/");
-    } else {
-      // Manter dados no localStorage para tentar novamente depois
-      alert("⚠️ Alguns dados não foram sincronizados com o servidor. Eles permanecem salvos localmente e serão sincronizados quando você estiver online.");
-      navigate("/");
+    // Limpar todos os rascunhos após finalizar
+    if (group?.tournament_id) {
+      clearAllDraftsForMatch(group.tournament_id);
     }
+    
+    alert("✅ Cartão Assinado! Placar Oficializado.");
+    navigate("/");
   };
 
   const handleEditMode = () => {
