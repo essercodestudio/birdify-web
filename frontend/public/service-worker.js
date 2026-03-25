@@ -1,43 +1,55 @@
 /* eslint-disable no-restricted-globals */
-const CACHE_NAME = 'birdify-offline-v1';
+const CACHE_NAME = 'birdify-offline-v2';
 
-// Quando o PWA é instalado no celular...
-
-// Quando o PWA é instalado no celular, ativa na hora
 self.addEventListener('install', (event) => {
   self.skipWaiting();
+  // Força o salvamento da tela principal logo que o app abre
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(['/', '/index.html']);
+    }).catch(() => console.log('Cache inicial ignorado'))
+  );
 });
 
-// Assume o controle do site imediatamente
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// O "Cérebro" de interceptação de rede
 self.addEventListener('fetch', (event) => {
-  // Ignora requisições de salvar placar (POST), foca só em carregar a tela (GET)
-  if (event.request.method !== 'GET') return;
+  // Ignora requisições do sistema, foca só no que for HTTP/HTTPS
+  if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      // Tenta buscar a versão mais nova na Hostinger
       const fetchPromise = fetch(event.request).then((networkResponse) => {
+        // Se tem internet, salva uma cópia silenciosa pro futuro
         if (networkResponse && networkResponse.status === 200) {
-          // Se deu sucesso, guarda uma cópia no celular para o modo offline
+          const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, networkResponse.clone());
+            cache.put(event.request, responseClone);
           });
         }
         return networkResponse;
-      }).catch(() => {
-        // MODO OFFLINE (A internet caiu)
-        // Se o usuário tentar abrir uma tela e der erro, devolvemos a tela principal salva
+      }).catch(async () => {
+        // === A INTERNET CAIU ===
+        
+        // 1. O Safari pediu um arquivo que temos salvo? Toma.
+        if (cachedResponse) return cachedResponse;
+        
+        // 2. O jogador tentou abrir uma tela nova? Mostra a tela principal do React.
         if (event.request.mode === 'navigate') {
-          return caches.match('/');
+          const rootCache = await caches.match('/index.html') || await caches.match('/');
+          if (rootCache) return rootCache;
         }
+        
+        // 3. A TRAVA DO SAFARI: Nunca devolve "null". Se der tudo errado, devolve uma resposta válida de erro.
+        return new Response('Sem conexão com a internet. O Birdify continua guardando seus placares.', { 
+          status: 503, 
+          statusText: 'Offline',
+          headers: new Headers({ 'Content-Type': 'text/plain' })
+        });
       });
 
-      // Se já tem no cache, mostra rápido. Se não, espera a internet carregar.
       return cachedResponse || fetchPromise;
     })
   );
