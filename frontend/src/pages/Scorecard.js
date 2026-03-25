@@ -45,7 +45,7 @@ function Scorecard() {
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444'
   };
 
-  // AJUSTE 1: Funções para gerenciar rascunho no localStorage (fora do componente ou memoizadas)
+  // Funções para gerenciar rascunho no localStorage
   const getDraftKey = useCallback((matchId, holeNumber) => {
     return `draft_scores_match_${matchId}_hole_${holeNumber}`;
   }, []);
@@ -161,7 +161,7 @@ function Scorecard() {
       
       setCurrentHole(finalCurrentHole);
       
-      // AJUSTE 1: Carregar rascunhos do localStorage para o buraco atual
+      // Carregar rascunhos do localStorage para o buraco atual
       if (savedGroup.tournament_id) {
         const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, finalCurrentHole);
         if (draftData) {
@@ -175,7 +175,7 @@ function Scorecard() {
     } finally {
       setIsInitialLoading(false);
     }
-  }, [groupId, navigate, loadDraftFromLocalStorage]); // CORREÇÃO: Adicionada dependência
+  }, [groupId, navigate, loadDraftFromLocalStorage]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -199,7 +199,7 @@ function Scorecard() {
     const updatedScores = { ...scores, [key]: newScore };
     setScores(updatedScores);
     
-    // AJUSTE 1: Salvar rascunho no localStorage sempre que o score mudar
+    // Salvar rascunho no localStorage sempre que o score mudar
     if (group?.tournament_id) {
       const currentHoleScores = {};
       players.forEach(p => {
@@ -230,7 +230,7 @@ function Scorecard() {
       
       await Promise.all(savePromises);
       
-      // AJUSTE 1: Limpar rascunho após salvar com sucesso
+      // Limpar rascunho após salvar com sucesso
       if (group?.tournament_id) {
         clearDraftFromLocalStorage(group.tournament_id, currentHole);
       }
@@ -286,7 +286,7 @@ function Scorecard() {
       }
       setCurrentHole(nextHole);
       
-      // AJUSTE 1: Carregar rascunho do próximo buraco se existir
+      // Carregar rascunho do próximo buraco se existir
       if (group?.tournament_id) {
         const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
         if (draftData) {
@@ -304,7 +304,7 @@ function Scorecard() {
       }
       setCurrentHole(prevHole);
       
-      // AJUSTE 1: Carregar rascunho do buraco anterior se existir
+      // Carregar rascunho do buraco anterior se existir
       if (group?.tournament_id) {
         const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
         if (draftData) {
@@ -365,7 +365,7 @@ function Scorecard() {
           });
           await Promise.all(savePromises);
           
-          // AJUSTE 1: Limpar rascunho de cada buraco salvo
+          // Limpar rascunho de cada buraco salvo
           if (group?.tournament_id) {
             clearDraftFromLocalStorage(group.tournament_id, hole);
           }
@@ -376,7 +376,7 @@ function Scorecard() {
       }
     }
     
-    // AJUSTE 1: Limpar todos os rascunhos após finalizar
+    // Limpar todos os rascunhos após finalizar
     if (group?.tournament_id) {
       clearAllDraftsForMatch(group.tournament_id);
     }
@@ -420,8 +420,9 @@ function Scorecard() {
     reviewBtn: { width: "100%", padding: "15px", backgroundColor: theme.cardLight, color: "white", fontSize: "18px", fontWeight: "bold", border: `2px solid ${theme.accent}`, borderRadius: "8px", cursor: "pointer", marginTop: "30px", marginBottom: "20px" },
   };
 
+  // AJUSTE VISUAL: Remover texto de loading, mostrar container vazio com fundo
   if (isInitialLoading || !group) {
-    return <div style={styles.container}>Carregando partida...</div>;
+    return <div style={{ backgroundColor: theme.bg, minHeight: "100vh" }} />;
   }
 
   if (showSummary) {
