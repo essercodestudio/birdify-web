@@ -100,21 +100,20 @@ function TrainingScorecard() {
     }
     if (history.length === 0) history.push(startHole);
 
-    // Verifica se há um buraco salvo manualmente pelo usuário nesta sessão.
-    // Tem prioridade sobre o cálculo por score: reflete a última ação de navegação.
+    // sessionStorage tem prioridade absoluta — reflete a última ação manual do usuário.
+    // Não valida contra o estado do banco (evita regressão por latência de rede).
     const storageKey    = `training_hole_${groupId}`;
     const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10) || null;
 
-    // O buraco persistido é aceito se for válido E alcançável:
-    // ou já está no histórico de buracos completos, ou é exatamente o próximo.
-    const nextOfLast  = lastFullHole < 18 ? lastFullHole + 1 : 1;
-    const isReachable = persistedHole >= 1 && persistedHole <= 18
-      && (history.includes(persistedHole) || persistedHole === nextOfLast);
-
-    if (isReachable) {
-      const fullHistory = history.includes(persistedHole)
-        ? history
-        : [...history, persistedHole];
+    if (persistedHole >= 1 && persistedHole <= 18) {
+      // Reconstrói história contínua do startHole até o buraco persistido
+      const fullHistory = [];
+      if (startHole <= persistedHole) {
+        for (let i = startHole; i <= persistedHole; i++) fullHistory.push(i);
+      } else {
+        for (let i = startHole; i <= 18; i++) fullHistory.push(i);
+        for (let i = 1; i <= persistedHole; i++) fullHistory.push(i);
+      }
       setPlayedHoles(fullHistory);
       setCurrentHole(persistedHole);
     } else {
