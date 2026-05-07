@@ -13,6 +13,16 @@ exports.saveScore = async (req, res) => {
       });
     }
 
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournament_id, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
+
     // 1. PRIMEIRO PASSO: Deleta qualquer pontuação velha ou duplicada desse jogador nesse buraco
     const deleteQuery =
       "DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ?";
@@ -49,6 +59,16 @@ exports.getScores = async (req, res) => {
       return res.status(400).json({ 
         error: 'ID do torneio não fornecido.' 
       });
+    }
+
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournamentId, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
 
     const query =

@@ -15,6 +15,17 @@ function generateAccessCode(length = 5) {
 exports.createGroup = async (req, res) => {
   try {
     const { tournament_id, group_name, starting_hole } = req.body;
+    
+    // Verifica se o torneio pertence ao clube antes de criar o grupo
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournament_id, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
+    
     const access_code = generateAccessCode();
 
     const query = "INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole) VALUES (?, ?, ?, ?)";
@@ -35,6 +46,16 @@ exports.createGroup = async (req, res) => {
 exports.getGroupsByTournament = async (req, res) => {
   try {
     const { tournamentId } = req.params;
+
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournamentId, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
 
     const query = `
       SELECT 
@@ -90,12 +111,17 @@ exports.addPlayerToGroup = async (req, res) => {
   try {
     const { group_id, user_id } = req.body;
 
-    // 1. Verificar se o grupo existe e pegar o tournament_id
-    const findTournamentQuery = "SELECT tournament_id FROM tournament_groups WHERE id = ?";
-    const [groupResults] = await db.execute(findTournamentQuery, [group_id]);
+    // 1. Verificar se o grupo existe, pegar o tournament_id E verificar se pertence ao clube
+    const findTournamentQuery = `
+      SELECT tg.tournament_id 
+      FROM tournament_groups tg
+      JOIN tournaments t ON tg.tournament_id = t.id
+      WHERE tg.id = ? AND t.club_id = ?
+    `;
+    const [groupResults] = await db.execute(findTournamentQuery, [group_id, req.club.id]);
     
     if (groupResults.length === 0) {
-      return res.status(404).json({ message: "Grupo não encontrado" });
+      return res.status(404).json({ message: "Grupo não encontrado ou acesso negado." });
     }
 
     const tournamentId = groupResults[0].tournament_id;
@@ -137,11 +163,18 @@ exports.removePlayer = async (req, res) => {
       return res.status(400).json({ error: "ID do grupo ou do jogador não informados." });
     }
 
-    // Descobre o ID do torneio antes de apagar o jogador
+    // Descobre o ID do torneio antes de apagar o jogador E verifica se pertence ao clube
     const [tResults] = await db.execute(
-      "SELECT tournament_id FROM tournament_groups WHERE id = ?", 
-      [groupId]
+      `SELECT tg.tournament_id 
+       FROM tournament_groups tg
+       JOIN tournaments t ON tg.tournament_id = t.id
+       WHERE tg.id = ? AND t.club_id = ?`, 
+      [groupId, req.club.id]
     );
+    
+    if (tResults.length === 0) {
+      return res.status(404).json({ error: "Grupo não encontrado ou acesso negado." });
+    }
     
     const tId = tResults[0]?.tournament_id;
 
@@ -173,11 +206,18 @@ exports.deleteGroup = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Descobre o Torneio e quem estava no grupo antes de apagar tudo
+    // Descobre o Torneio e quem estava no grupo antes de apagar tudo E verifica se pertence ao clube
     const [tResults] = await db.execute(
-      "SELECT tournament_id FROM tournament_groups WHERE id = ?", 
-      [id]
+      `SELECT tg.tournament_id 
+       FROM tournament_groups tg
+       JOIN tournaments t ON tg.tournament_id = t.id
+       WHERE tg.id = ? AND t.club_id = ?`, 
+      [id, req.club.id]
     );
+    
+    if (tResults.length === 0) {
+      return res.status(404).json({ error: "Grupo não encontrado ou acesso negado." });
+    }
     
     const tId = tResults[0]?.tournament_id;
 
@@ -220,6 +260,20 @@ exports.deleteGroup = async (req, res) => {
 exports.generateCode = async (req, res) => {
   try {
     const { group_id } = req.body;
+    
+    // Verifica se o grupo pertence a um torneio do clube
+    const [groupCheck] = await db.execute(
+      `SELECT tg.id 
+       FROM tournament_groups tg
+       JOIN tournaments t ON tg.tournament_id = t.id
+       WHERE tg.id = ? AND t.club_id = ?`,
+      [group_id, req.club.id]
+    );
+    
+    if (groupCheck.length === 0) {
+      return res.status(404).json({ error: 'Grupo não encontrado ou acesso negado.' });
+    }
+    
     const code = generateAccessCode(4).toUpperCase();
 
     const [result] = await db.execute(
@@ -254,6 +308,8 @@ exports.joinGroup = async (req, res) => {
 
     const cleanCode = access_code.trim().toUpperCase();
 
+    // NOTA: joinGroup NÃO recebe req.club.id porque o jogador está acessando via código público
+    // Esta rota é pública por natureza (jogadores entrando com código)
     const groupQuery = `
       SELECT g.*, t.name as tournament_name, c.name as course_name
       FROM tournament_groups g
@@ -297,6 +353,19 @@ exports.saveGroupHandicaps = async (req, res) => {
     if (!players_data || players_data.length === 0) {
       return res.json({ message: "Nenhum jogador para atualizar." });
     }
+    
+    // Verifica se o grupo pertence a um torneio do clube
+    const [groupCheck] = await db.execute(
+      `SELECT tg.id 
+       FROM tournament_groups tg
+       JOIN tournaments t ON tg.tournament_id = t.id
+       WHERE tg.id = ? AND t.club_id = ?`,
+      [group_id, req.club.id]
+    );
+    
+    if (groupCheck.length === 0) {
+      return res.status(403).json({ error: 'Grupo não encontrado ou acesso negado.' });
+    }
 
     // Usando Promise.all para atualizar todos os handicaps em paralelo
     const updatePromises = players_data.map(async (player) => {
@@ -322,6 +391,16 @@ exports.saveGroupHandicaps = async (req, res) => {
 exports.exportGroupsToExcel = async (req, res) => {
   try {
     const { tournamentId } = req.params;
+
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournamentId, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
 
     const query = `
       SELECT 

@@ -1,6 +1,6 @@
 // frontend/src/pages/Dashboard.js
 import React, { useState, useEffect, useCallback } from 'react';
-import api from '../services/api'; // Ajuste o caminho se necessário
+import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 function Dashboard() {
@@ -9,26 +9,20 @@ function Dashboard() {
   const [tournaments, setTournaments] = useState([]);
   const [courses, setCourses] = useState([]); 
 
-  // Estados do Formulário
   const [newTournamentName, setNewTournamentName] = useState('');
   const [newTournamentDate, setNewTournamentDate] = useState('');
   const [selectedCourseId, setSelectedCourseId] = useState('');
   const [description, setDescription] = useState('');
   const [paymentInfo, setPaymentInfo] = useState('');
-  
-  // NOVO: Estados de Valor e Chave PIX
   const [fee, setFee] = useState('');
   const [pixKeyType, setPixKeyType] = useState('Chave Aleatória'); 
-  
   const [whatsappContact, setWhatsappContact] = useState('');
   const [registrationDeadline, setRegistrationDeadline] = useState('');
   
-  // Patrocinadores
   const [sponsors, setSponsors] = useState([]);
   const [sponsorName, setSponsorName] = useState('');
   const [sponsorLogo, setSponsorLogo] = useState('');
 
-  // Categorias
   const defaultCategories = [
     "Masculino Gross (M0)", "Masculino Net (M1) - 0 a 8.5", "Masculino Net (M2) - 8.6 a 14.0",
     "Masculino Net (M3) - 14.1 a 22.1", "Masculino Net (M4) - 22.2 a 36.4",
@@ -37,7 +31,6 @@ function Dashboard() {
   ];
   const [selectedCategories, setSelectedCategories] = useState([]);
 
-  // Estado de Edição
   const [isEditing, setIsEditing] = useState(false);
   const [editTournamentId, setEditTournamentId] = useState(null);
 
@@ -77,9 +70,7 @@ function Dashboard() {
   }, [navigate, fetchTournaments, fetchCourses]);
 
   const handleCopyLink = (id) => {
-    // Adicionamos o ?public=true ao final da string do link
     const link = `${window.location.origin}/leaderboard/${id}?public=true`;
-    
     navigator.clipboard.writeText(link).then(() => {
       alert("✅ Link Público copiado!");
     });
@@ -117,7 +108,6 @@ function Dashboard() {
     e.preventDefault();
     if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
     
-    // NOVO: Adicionado fee (valor) no payload
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
@@ -140,8 +130,7 @@ function Dashboard() {
       
       setNewTournamentName(t.name); setNewTournamentDate(formatDate(t.start_date));
       setSelectedCourseId(t.course_id); setDescription(t.description || '');
-      setFee(t.fee || ''); // Puxa o valor do banco
-      setPaymentInfo(t.payment_info || ''); setWhatsappContact(t.whatsapp_contact || '');
+      setFee(t.fee || ''); setPaymentInfo(t.payment_info || ''); setWhatsappContact(t.whatsapp_contact || '');
       setRegistrationDeadline(formatDate(t.registration_deadline));
       setSelectedCategories(t.categories || []); setSponsors(t.sponsors || []);
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
@@ -230,7 +219,6 @@ function Dashboard() {
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>3. INSCRIÇÃO E PAGAMENTO</div>
           
           <div style={styles.formGrid}>
-            {/* NOVO CAMPO DE VALOR DA INSCRIÇÃO */}
             <div style={styles.inputGroup}>
               <label style={styles.label}>VALOR DA INSCRIÇÃO</label>
               <input style={styles.input} type="text" placeholder="Ex: R$ 150,00" value={fee} onChange={e => setFee(e.target.value)} />

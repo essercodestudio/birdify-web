@@ -1,8 +1,11 @@
-import React, { useState } from "react";
+// frontend/src/pages/Login.js
+import React, { useState, useContext } from "react"; // 1. Adicionado useContext
 import api from "../services/api";
 import { useNavigate, Link } from "react-router-dom";
-// 1. IMPORTAR A LOGO (Certifique-se que o arquivo está em src/assets/)
 import logoImg from "../assets/logo_birdify.png";
+
+// 2. Importando a Memória Global do Camaleão
+import { ThemeContext } from "../App"; 
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -10,11 +13,15 @@ function Login() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
+  // 3. Puxando as informações do clube atual
+  const clubTheme = useContext(ThemeContext) || {};
+
   const theme = {
     bg: "#0f172a",
     card: "#1e293b",
     cardLight: "#334155",
-    accent: "#22c55e",
+    // 4. A MÁGICA DA COR: Usa a cor do clube ou verde como padrão
+    accent: clubTheme.primary_color || "#22c55e", 
     gold: "#eab308",
     textMain: "#f8fafc",
     textMuted: "#94a3b8",
@@ -40,7 +47,7 @@ function Login() {
       setError(
         err.response
           ? err.response.data.message
-          : "Erro ao conectar com o servidor.",
+          : "Erro ao conectar com o servidor."
       );
     }
   };
@@ -50,7 +57,7 @@ function Login() {
       display: "flex",
       justifyContent: "center",
       alignItems: "center",
-      height: "100vh",
+      minHeight: "100vh",
       backgroundColor: theme.bg,
       color: theme.textMain,
       fontFamily: "'Inter', sans-serif",
@@ -59,22 +66,22 @@ function Login() {
       backgroundColor: theme.card,
       padding: "40px",
       borderRadius: "24px",
-      boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)",
+      boxShadow: `0 25px 50px -12px rgba(0,0,0,0.5), 0 0 15px ${theme.accent}1A`, // Brilho sutil na cor do clube
       width: "90%",
       maxWidth: "400px",
       textAlign: "center",
       border: `1px solid ${theme.cardLight}`,
     },
-    // 2. AJUSTE DO ESTILO DA LOGO
     logoContainer: {
       marginBottom: "20px",
       display: "flex",
       justifyContent: "center",
     },
     logoImage: {
-      height: "100px", // Ajuste a altura como preferir
+      height: "100px", 
       width: "auto",
-      filter: "drop-shadow(0px 4px 10px rgba(0,0,0,0.3))", // Dá um relevo na logo
+      filter: "drop-shadow(0px 4px 10px rgba(0,0,0,0.3))", 
+      objectFit: "contain"
     },
     subtitle: {
       color: theme.textMuted,
@@ -106,7 +113,7 @@ function Login() {
     button: {
       width: "100%",
       padding: "16px",
-      backgroundColor: theme.accent,
+      backgroundColor: theme.accent, // A cor do clube é aplicada aqui!
       color: "#0f172a",
       border: "none",
       borderRadius: "12px",
@@ -114,7 +121,7 @@ function Login() {
       fontWeight: "800",
       marginTop: "10px",
       fontSize: "16px",
-      boxShadow: "0 10px 15px -3px rgba(34, 197, 94, 0.3)",
+      boxShadow: `0 10px 15px -3px ${theme.accent}4D`, // Sombra dinâmica na cor do botão
     },
     error: {
       backgroundColor: "rgba(239, 68, 68, 0.1)",
@@ -141,12 +148,20 @@ function Login() {
   return (
     <div style={styles.container}>
       <div style={styles.formBox}>
-        {/* 3. TROCA DO TEXTO PELA IMAGEM */}
         <div style={styles.logoContainer}>
-          <img src={logoImg} alt="Birdify Logo" style={styles.logoImage} />
+          {/* 5. A MÁGICA DA LOGO: Usa a do banco, ou a do Birdify se não tiver */}
+          <img 
+            src={clubTheme.logo_url || logoImg} 
+            alt={`${clubTheme.name || 'Birdify'} Logo`} 
+            style={styles.logoImage} 
+          />
         </div>
 
-        <p style={styles.subtitle}>Entre para gerenciar seus scores</p>
+        {/* 6. NOME DO CLUBE DINÂMICO */}
+        <p style={styles.subtitle}>
+          Bem-vindo ao <strong style={{color: theme.textMain}}>{clubTheme.name || 'Birdify'}</strong><br/>
+          Entre para gerenciar seus scores
+        </p>
 
         <form onSubmit={handleLogin}>
           <span style={styles.label}>E-mail</span>
@@ -155,7 +170,7 @@ function Login() {
             placeholder="seu@email.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={styles.input}
+            style={{...styles.input, '&:focus': { borderColor: theme.accent }}}
             required
           />
 
@@ -174,7 +189,6 @@ function Login() {
           </button>
         </form>
 
-        {/* BOTAO DE ESQUECI A SENHA ADICIONADO AQUI 👇 */}
         <div style={{ marginTop: "15px", textAlign: "center" }}>
           <button
             type="button"

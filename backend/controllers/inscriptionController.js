@@ -6,11 +6,11 @@ exports.getTournamentDetails = async (req, res) => {
     try {
         const { id } = req.params;
         
-        // Busca o torneio
-        const [tourResults] = await db.execute('SELECT * FROM tournaments WHERE id = ?', [id]);
+        // Busca o torneio (COM VERIFICAÇÃO DE CLUB_ID)
+        const [tourResults] = await db.execute('SELECT * FROM tournaments WHERE id = ? AND club_id = ?', [id, req.club.id]);
         
         if (tourResults.length === 0) {
-            return res.status(404).json({ message: "Torneio não encontrado" });
+            return res.status(404).json({ message: "Torneio não encontrado ou acesso negado." });
         }
         
         const tournament = tourResults[0];
@@ -39,6 +39,16 @@ exports.getTournamentDetails = async (req, res) => {
 exports.createInscription = async (req, res) => {
     try {
         const { tournament_id, user_id, category_id } = req.body;
+        
+        // Verifica se o torneio existe e pertence ao clube
+        const [tournamentCheck] = await db.execute(
+            'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+            [tournament_id, req.club.id]
+        );
+        
+        if (tournamentCheck.length === 0) {
+            return res.status(404).json({ message: "Torneio não encontrado ou acesso negado." });
+        }
         
         // Verifica se ele já se inscreveu antes para não duplicar
         const [existingInscriptions] = await db.execute(
@@ -78,6 +88,16 @@ exports.getInscriptions = async (req, res) => {
     try {
         const { tournamentId } = req.params;
         
+        // Verifica se o torneio pertence ao clube
+        const [tournamentCheck] = await db.execute(
+            'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+            [tournamentId, req.club.id]
+        );
+        
+        if (tournamentCheck.length === 0) {
+            return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+        }
+        
         // A MÁGICA: Trocamos o JOIN por LEFT JOIN na tabela de categorias.
         // Assim, mesmo que category_id seja nulo, o jogador aparece na lista do painel!
         const query = `
@@ -111,6 +131,21 @@ exports.updateStatus = async (req, res) => {
         if (!['APPROVED', 'REJECTED'].includes(status)) {
             return res.status(400).json({ 
                 error: 'Status inválido. Use APPROVED ou REJECTED.' 
+            });
+        }
+        
+        // Verifica se a inscrição pertence a um torneio do clube
+        const [inscriptionCheck] = await db.execute(
+            `SELECT i.id 
+             FROM inscriptions i
+             JOIN tournaments t ON i.tournament_id = t.id
+             WHERE i.id = ? AND t.club_id = ?`,
+            [id, req.club.id]
+        );
+        
+        if (inscriptionCheck.length === 0) {
+            return res.status(404).json({ 
+                error: 'Inscrição não encontrada ou acesso negado.' 
             });
         }
         

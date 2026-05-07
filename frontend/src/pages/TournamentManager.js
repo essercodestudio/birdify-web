@@ -111,7 +111,9 @@ function TournamentManager() {
 
   const generateAccessCode = async (groupId) => {
     try {
-      const res = await api.post("/groups/generate-code", { group_id: groupId });
+      const res = await api.post("/groups/generate-code", {
+        group_id: groupId,
+      });
       alert(`Código Gerado: ${res.data.access_code}`);
       fetchGroups();
     } catch (error) {
@@ -121,7 +123,9 @@ function TournamentManager() {
 
   const handleUpdateStatus = async (inscriptionId, newStatus) => {
     try {
-      await api.put(`/inscriptions/update-status/${inscriptionId}`, { status: newStatus });
+      await api.put(`/inscriptions/update-status/${inscriptionId}`, {
+        status: newStatus,
+      });
       fetchInscriptions();
     } catch (error) {
       alert("Erro ao atualizar status.");
@@ -134,10 +138,10 @@ function TournamentManager() {
       alert("Não há grupos criados para exportar.");
       return;
     }
-    
-    // Agora o Frontend não faz mais o trabalho pesado! 
+
+    // Agora o Frontend não faz mais o trabalho pesado!
     // Ele só pede para o Backend gerar e baixar a planilha formatada:
-    window.open(`http://localhost:3001/api/groups/export/${id}`, '_blank');
+    window.open(`http://localhost:3001/api/groups/export/${id}`, "_blank");
   };
 
   const approvedPlayers = inscriptions.filter((i) => i.status === "APPROVED");

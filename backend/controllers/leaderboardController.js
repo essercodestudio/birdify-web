@@ -6,6 +6,16 @@ exports.getTournamentLeaderboard = async (req, res) => {
   try {
     const { tournamentId } = req.params;
 
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournamentId, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
+
     // A MÁGICA DA BLINDAGEM: Usamos uma subquery (ph) para pegar o handicap
     // sem multiplicar as linhas de score pela quantidade de grupos no torneio!
     const query = `
@@ -55,6 +65,16 @@ exports.getTournamentLeaderboard = async (req, res) => {
 exports.getPlayerScorecard = async (req, res) => {
   try {
     const { tournamentId, userId } = req.params;
+
+    // Verifica se o torneio pertence ao clube
+    const [tournamentCheck] = await db.execute(
+      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      [tournamentId, req.club.id]
+    );
+    
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
 
     const query = `
       SELECT 

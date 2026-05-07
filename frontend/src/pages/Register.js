@@ -1,11 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import api from "../services/api";
 import { useNavigate, Link } from "react-router-dom";
-// 1. IMPORTAR A LOGO (Caminho para a pasta assets)
+import { ThemeContext } from "../App"; 
 import logoImg from "../assets/logo_birdify.png";
 
 function Register() {
   const navigate = useNavigate();
+  const clubTheme = useContext(ThemeContext) || {};
 
   const [formData, setFormData] = useState({
     name: "",
@@ -20,7 +21,7 @@ function Register() {
     bg: "#0f172a",
     card: "#1e293b",
     cardLight: "#334155",
-    accent: "#22c55e",
+    accent: clubTheme?.primary_color || "#22c55e",
     gold: "#eab308",
     textMain: "#f8fafc",
     textMuted: "#94a3b8",
@@ -71,14 +72,13 @@ function Register() {
       textAlign: "center",
       border: `1px solid ${theme.cardLight}`,
     },
-    // 2. NOVOS ESTILOS PARA A LOGO (Igual ao Login)
     logoContainer: {
       marginBottom: "15px",
       display: "flex",
       justifyContent: "center",
     },
     logoImage: {
-      height: "90px", // Ajustado para ser levemente maior, mas você pode mudar para 150px ou 180px
+      height: "90px",
       width: "auto",
       filter: "drop-shadow(0px 4px 10px rgba(0,0,0,0.3))",
     },
@@ -141,9 +141,7 @@ function Register() {
       fontWeight: "800",
       fontSize: "16px",
       marginTop: "10px",
-      boxShadow: acceptedTerms
-        ? "0 10px 15px -3px rgba(34, 197, 94, 0.3)"
-        : "none",
+      boxShadow: acceptedTerms ? `0 10px 15px -3px ${theme.accent}4D` : "none",
       transition: "all 0.3s ease",
     },
     footer: {
@@ -162,9 +160,12 @@ function Register() {
   return (
     <div style={styles.container}>
       <div style={styles.formBox}>
-        {/* 3. SUBSTITUIÇÃO DO TEXTO PELA LOGO */}
         <div style={styles.logoContainer}>
-          <img src={logoImg} alt="Birdify Logo" style={styles.logoImage} />
+          <img
+            src={clubTheme?.logo_url || logoImg}
+            alt={`${clubTheme?.name || "Birdify"} Logo`}
+            style={styles.logoImage}
+          />
         </div>
 
         <p style={styles.subtitle}>Crie seu perfil de jogador</p>

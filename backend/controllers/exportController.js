@@ -6,11 +6,11 @@ exports.exportTournamentToExcel = async (req, res) => {
     const { tournamentId } = req.params;
 
     try {
-        // 1. Busca os Dados Básicos
-        const [tournamentRows] = await db.execute('SELECT * FROM tournaments WHERE id = ?', [tournamentId]);
+        // 1. Busca os Dados Básicos (COM VERIFICAÇÃO DE CLUB_ID)
+        const [tournamentRows] = await db.execute('SELECT * FROM tournaments WHERE id = ? AND club_id = ?', [tournamentId, req.club.id]);
         
         if (tournamentRows.length === 0) {
-            return res.status(404).json({ error: 'Torneio não encontrado.' });
+            return res.status(404).json({ error: 'Torneio não encontrado ou acesso negado.' });
         }
         
         const tournament = tournamentRows[0];
@@ -217,7 +217,7 @@ exports.exportTournamentToExcel = async (req, res) => {
                 parOut + parIn, parOut + parIn, ''
             ]);
             
-            parRow.font = { bold: true, color: { argb: 'FF000000' } }; 
+            parRow.font = { bold: true, color: { argb: 'FF000000' }}; 
             parRow.alignment = { horizontal: 'center' };
             parRow.fill = {
                 type: 'pattern',

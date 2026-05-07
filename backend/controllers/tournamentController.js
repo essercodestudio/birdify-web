@@ -12,10 +12,11 @@ exports.listTournaments = async (req, res) => {
                    (SELECT COUNT(*) FROM inscriptions i WHERE i.tournament_id = t.id AND i.user_id = ?) as is_subscribed
             FROM tournaments t
             LEFT JOIN courses c ON t.course_id = c.id
+            WHERE t.club_id = ?
             ORDER BY t.start_date DESC
         `;
         
-        const [results] = await db.execute(query, [userId]);
+        const [results] = await db.execute(query, [userId, req.club.id]);
         res.json(results);
         
     } catch (error) {
@@ -32,10 +33,10 @@ exports.getTournament = async (req, res) => {
     try {
         const { id } = req.params;
         
-        const [tournamentResults] = await db.execute('SELECT * FROM tournaments WHERE id = ?', [id]);
+        const [tournamentResults] = await db.execute('SELECT * FROM tournaments WHERE id = ? AND club_id = ?', [id, req.club.id]);
         
         if (tournamentResults.length === 0) {
-            return res.status(404).json({ message: "Torneio não encontrado" });
+            return res.status(404).json({ message: "Torneio não encontrado ou acesso negado." });
         }
 
         const tournament = tournamentResults[0];
@@ -70,12 +71,22 @@ exports.createTournament = async (req, res) => {
             whatsapp_contact, registration_deadline, categories, sponsors 
         } = req.body;
 
+        // Verifica se o campo pertence ao clube
+        const [courseCheck] = await db.execute(
+            'SELECT id FROM courses WHERE id = ? AND club_id = ?',
+            [course_id, req.club.id]
+        );
+        
+        if (courseCheck.length === 0) {
+            return res.status(403).json({ error: 'Campo não encontrado ou acesso negado.' });
+        }
+
         const query = `
             INSERT INTO tournaments 
-            (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, club_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline];
+        const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, req.club.id];
 
         const [result] = await db.execute(query, values);
         
@@ -122,13 +133,33 @@ exports.updateTournament = async (req, res) => {
             whatsapp_contact, registration_deadline, categories, sponsors 
         } = req.body;
 
+        // Verifica se o torneio pertence ao clube
+        const [tournamentCheck] = await db.execute(
+            'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+            [id, req.club.id]
+        );
+        
+        if (tournamentCheck.length === 0) {
+            return res.status(404).json({ error: 'Torneio não encontrado ou acesso negado.' });
+        }
+
+        // Verifica se o campo pertence ao clube
+        const [courseCheck] = await db.execute(
+            'SELECT id FROM courses WHERE id = ? AND club_id = ?',
+            [course_id, req.club.id]
+        );
+        
+        if (courseCheck.length === 0) {
+            return res.status(403).json({ error: 'Campo não encontrado ou acesso negado.' });
+        }
+
         // 1. Atualizar dados principais do torneio
         const updateQuery = `
             UPDATE tournaments SET 
             name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=? 
-            WHERE id=?
+            WHERE id=? AND club_id=?
         `;
-        const updateValues = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id];
+        const updateValues = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id, req.club.id];
 
         await db.execute(updateQuery, updateValues);
 
@@ -164,6 +195,16 @@ exports.deleteTournament = async (req, res) => {
     try {
         const { id } = req.params;
 
+        // Verifica se o torneio pertence ao clube antes de excluir
+        const [tournamentCheck] = await db.execute(
+            'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+            [id, req.club.id]
+        );
+        
+        if (tournamentCheck.length === 0) {
+            return res.status(404).json({ error: 'Torneio não encontrado ou acesso negado.' });
+        }
+
         // Executar todas as operações de exclusão em sequência (devido às dependências de chave estrangeira)
         
         // 1. Deletar scores
@@ -178,14 +219,17 @@ exports.deleteTournament = async (req, res) => {
         // 3. Deletar grupos do torneio
         await db.execute('DELETE FROM tournament_groups WHERE tournament_id = ?', [id]);
         
-        // 4. Deletar categorias
+        // 4. Deletar inscrições
+        await db.execute('DELETE FROM inscriptions WHERE tournament_id = ?', [id]);
+        
+        // 5. Deletar categorias
         await db.execute('DELETE FROM tournament_categories WHERE tournament_id = ?', [id]);
         
-        // 5. Deletar patrocinadores
+        // 6. Deletar patrocinadores
         await db.execute('DELETE FROM tournament_sponsors WHERE tournament_id = ?', [id]);
         
-        // 6. Finalmente, deletar o torneio
-        const [result] = await db.execute('DELETE FROM tournaments WHERE id = ?', [id]);
+        // 7. Finalmente, deletar o torneio
+        const [result] = await db.execute('DELETE FROM tournaments WHERE id = ? AND club_id = ?', [id, req.club.id]);
         
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Torneio não encontrado.' });
@@ -215,10 +259,10 @@ exports.toggleStatus = async (req, res) => {
             });
         }
         
-        const [result] = await db.execute('UPDATE tournaments SET status = ? WHERE id = ?', [status, id]);
+        const [result] = await db.execute('UPDATE tournaments SET status = ? WHERE id = ? AND club_id = ?', [status, id, req.club.id]);
         
         if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Torneio não encontrado.' });
+            return res.status(404).json({ error: 'Torneio não encontrado ou acesso negado.' });
         }
         
         res.json({ message: `Torneio marcado como ${status} com sucesso!` });
