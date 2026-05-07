@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
 
 const TABS = ['ABSOLUTO', 'MASCULINO', 'FEMININO'];
@@ -30,8 +31,19 @@ function TrainingLeaderboard() {
 
   useEffect(() => {
     fetchRanking();
-    const interval = setInterval(fetchRanking, 15000);
-    return () => clearInterval(interval);
+
+    socket.connect();
+    socket.emit('join:ranking');
+    socket.on('training:ranking_updated', fetchRanking);
+
+    // Fallback de 60s caso o socket caia
+    const interval = setInterval(fetchRanking, 60000);
+
+    return () => {
+      socket.off('training:ranking_updated', fetchRanking);
+      socket.disconnect();
+      clearInterval(interval);
+    };
   }, [fetchRanking]);
 
   const getFiltered = () => {

@@ -167,7 +167,7 @@ function JoinGame() {
 
         <p style={{margin: '0 0 15px 0', fontSize: '15px', color: theme.textMuted}}>Área do Atleta</p>
         <button onClick={() => navigate('/player')} style={styles.btnPortal}>INSCRIÇÕES E TORNEIOS</button>
-        <button onClick={() => navigate('/daily-training')} style={styles.btnTraining}>🏌️ TREINO DO DIA</button>
+        <button onClick={() => navigate('/daily-training')} style={styles.btnTraining}> TREINO DO DIA</button>
         <button onClick={() => navigate('/player-history')} style={{ ...styles.btnTraining, marginTop: '10px', color: theme.textMuted, borderColor: theme.cardLight }}>📊 MEU HISTÓRICO</button>
 
         {user.role === 'ADMIN' && (

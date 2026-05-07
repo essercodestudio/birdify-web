@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
 
-// Cores obrigatórias: Amarelo=Eagle/HiO, Verde=Birdie, Neutro=Par, Vermelho=Bogey+, Cinza=não jogado
+// Cores dos scores: Eagle=ouro, Birdie=verde, Par=cinza, Bogey+=vermelho, vazio=cardLight
 const getScoreColor = (strokes, par, cardLight, gold, danger) => {
   if (!strokes || strokes === 0) return cardLight;
   const diff = strokes - par;
-  if (strokes === 1 || diff <= -2) return gold;       // Eagle / Albatross / HiO
-  if (diff === -1)                  return '#4ade80';  // Birdie — verde
-  if (diff === 0)                   return '#cbd5e1';  // Par — neutro (cinza claro)
-  return danger;                                       // Bogey ou pior
+  if (strokes === 1 || diff <= -2) return gold;
+  if (diff === -1)                  return '#4ade80';
+  if (diff === 0)                   return '#cbd5e1';
+  return danger;
 };
 
-// Estilo das caixinhas de buraco na tela de resultado final
 const holeBoxStyle = (strokes, par) => {
   if (!strokes) return { bg: 'rgba(51,65,85,0.5)', color: '#64748b', border: '#334155' };
   const diff = strokes - par;
@@ -26,7 +26,7 @@ const holeBoxStyle = (strokes, par) => {
 function TrainingScorecard() {
   const { groupId } = useParams();
   const navigate    = useNavigate();
-  const { club } = useClub();
+  const { club }    = useClub();
 
   const [group, setGroup]               = useState(null);
   const [players, setPlayers]           = useState([]);
@@ -37,12 +37,14 @@ function TrainingScorecard() {
   const [playedHoles, setPlayedHoles]   = useState([1]);
   const [showSummary, setShowSummary]   = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
-  const [isSaving, setIsSaving]         = useState(false);
   const [isLoading, setIsLoading]       = useState(true);
   const [isCreator, setIsCreator]       = useState(false);
-  const [expandedPlayer, setExpandedPlayer] = useState(null); // para a tela final
+  const [expandedPlayer, setExpandedPlayer] = useState(null);
 
-  const pollingRef = useRef(null);
+  // Timers de debounce por chave "userId-holeNumber"
+  const saveTimers   = useRef({});
+  // Ref estável para fetchData (evita stale closure nos listeners de socket)
+  const fetchDataRef = useRef(null);
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -50,52 +52,77 @@ function TrainingScorecard() {
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444',
   };
 
-  // ── Rascunho offline ──
-  const draftKey       = (hole) => `draft_training_${groupId}_hole_${hole}`;
-  const saveDraft      = (hole, d) => localStorage.setItem(draftKey(hole), JSON.stringify(d));
-  const loadDraft      = (hole)    => { try { const d = localStorage.getItem(draftKey(hole)); return d ? JSON.parse(d) : null; } catch { return null; } };
-  const clearDraft     = (hole)    => localStorage.removeItem(draftKey(hole));
-  const clearAllDrafts = ()        => { for (let i = 1; i <= 18; i++) localStorage.removeItem(draftKey(i)); };
-
-  const fetchGroupInfo = useCallback(async () => {
-    try {
-      const res = await api.get(`/training/group/${groupId}`);
-      setPlayers(res.data.players || []);
-      setGroupStatus(res.data.status || 'aguardando');
-      return res.data.status;
-    } catch { return null; }
-  }, [groupId]);
-
+  // ── Hidratação do scorecard a partir do banco ──
+  // Regra: posiciona no ÚLTIMO buraco onde todos têm score (não no próximo).
+  // Isso garante que voltar do Ranking não avance o buraco automaticamente.
   const loadScorecardData = useCallback(async (savedGroup, allPlayers, scoresRaw) => {
     if (savedGroup.course_id) {
       const holesRes = await api.get(`/courses/${savedGroup.course_id}/holes`);
       setHolesData(holesRes.data);
     }
+
     const scoresMap = {};
     scoresRaw.forEach(s => { scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes; });
     setScores(scoresMap);
 
     const startHole = savedGroup.starting_hole || 1;
-    let   finalHole = startHole;
 
-    if (scoresRaw.length > 0 && allPlayers.length > 0) {
-      for (let i = 1; i <= 18; i++) {
-        const h       = startHole + i - 1;
-        const actualH = h > 18 ? h - 18 : h;
-        const allDone = allPlayers.every(p => scoresRaw.some(s => s.user_id === p.id && s.hole_number === actualH));
-        if (!allDone) { finalHole = actualH; break; }
-        if (i === 18) { finalHole = actualH; setShowSummary(true); }
-      }
-      const history = [];
-      if (startHole <= finalHole) { for (let i = startHole; i <= finalHole; i++) history.push(i); }
-      else { for (let i = startHole; i <= 18; i++) history.push(i); for (let i = 1; i <= finalHole; i++) history.push(i); }
-      setPlayedHoles(history);
-    } else {
+    // Sem scores ainda: começa no buraco inicial
+    if (scoresRaw.length === 0 || allPlayers.length === 0) {
+      setCurrentHole(startHole);
       setPlayedHoles([startHole]);
+      return;
     }
-    setCurrentHole(finalHole);
-    const draft = loadDraft(finalHole);
-    if (draft) setScores(prev => ({ ...prev, ...draft }));
+
+    // Percorre em ordem e para no primeiro buraco incompleto.
+    // O buraco ANTERIOR a esse é onde o usuário estava (último completo).
+    let lastFullHole   = startHole;
+    let holesCompleted = 0;
+
+    for (let i = 1; i <= 18; i++) {
+      const h       = startHole + i - 1;
+      const actualH = h > 18 ? h - 18 : h;
+      const allDone = allPlayers.every(
+        p => scoresRaw.some(s => s.user_id === p.id && s.hole_number === actualH)
+      );
+      if (!allDone) break;
+      lastFullHole = actualH;
+      holesCompleted++;
+    }
+
+    // Reconstrói histórico de buracos navegados (permite voltar até startHole)
+    const history = [];
+    if (startHole <= lastFullHole) {
+      for (let i = startHole; i <= lastFullHole; i++) history.push(i);
+    } else {
+      for (let i = startHole; i <= 18; i++) history.push(i);
+      for (let i = 1; i <= lastFullHole; i++) history.push(i);
+    }
+    if (history.length === 0) history.push(startHole);
+
+    // Verifica se há um buraco salvo manualmente pelo usuário nesta sessão.
+    // Tem prioridade sobre o cálculo por score: reflete a última ação de navegação.
+    const storageKey    = `training_hole_${groupId}`;
+    const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10) || null;
+
+    // O buraco persistido é aceito se for válido E alcançável:
+    // ou já está no histórico de buracos completos, ou é exatamente o próximo.
+    const nextOfLast  = lastFullHole < 18 ? lastFullHole + 1 : 1;
+    const isReachable = persistedHole >= 1 && persistedHole <= 18
+      && (history.includes(persistedHole) || persistedHole === nextOfLast);
+
+    if (isReachable) {
+      const fullHistory = history.includes(persistedHole)
+        ? history
+        : [...history, persistedHole];
+      setPlayedHoles(fullHistory);
+      setCurrentHole(persistedHole);
+    } else {
+      setPlayedHoles(history);
+      setCurrentHole(lastFullHole);
+    }
+
+    if (holesCompleted === 18) setShowSummary(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
@@ -129,7 +156,6 @@ function TrainingScorecard() {
       setGroupStatus(status);
       setPlayers(groupData.data.players || []);
 
-      // Carrega scorecard tanto para 'ativo' quanto para 'finalizado' (tela de resultado)
       if (status === 'ativo' || status === 'finalizado') {
         await loadScorecardData(savedGroup, groupData.data.players || [], scoresData.data);
       }
@@ -140,42 +166,68 @@ function TrainingScorecard() {
     }
   }, [groupId, navigate, loadScorecardData]);
 
+  // Mantém ref sempre atualizada para uso dentro de listeners de socket
+  useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
+
+  // Carga inicial
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Polling 1: aguardando → detecta início (3s)
+  // ── Socket.io: tempo real ──
   useEffect(() => {
-    if (groupStatus !== 'aguardando') return;
-    pollingRef.current = setInterval(async () => {
-      const status = await fetchGroupInfo();
-      if (status === 'ativo') {
-        clearInterval(pollingRef.current);
-        fetchData();
-      }
-    }, 3000);
-    return () => clearInterval(pollingRef.current);
-  }, [groupStatus, fetchGroupInfo, fetchData]);
+    socket.connect();
+    socket.emit('join:training', groupId);
 
-  // Polling 2: ativo → detecta finalização para convidados (10s)
-  useEffect(() => {
-    if (groupStatus !== 'ativo') return;
-    const poll = setInterval(async () => {
-      try {
-        const res = await api.get(`/training/group/${groupId}`);
-        if (res.data.status === 'finalizado') {
-          clearInterval(poll);
-          fetchData(); // recarrega com status finalizado para mostrar a tela de resultado
-        }
-      } catch {}
-    }, 10000);
-    return () => clearInterval(poll);
-  }, [groupStatus, groupId, fetchData]);
+    const onConnect = () => socket.emit('join:training', groupId);
+
+    // Score salvo pelo criador → todos os membros atualizam instantaneamente
+    const onScoreSaved = ({ user_id, hole_number, strokes }) => {
+      setScores(prev => ({ ...prev, [`${user_id}-${hole_number}`]: strokes }));
+    };
+
+    // Novo jogador entrou na sala → atualiza lista de atletas
+    const onPlayerJoined = () => {
+      api.get(`/training/group/${groupId}`)
+        .then(res => setPlayers(res.data.players || []))
+        .catch(() => {});
+    };
+
+    // Criador iniciou → todos na sala de espera entram no jogo
+    const onStarted = () => {
+      setGroupStatus('ativo');
+      fetchDataRef.current?.();
+    };
+
+    // Criador finalizou → todos veem a tela de resultado
+    const onFinished = () => {
+      setGroupStatus('finalizado');
+      fetchDataRef.current?.();
+    };
+
+    socket.on('connect',                onConnect);
+    socket.on('training:score_saved',   onScoreSaved);
+    socket.on('training:player_joined', onPlayerJoined);
+    socket.on('training:started',       onStarted);
+    socket.on('training:finished',      onFinished);
+
+    return () => {
+      socket.off('connect',                onConnect);
+      socket.off('training:score_saved',   onScoreSaved);
+      socket.off('training:player_joined', onPlayerJoined);
+      socket.off('training:started',       onStarted);
+      socket.off('training:finished',      onFinished);
+      socket.emit('leave:training', groupId);
+      socket.disconnect();
+      // Cancela qualquer save pendente ao sair
+      Object.values(saveTimers.current).forEach(clearTimeout);
+      saveTimers.current = {};
+    };
+  }, [groupId]);
 
   // ── Ações do Lobby ──
   const handleStartTraining = async () => {
     if (!isCreator) return;
     try {
       await api.post('/training/start', { group_id: Number(groupId) });
-      clearInterval(pollingRef.current);
       setGroupStatus('ativo');
       fetchData();
     } catch (err) {
@@ -214,6 +266,7 @@ function TrainingScorecard() {
     h => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4 };
 
+  // Persistência atômica: cada clique → debounce 400ms → UPSERT no banco
   const handleScoreChange = (userId, delta) => {
     if (!isCreator) return;
     const key = `${userId}-${currentHole}`;
@@ -221,53 +274,52 @@ function TrainingScorecard() {
     let next  = cur + delta;
     if (cur === 0 && delta > 0) next = currentHoleData.par || 4;
     if (next < 1) { if (delta < 0) return; next = 1; }
-    const updated = { ...scores, [key]: next };
-    setScores(updated);
-    const hs = {};
-    players.forEach(p => { const k = `${p.id}-${currentHole}`; if (updated[k]) hs[k] = updated[k]; });
-    saveDraft(currentHole, hs);
+
+    setScores(prev => ({ ...prev, [key]: next }));
+
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => {
+      api.post('/training/score', {
+        group_id:    Number(groupId),
+        user_id:     userId,
+        hole_number: currentHole,
+        strokes:     next,
+      }).catch(err => console.error('Falha ao salvar score:', err));
+      delete saveTimers.current[key];
+    }, 400);
   };
 
-  const saveCurrentHoleScores = async () => {
-    if (!navigator.onLine) {
-      alert('Conexão instável. Os pontos estão anotados, aguarde o sinal voltar e clique na seta para salvar.');
-      return false;
-    }
-    setIsSaving(true);
-    try {
-      await Promise.all(players.map(p => {
-        const s = scores[`${p.id}-${currentHole}`];
-        return (s && s > 0)
-          ? api.post('/training/score', { group_id: Number(groupId), user_id: p.id, hole_number: currentHole, strokes: s })
-          : Promise.resolve();
-      }));
-      clearDraft(currentHole);
-      return true;
-    } catch {
-      alert('Erro de servidor. Não foi possível salvar os pontos. Tente novamente.');
-      return false;
-    } finally { setIsSaving(false); }
+  // Garante que saves pendentes do buraco atual sejam disparados antes de avançar
+  const flushPendingForHole = (hole) => {
+    players.forEach(p => {
+      const key = `${p.id}-${hole}`;
+      if (!saveTimers.current[key]) return;
+      clearTimeout(saveTimers.current[key]);
+      const s = scores[key];
+      if (s > 0) {
+        api.post('/training/score', {
+          group_id: Number(groupId), user_id: p.id, hole_number: hole, strokes: s,
+        }).catch(err => console.error(err));
+      }
+      delete saveTimers.current[key];
+    });
   };
 
-  const changeHole = async (delta) => {
+  const changeHole = (delta) => {
     if (delta > 0) {
       const missing = players.find(p => !(scores[`${p.id}-${currentHole}`] > 0));
       if (missing) { alert(`⚠️ Falta anotar o score de: ${missing.name}`); return; }
-    }
-    const hasScores = players.some(p => (scores[`${p.id}-${currentHole}`] || 0) > 0);
-    if (delta !== 0 && hasScores) { const ok = await saveCurrentHoleScores(); if (!ok) return; }
-
-    if (delta > 0) {
+      flushPendingForHole(currentHole);
       if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
       setCurrentHole(next);
-      const draft = loadDraft(next); if (draft) setScores(prev => ({ ...prev, ...draft }));
+      sessionStorage.setItem(`training_hole_${groupId}`, next);
     } else if (delta < 0) {
       let prev = currentHole - 1; if (prev < 1) prev = 18;
       if (!playedHoles.includes(prev)) { alert('🛑 Você não pode voltar antes do tee de saída.'); return; }
       setCurrentHole(prev);
-      const draft = loadDraft(prev); if (draft) setScores(s => ({ ...s, ...draft }));
+      sessionStorage.setItem(`training_hole_${groupId}`, prev);
     }
   };
 
@@ -289,25 +341,26 @@ function TrainingScorecard() {
   const handleFinish = async () => {
     if (!isCreator) return;
     if (!navigator.onLine) { alert('⚠️ Aguarde a conexão voltar para finalizar o treino.'); return; }
-    for (const hole of [...new Set(playedHoles)]) {
-      const hasScores = players.some(p => (scores[`${p.id}-${hole}`] || 0) > 0);
-      if (!hasScores) continue;
-      try {
-        await Promise.all(players.map(p => {
-          const s = scores[`${p.id}-${hole}`];
-          return (s > 0) ? api.post('/training/score', { group_id: Number(groupId), user_id: p.id, hole_number: hole, strokes: s }) : Promise.resolve();
-        }));
-        clearDraft(hole);
-      } catch {
-        alert(`❌ Erro ao salvar buraco ${hole}. Verifique sua conexão.`);
-        return;
-      }
-    }
+
+    // Drena qualquer timer pendente antes de finalizar
+    const pending = Object.entries(saveTimers.current);
+    await Promise.all(pending.map(([key]) => {
+      clearTimeout(saveTimers.current[key]);
+      const [uid, hNum] = key.split('-');
+      const s = scores[key];
+      delete saveTimers.current[key];
+      return s > 0
+        ? api.post('/training/score', {
+            group_id: Number(groupId), user_id: Number(uid),
+            hole_number: Number(hNum), strokes: s,
+          }).catch(() => {})
+        : Promise.resolve();
+    }));
+
     const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
     try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
-    clearAllDrafts();
     localStorage.removeItem('activeTrainingGroup');
-    // Não navega — permanece na tela e exibe o resultado final
+    sessionStorage.removeItem(`training_hole_${groupId}`);
     setShowSummary(false);
     setGroupStatus('finalizado');
   };
@@ -316,7 +369,7 @@ function TrainingScorecard() {
   const st = {
     page:       { padding: '15px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', Roboto, sans-serif", textAlign: 'center' },
     holeNav:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: theme.card, padding: '15px', borderRadius: '10px', marginBottom: '20px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' },
-    navBtn:     { backgroundColor: theme.cardLight, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '5px', fontSize: '20px', cursor: 'pointer', opacity: isSaving ? 0.5 : 1, pointerEvents: isSaving ? 'none' : 'auto' },
+    navBtn:     { backgroundColor: theme.cardLight, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '5px', fontSize: '20px', cursor: 'pointer' },
     playerCard: { backgroundColor: theme.card, padding: '15px', borderRadius: '10px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${theme.cardLight}` },
     scoreBtn:   { width: '45px', height: '45px', borderRadius: '50%', border: 'none', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     finishBtn:  { width: '100%', padding: '15px', backgroundColor: 'transparent', color: '#fff', fontSize: '17px', fontWeight: 'bold', border: `2px solid ${accent}`, borderRadius: '10px', cursor: 'pointer', marginTop: '30px', marginBottom: '20px' },
@@ -326,24 +379,21 @@ function TrainingScorecard() {
   if (isLoading || !group) return <div style={{ backgroundColor: theme.bg, minHeight: '100vh' }} />;
 
   // ══════════════════════════════════════════════════
-  // FASE 1: SALA DE ESPERA (aguardando)
+  // FASE 1: SALA DE ESPERA
   // ══════════════════════════════════════════════════
   if (groupStatus === 'aguardando') {
     return (
       <div style={{ backgroundColor: theme.bg, minHeight: '100vh', padding: '20px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
         <div style={{ maxWidth: '420px', margin: '0 auto' }}>
 
-          {/* Botão voltar */}
           <div style={{ marginBottom: '16px' }}>
             <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅ VOLTAR</button>
           </div>
 
           <div style={{ backgroundColor: theme.card, borderRadius: '20px', padding: '28px 24px', border: `1px solid ${theme.cardLight}`, boxShadow: '0 20px 50px rgba(0,0,0,0.5)', textAlign: 'center' }}>
-
             <div style={{ fontSize: '11px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '4px' }}>SALA DE ESPERA</div>
             <h2 style={{ color: '#fff', margin: '0 0 24px', fontSize: '20px' }}>{group.group_name || 'Treino'}</h2>
 
-            {/* Código — apenas para o criador */}
             {isCreator && (
               <div style={{ backgroundColor: theme.bg, borderRadius: '12px', padding: '20px 16px', marginBottom: '20px', border: `1px solid ${accent}55` }}>
                 <div style={{ fontSize: '11px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
@@ -361,7 +411,6 @@ function TrainingScorecard() {
               </div>
             )}
 
-            {/* Lista de atletas */}
             <div style={{ textAlign: 'left', marginBottom: '24px' }}>
               <div style={{ fontSize: '11px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
                 Atletas na sala ({players.length}/4)
@@ -380,11 +429,10 @@ function TrainingScorecard() {
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px' }}>
                 <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: accent, animation: 'pulse 1.5s infinite' }} />
-                <span style={{ fontSize: '11px', color: theme.textMuted }}>Atualizando a cada 3s...</span>
+                <span style={{ fontSize: '11px', color: theme.textMuted }}>Atualizando em tempo real...</span>
               </div>
             </div>
 
-            {/* Ações: Iniciar (criador) | Aguardando (convidado) */}
             {isCreator ? (
               <button
                 onClick={handleStartTraining}
@@ -398,19 +446,12 @@ function TrainingScorecard() {
               </div>
             )}
 
-            {/* Cancelar (criador) / Sair (convidado) */}
             {isCreator ? (
-              <button
-                onClick={handleCancel}
-                style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.danger, border: `1px solid ${theme.danger}55`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
+              <button onClick={handleCancel} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.danger, border: `1px solid ${theme.danger}55`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
                 🗑 Cancelar Treino
               </button>
             ) : (
-              <button
-                onClick={handleLeave}
-                style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
+              <button onClick={handleLeave} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
                 ← Sair do Grupo
               </button>
             )}
@@ -422,7 +463,7 @@ function TrainingScorecard() {
   }
 
   // ══════════════════════════════════════════════════
-  // FASE 3: TELA DE RESULTADO FINAL (finalizado)
+  // FASE 3: RESULTADO FINAL
   // ══════════════════════════════════════════════════
   if (groupStatus === 'finalizado') {
     const renderNine = (playerId, from, to) => (
@@ -445,8 +486,6 @@ function TrainingScorecard() {
     return (
       <div style={{ ...st.page, textAlign: 'left' }}>
         <div style={{ maxWidth: '480px', margin: '0 auto' }}>
-
-          {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '12px', borderBottom: `1px solid ${theme.cardLight}` }}>
             <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅ VOLTAR</button>
             <button
@@ -457,31 +496,26 @@ function TrainingScorecard() {
             </button>
           </div>
 
-          {/* Badge de conclusão */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
             <span style={{ fontSize: '11px', color: accent, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1.5px' }}>✅ TREINO FINALIZADO</span>
           </div>
           <h2 style={{ color: '#fff', margin: '0 0 20px', fontSize: '20px', fontWeight: '800' }}>{group.group_name}</h2>
 
-          {/* Card de cada atleta — expansível */}
           {players.map(p => {
             const { gross, vsPar } = calculateTotal(p.id);
-            const isOpen  = expandedPlayer === p.id;
-            const isNeg   = vsPar.toString().startsWith('-');
+            const isOpen   = expandedPlayer === p.id;
+            const isNeg    = vsPar.toString().startsWith('-');
             const parColor = isNeg ? '#4ade80' : vsPar === 'E' ? theme.textMuted : theme.danger;
 
             return (
               <div key={p.id} style={{ backgroundColor: theme.card, borderRadius: '14px', marginBottom: '12px', border: `1px solid ${theme.cardLight}`, overflow: 'hidden' }}>
-                {/* Linha resumo — clique para expandir */}
                 <div
                   onClick={() => setExpandedPlayer(isOpen ? null : p.id)}
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 18px', cursor: 'pointer' }}
                 >
                   <div>
                     <div style={{ fontWeight: 'bold', color: theme.textMain, fontSize: '15px' }}>{p.name}</div>
-                    <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '2px' }}>
-                      {isOpen ? '▲' : '▼'}
-                    </div>
+                    <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '2px' }}>{isOpen ? '▲' : '▼'}</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontWeight: '800', fontSize: '22px', color: '#fff' }}>{gross || '—'}</div>
@@ -489,14 +523,12 @@ function TrainingScorecard() {
                   </div>
                 </div>
 
-                {/* Scorecard expandido: IDA + VOLTA */}
                 {isOpen && (
                   <div style={{ padding: '0 12px 14px', borderTop: `1px solid ${theme.cardLight}`, paddingTop: '12px' }}>
                     <div style={{ fontSize: '9px', color: theme.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>IDA — FRONT 9</div>
                     {renderNine(p.id, 1, 9)}
                     <div style={{ fontSize: '9px', color: theme.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>VOLTA — BACK 9</div>
                     {renderNine(p.id, 10, 18)}
-                    {/* Legenda */}
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px', paddingTop: '8px', borderTop: `1px solid ${theme.cardLight}` }}>
                       {[
                         { color: '#eab308', label: 'Eagle / HiO' },
@@ -516,14 +548,12 @@ function TrainingScorecard() {
             );
           })}
 
-          {/* CTA ranking */}
           <button
             onClick={() => navigate('/training-leaderboard')}
             style={{ width: '100%', padding: '16px', backgroundColor: theme.gold, color: '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '12px', cursor: 'pointer', marginTop: '8px', boxShadow: `0 6px 20px -4px ${theme.gold}55` }}
           >
             🏆 Ver Ranking do Dia
           </button>
-
           <div style={{ height: '40px' }} />
         </div>
       </div>
@@ -536,25 +566,12 @@ function TrainingScorecard() {
   return (
     <div style={st.page}>
 
-      {/* Modal: Conferência de Pontos */}
+      {/* Modal de Conferência */}
       {showSummary && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(2,6,23,0.93)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000, padding: '20px',
-        }}>
-          <div style={{
-            backgroundColor: theme.card, borderRadius: '20px', padding: '28px 24px',
-            width: '100%', maxWidth: '420px', border: `1px solid ${theme.cardLight}`,
-            boxShadow: '0 20px 60px rgba(0,0,0,0.8)', maxHeight: '90vh', overflowY: 'auto',
-          }}>
-            <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '2px', textAlign: 'center', marginBottom: '4px' }}>
-              CONFERÊNCIA DE PONTOS
-            </div>
-            <h2 style={{ color: theme.gold, textAlign: 'center', margin: '0 0 24px', fontSize: '20px' }}>
-              Resumo do Treino
-            </h2>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(2,6,23,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ backgroundColor: theme.card, borderRadius: '20px', padding: '28px 24px', width: '100%', maxWidth: '420px', border: `1px solid ${theme.cardLight}`, boxShadow: '0 20px 60px rgba(0,0,0,0.8)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ fontSize: '10px', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '2px', textAlign: 'center', marginBottom: '4px' }}>CONFERÊNCIA DE PONTOS</div>
+            <h2 style={{ color: theme.gold, textAlign: 'center', margin: '0 0 24px', fontSize: '20px' }}>Resumo do Treino</h2>
 
             {players.map(p => {
               const { gross, vsPar } = calculateTotal(p.id);
@@ -562,9 +579,7 @@ function TrainingScorecard() {
               const parColor = isNeg ? '#4ade80' : vsPar === 'E' ? theme.textMuted : theme.danger;
               return (
                 <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${theme.cardLight}`, padding: '14px 0' }}>
-                  <div>
-                    <div style={{ fontWeight: 'bold', color: theme.textMain, fontSize: '15px' }}>{p.name}</div>
-                  </div>
+                  <div style={{ fontWeight: 'bold', color: theme.textMain, fontSize: '15px' }}>{p.name}</div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontWeight: 'bold', fontSize: '22px', color: '#fff' }}>{gross || '—'}</div>
                     <div style={{ fontSize: '11px', color: theme.textMuted }}>tacadas</div>
@@ -592,7 +607,7 @@ function TrainingScorecard() {
         </div>
       )}
 
-      {/* Header com botão Voltar + Ranking */}
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `1px solid ${theme.cardLight}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅</button>
@@ -612,12 +627,12 @@ function TrainingScorecard() {
 
       {/* Navegação de buracos */}
       <div style={st.holeNav}>
-        <button style={st.navBtn} onClick={() => changeHole(-1)} disabled={isSaving}>◀</button>
+        <button style={st.navBtn} onClick={() => changeHole(-1)}>◀</button>
         <div>
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold }}>Buraco {currentHole}</div>
           <div style={{ color: theme.textMuted, fontSize: '16px', marginTop: '5px' }}>PAR {currentHoleData.par}</div>
         </div>
-        <button style={st.navBtn} onClick={() => changeHole(1)} disabled={isSaving}>▶</button>
+        <button style={st.navBtn} onClick={() => changeHole(1)}>▶</button>
       </div>
 
       {/* Cards dos atletas */}
@@ -635,11 +650,11 @@ function TrainingScorecard() {
 
               {isCreator ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1)} disabled={isSaving}>-</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1)}>-</button>
                   <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>
                     {score || '0'}
                   </span>
-                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1)} disabled={isSaving}>+</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1)}>+</button>
                 </div>
               ) : (
                 <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>

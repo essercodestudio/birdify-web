@@ -1,4 +1,9 @@
-const db = require("../db");
+// SQL necessário para habilitar UPSERT atômico (rodar uma vez no banco):
+// ALTER TABLE training_scores
+//   ADD UNIQUE KEY uq_training_score (group_id, user_id, hole_number);
+
+const db            = require("../db");
+const socketService = require("../services/socketService");
 
 function generateCode(len = 5) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -29,22 +34,17 @@ exports.createTable = async (req, res) => {
     const cid = clubId(req);
 
     if (await userAlreadyInGroup(creator_id, cid))
-      return res
-        .status(409)
-        .json({ message: "Você já está em um treino em andamento." });
+      return res.status(409).json({ message: "Você já está em um treino em andamento." });
 
-    const [[course]] = await db.execute(
-      "SELECT name FROM courses WHERE id = ?",
-      [course_id],
-    );
+    const [[course]] = await db.execute("SELECT name FROM courses WHERE id = ?", [course_id]);
     const courseName = course?.name || "Campo";
     const now = new Date();
-    const dd = String(now.getDate()).padStart(2, "0");
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd   = String(now.getDate()).padStart(2, "0");
+    const mm   = String(now.getMonth() + 1).padStart(2, "0");
     const yyyy = now.getFullYear();
-    const group_name = `Treino ${courseName} - ${dd}/${mm}/${yyyy}`;
-
+    const group_name  = `Treino ${courseName} - ${dd}/${mm}/${yyyy}`;
     const access_code = generateCode();
+
     const [result] = await db.execute(
       `INSERT INTO training_groups (club_id, creator_id, course_id, group_name, access_code, starting_hole, status)
        VALUES (?, ?, ?, ?, ?, ?, 'aguardando')`,
@@ -57,14 +57,7 @@ exports.createTable = async (req, res) => {
       [groupId, creator_id],
     );
 
-    res.json({
-      groupId,
-      access_code,
-      group_name,
-      starting_hole: starting_hole || 1,
-      course_id,
-      creator_id,
-    });
+    res.json({ groupId, access_code, group_name, starting_hole: starting_hole || 1, course_id, creator_id });
   } catch (error) {
     console.error("Erro ao criar mesa de treino:", error);
     res.status(500).json({ error: error.message });
@@ -74,7 +67,7 @@ exports.createTable = async (req, res) => {
 exports.joinTable = async (req, res) => {
   try {
     const { access_code, user_id } = req.body;
-    const cid = clubId(req);
+    const cid       = clubId(req);
     const cleanCode = (access_code || "").trim().toUpperCase();
 
     const [groups] = await db.execute(
@@ -85,13 +78,9 @@ exports.joinTable = async (req, res) => {
     if (groups.length === 0)
       return res.status(404).json({ message: "Código inválido." });
     if (groups[0].status === "ativo")
-      return res
-        .status(403)
-        .json({ message: "O treino já começou. A sala está trancada." });
+      return res.status(403).json({ message: "O treino já começou. A sala está trancada." });
     if (groups[0].status === "finalizado")
-      return res
-        .status(403)
-        .json({ message: "Este treino já foi finalizado." });
+      return res.status(403).json({ message: "Este treino já foi finalizado." });
     if (groups[0].status === "cancelado")
       return res.status(403).json({ message: "Este treino foi cancelado." });
 
@@ -104,23 +93,25 @@ exports.joinTable = async (req, res) => {
 
     if (existing.length === 0) {
       if (await userAlreadyInGroup(user_id, cid))
-        return res
-          .status(409)
-          .json({ message: "Você já está em um treino em andamento." });
+        return res.status(409).json({ message: "Você já está em um treino em andamento." });
 
       const [[{ cnt }]] = await db.execute(
         "SELECT COUNT(*) AS cnt FROM training_participants WHERE group_id = ?",
         [group.id],
       );
       if (cnt >= 4)
-        return res
-          .status(400)
-          .json({ message: "Mesa lotada! Máximo de 4 jogadores." });
+        return res.status(400).json({ message: "Mesa lotada! Máximo de 4 jogadores." });
 
       await db.execute(
         "INSERT INTO training_participants (group_id, user_id) VALUES (?, ?)",
         [group.id, user_id],
       );
+
+      // Busca nome do jogador para broadcast
+      const [[user]] = await db.execute("SELECT name FROM users WHERE id = ?", [user_id]);
+      socketService.emitToRoom(`training:${group.id}`, "training:player_joined", {
+        group_id: group.id, user_id, user_name: user?.name || "",
+      });
     }
 
     res.json({ table: group });
@@ -142,13 +133,9 @@ exports.leaveGroup = async (req, res) => {
     if (groups.length === 0)
       return res.status(404).json({ message: "Grupo não encontrado." });
     if (groups[0].creator_id === user_id)
-      return res
-        .status(403)
-        .json({ message: "O criador não pode sair. Use Excluir Treino." });
+      return res.status(403).json({ message: "O criador não pode sair. Use Excluir Treino." });
     if (groups[0].status !== "aguardando")
-      return res
-        .status(403)
-        .json({ message: "Não é possível sair de um treino em andamento." });
+      return res.status(403).json({ message: "Não é possível sair de um treino em andamento." });
 
     await db.execute(
       "DELETE FROM training_participants WHERE group_id = ? AND user_id = ?",
@@ -173,9 +160,7 @@ exports.deleteGroup = async (req, res) => {
     );
 
     if (result.affectedRows === 0)
-      return res
-        .status(403)
-        .json({ message: "Acesso negado ou treino já iniciado." });
+      return res.status(403).json({ message: "Acesso negado ou treino já iniciado." });
 
     res.json({ message: "Treino cancelado." });
   } catch (error) {
@@ -212,6 +197,7 @@ exports.getTableDetails = async (req, res) => {
   }
 };
 
+// UPSERT atômico — elimina race condition do DELETE+INSERT anterior
 exports.saveScore = async (req, res) => {
   try {
     const { group_id, user_id, hole_number, strokes } = req.body;
@@ -220,15 +206,19 @@ exports.saveScore = async (req, res) => {
       return res.status(400).json({ error: "Dados incompletos." });
 
     await db.execute(
-      "DELETE FROM training_scores WHERE group_id = ? AND user_id = ? AND hole_number = ?",
-      [group_id, user_id, hole_number],
-    );
-    await db.execute(
-      "INSERT INTO training_scores (group_id, user_id, hole_number, strokes) VALUES (?, ?, ?, ?)",
+      `INSERT INTO training_scores (group_id, user_id, hole_number, strokes)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE strokes = VALUES(strokes)`,
       [group_id, user_id, hole_number, strokes],
     );
 
-    res.json({ message: "Score salvo!", strokes, hole: hole_number });
+    // Broadcast para todos no grupo e para o ranking em tempo real
+    socketService.emitToRoom(`training:${group_id}`, "training:score_saved", {
+      group_id, user_id, hole_number, strokes,
+    });
+    socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
+
+    res.json({ ok: true, strokes, hole: hole_number });
   } catch (error) {
     console.error("Erro ao salvar score de treino:", error);
     res.status(500).json({ error: error.message });
@@ -260,9 +250,10 @@ exports.startTraining = async (req, res) => {
     );
 
     if (result.affectedRows === 0)
-      return res
-        .status(400)
-        .json({ message: "Grupo não encontrado ou treino já iniciado." });
+      return res.status(400).json({ message: "Grupo não encontrado ou treino já iniciado." });
+
+    socketService.emitToRoom(`training:${group_id}`, "training:started", { group_id });
+    socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
 
     res.json({ message: "Treino iniciado!" });
   } catch (error) {
@@ -275,11 +266,8 @@ exports.finishTraining = async (req, res) => {
   try {
     const { group_id, creator_id } = req.body;
 
-    // Verifica se quem está finalizando é realmente o criador
     const whereCreator = creator_id ? "AND creator_id = ?" : "";
-    const params = creator_id
-      ? [group_id, clubId(req), creator_id]
-      : [group_id, clubId(req)];
+    const params       = creator_id ? [group_id, clubId(req), creator_id] : [group_id, clubId(req)];
 
     const [result] = await db.execute(
       `UPDATE training_groups SET status = 'finalizado'
@@ -288,9 +276,10 @@ exports.finishTraining = async (req, res) => {
     );
 
     if (result.affectedRows === 0)
-      return res
-        .status(403)
-        .json({ message: "Acesso negado ou treino não encontrado." });
+      return res.status(403).json({ message: "Acesso negado ou treino não encontrado." });
+
+    socketService.emitToRoom(`training:${group_id}`, "training:finished", { group_id });
+    socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
 
     res.json({ message: "Treino finalizado!" });
   } catch (error) {
@@ -316,11 +305,7 @@ exports.getCurrentGroup = async (req, res) => {
       [user_id, clubId(req)],
     );
 
-    res.json(
-      rows.length > 0
-        ? { group_id: rows[0].group_id, status: rows[0].status }
-        : { group_id: null },
-    );
+    res.json(rows.length > 0 ? { group_id: rows[0].group_id, status: rows[0].status } : { group_id: null });
   } catch (error) {
     console.error("Erro ao buscar grupo atual:", error);
     res.status(500).json({ error: error.message });
@@ -333,19 +318,14 @@ exports.getOpenLobbies = async (req, res) => {
     const cid = clubId(req);
     const uid = user_id ? Number(user_id) : 0;
 
-    // NOT EXISTS é mais seguro que NOT IN com subquery (evita bug de NULL no MySQL)
     const [rows] = await db.execute(
       `SELECT
-         tg.id,
-         tg.group_name,
-         tg.access_code,
-         tg.starting_hole,
-         tg.course_id,
-         tg.creator_id,
-         u.name   AS creator_name,
-         c.name   AS course_name,
-         u2.id    AS player_id,
-         u2.name  AS player_name
+         tg.id, tg.group_name, tg.access_code, tg.starting_hole,
+         tg.course_id, tg.creator_id,
+         u.name  AS creator_name,
+         c.name  AS course_name,
+         u2.id   AS player_id,
+         u2.name AS player_name
        FROM training_groups tg
        JOIN  users u  ON u.id = tg.creator_id
        LEFT JOIN courses c  ON c.id = tg.course_id
@@ -362,35 +342,24 @@ exports.getOpenLobbies = async (req, res) => {
       [cid, uid],
     );
 
-    // Agrupa os jogadores por lobby no backend — zero duplicatas no React
     const lobbyMap = rows.reduce((acc, r) => {
       if (!acc.has(r.id)) {
         acc.set(r.id, {
-          id: r.id,
-          group_name: r.group_name,
-          access_code: r.access_code,
-          starting_hole: r.starting_hole,
-          course_id: r.course_id,
-          creator_id: r.creator_id,
-          creator_name: r.creator_name,
-          course_name: r.course_name,
-          players: [],
+          id: r.id, group_name: r.group_name, access_code: r.access_code,
+          starting_hole: r.starting_hole, course_id: r.course_id,
+          creator_id: r.creator_id, creator_name: r.creator_name,
+          course_name: r.course_name, players: [],
         });
       }
       if (r.player_id) {
         const lobby = acc.get(r.id);
-        if (!lobby.players.some((p) => p.id === r.player_id)) {
+        if (!lobby.players.some((p) => p.id === r.player_id))
           lobby.players.push({ id: r.player_id, name: r.player_name });
-        }
       }
       return acc;
     }, new Map());
 
-    const lobbies = Array.from(lobbyMap.values()).map((l) => ({
-      ...l,
-      player_count: l.players.length,
-    }));
-
+    const lobbies = Array.from(lobbyMap.values()).map((l) => ({ ...l, player_count: l.players.length }));
     res.json(lobbies);
   } catch (error) {
     console.error("Erro ao buscar lobbies:", error);
@@ -402,7 +371,6 @@ exports.getDailyRanking = async (req, res) => {
   try {
     const cid = clubId(req);
 
-    // Query principal com fallback de par: tenta holes, depois course_holes, default 4
     const [ranking] = await db.execute(
       `SELECT
          tg.id                                                      AS group_id,
@@ -432,7 +400,6 @@ exports.getDailyRanking = async (req, res) => {
       [cid],
     );
 
-    // Score por buraco para o acordeão do frontend
     const [holeScores] = await db.execute(
       `SELECT ts.user_id, ts.group_id, ts.hole_number, ts.strokes,
               COALESCE(h.par, ch.par, 4) AS par
@@ -448,7 +415,6 @@ exports.getDailyRanking = async (req, res) => {
       [cid],
     );
 
-    // Dados dos buracos do campo (par de cada buraco) — tenta holes, depois course_holes
     let holesData = [];
     const courseId = ranking.find((r) => r.course_id)?.course_id;
     if (courseId) {
@@ -458,9 +424,7 @@ exports.getDailyRanking = async (req, res) => {
           [courseId],
         );
         holesData = holes;
-      } catch (_) {
-        /* tabela holes não existe */
-      }
+      } catch (_) {}
 
       if (holesData.length === 0) {
         try {
@@ -469,25 +433,20 @@ exports.getDailyRanking = async (req, res) => {
             [courseId],
           );
           holesData = choles;
-        } catch (_) {
-          /* tabela course_holes não existe */
-        }
+        } catch (_) {}
       }
     }
 
-    // Monta training_label SOMENTE quando o mesmo atleta jogou > 1 vez no dia.
-    // group_ids já vêm em ordem ASC (mais antigo = menor id = Treino 1).
     const userGroupOrder = {};
     ranking.forEach((r) => {
       if (!userGroupOrder[r.id]) userGroupOrder[r.id] = [];
       if (!userGroupOrder[r.id].includes(r.group_id))
         userGroupOrder[r.id].push(r.group_id);
     });
+
     const labeledRanking = ranking.map((r) => {
       const groups = userGroupOrder[r.id];
-      // training_label null = jogador único → frontend não exibe nenhuma tag
-      const training_label =
-        groups.length > 1 ? `Treino ${groups.indexOf(r.group_id) + 1}` : null;
+      const training_label = groups.length > 1 ? `Treino ${groups.indexOf(r.group_id) + 1}` : null;
       return { ...r, training_label };
     });
 
@@ -533,7 +492,6 @@ exports.getPlayerHistory = async (req, res) => {
     const { userId } = req.params;
     const cid = clubId(req);
 
-    // Tenta com holes/course_holes; se a tabela não existir cai no fallback sem score_to_par
     let trainings = [];
     try {
       const [rows] = await db.execute(
