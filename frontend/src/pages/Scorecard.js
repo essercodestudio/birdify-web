@@ -159,11 +159,15 @@ function Scorecard() {
         }
       }
       
-      setCurrentHole(finalCurrentHole);
-      
+      // sessionStorage tem prioridade absoluta — reflete última ação manual do usuário
+      const storageKey = `scorecard_hole_${groupId}`;
+      const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10);
+      const resolvedHole = (persistedHole >= 1 && persistedHole <= 18) ? persistedHole : finalCurrentHole;
+      setCurrentHole(resolvedHole);
+
       // Carregar rascunhos do localStorage para o buraco atual
       if (savedGroup.tournament_id) {
-        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, finalCurrentHole);
+        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, resolvedHole);
         if (draftData) {
           setScores(prev => ({ ...prev, ...draftData }));
         }
@@ -294,7 +298,8 @@ function Scorecard() {
           setPlayedHoles([...playedHoles, nextHole]);
       }
       setCurrentHole(nextHole);
-      
+      sessionStorage.setItem(`scorecard_hole_${groupId}`, nextHole);
+
       // Carregar rascunho do próximo buraco se existir
       if (group?.tournament_id) {
         const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
@@ -312,7 +317,8 @@ function Scorecard() {
         return;
       }
       setCurrentHole(prevHole);
-      
+      sessionStorage.setItem(`scorecard_hole_${groupId}`, prevHole);
+
       // Carregar rascunho do buraco anterior se existir
       if (group?.tournament_id) {
         const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
@@ -392,11 +398,12 @@ function Scorecard() {
       }
     }
     
-    // Limpar todos os rascunhos após finalizar
+    // Limpar todos os rascunhos e posição persistida após finalizar
     if (group?.tournament_id) {
       clearAllDraftsForMatch(group.tournament_id);
     }
-    
+    sessionStorage.removeItem(`scorecard_hole_${groupId}`);
+
     alert("✅ Cartão Assinado! Placar Oficializado.");
     navigate("/");
   };

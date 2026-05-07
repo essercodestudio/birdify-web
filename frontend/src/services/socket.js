@@ -6,5 +6,6 @@ const URL = process.env.NODE_ENV === 'production'
 
 export const socket = io(URL, {
   autoConnect: false,
-  transports: ['websocket', 'polling'],
+  transports: ['websocket'],
+  upgrade: false,
 });
