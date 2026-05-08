@@ -41,10 +41,17 @@ function TrainingScorecard() {
   const [isCreator, setIsCreator]       = useState(false);
   const [expandedPlayer, setExpandedPlayer] = useState(null);
 
+  const [fetchError, setFetchError]   = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+
   // Timers de debounce por chave "userId-holeNumber"
-  const saveTimers   = useRef({});
+  const saveTimers      = useRef({});
   // Ref estável para fetchData (evita stale closure nos listeners de socket)
-  const fetchDataRef = useRef(null);
+  const fetchDataRef    = useRef(null);
+  // Previne duplo clique no botão Finalizar
+  const isFinishingRef  = useRef(false);
+  // Espelho do groupStatus para uso dentro de closures de socket (sem stale closure)
+  const groupStatusRef  = useRef('aguardando');
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -132,7 +139,14 @@ function TrainingScorecard() {
         api.get(`/training/scores/${groupId}`),
       ]);
 
-      if (!groupData.data?.id) { navigate('/daily-training'); return; }
+      // Grupo não encontrado: pode ser erro transiente; não ejeta o usuário no F5.
+      // A tela de erro com retry cuida disso com segurança.
+      if (!groupData.data?.id) {
+        setFetchError(true);
+        return;
+      }
+
+      setFetchError(false);
 
       let savedGroup = JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null');
       if (!savedGroup || savedGroup.id !== Number(groupId)) {
@@ -160,13 +174,15 @@ function TrainingScorecard() {
       }
     } catch (err) {
       console.error('Erro ao carregar treino:', err);
+      setFetchError(true);
     } finally {
       setIsLoading(false);
     }
-  }, [groupId, navigate, loadScorecardData]);
+  }, [groupId, loadScorecardData]);
 
-  // Mantém ref sempre atualizada para uso dentro de listeners de socket
+  // Mantém refs sempre atualizadas para uso dentro de listeners de socket
   useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
+  useEffect(() => { groupStatusRef.current = groupStatus; }, [groupStatus]);
 
   // Carga inicial
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -200,10 +216,14 @@ function TrainingScorecard() {
       fetchDataRef.current?.();
     };
 
+    // Não chama fetchData se o criador já finalizou localmente: evita race condition
+    // onde o banco ainda retorna 'ativo' e reverte o componente para FASE 2.
     const onFinished = () => {
       if (!active) return;
       setGroupStatus('finalizado');
-      fetchDataRef.current?.();
+      if (groupStatusRef.current !== 'finalizado') {
+        fetchDataRef.current?.();
+      }
     };
 
     socket.on('connect',                onConnect);
@@ -342,30 +362,38 @@ function TrainingScorecard() {
   };
 
   const handleFinish = async () => {
-    if (!isCreator) return;
+    if (!isCreator || isFinishingRef.current) return;
     if (!navigator.onLine) { alert('⚠️ Aguarde a conexão voltar para finalizar o treino.'); return; }
 
-    // Drena qualquer timer pendente antes de finalizar
-    const pending = Object.entries(saveTimers.current);
-    await Promise.all(pending.map(([key]) => {
-      clearTimeout(saveTimers.current[key]);
-      const [uid, hNum] = key.split('-');
-      const s = scores[key];
-      delete saveTimers.current[key];
-      return s > 0
-        ? api.post('/training/score', {
-            group_id: Number(groupId), user_id: Number(uid),
-            hole_number: Number(hNum), strokes: s,
-          }).catch(() => {})
-        : Promise.resolve();
-    }));
+    isFinishingRef.current = true;
+    setIsFinishing(true);
+    try {
+      // Drena qualquer timer pendente antes de finalizar
+      const pending = Object.entries(saveTimers.current);
+      await Promise.all(pending.map(([key]) => {
+        clearTimeout(saveTimers.current[key]);
+        const [uid, hNum] = key.split('-');
+        const s = scores[key];
+        delete saveTimers.current[key];
+        return s > 0
+          ? api.post('/training/score', {
+              group_id: Number(groupId), user_id: Number(uid),
+              hole_number: Number(hNum), strokes: s,
+            }).catch(() => {})
+          : Promise.resolve();
+      }));
 
-    const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
-    try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
-    localStorage.removeItem('activeTrainingGroup');
-    sessionStorage.removeItem(`training_hole_${groupId}`);
-    setShowSummary(false);
-    setGroupStatus('finalizado');
+      const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
+
+      localStorage.removeItem('activeTrainingGroup');
+      sessionStorage.removeItem(`training_hole_${groupId}`);
+      setShowSummary(false);
+      setGroupStatus('finalizado');
+    } finally {
+      isFinishingRef.current = false;
+      setIsFinishing(false);
+    }
   };
 
   // ── Estilos compartilhados ──
@@ -379,7 +407,35 @@ function TrainingScorecard() {
     btnBack:    { backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
   };
 
-  if (isLoading || !group) return <div style={{ backgroundColor: theme.bg, minHeight: '100vh' }} />;
+  if (isLoading) return (
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: theme.textMuted, fontSize: '14px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>Carregando treino...</div>
+    </div>
+  );
+
+  if (fetchError) return (
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '20px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
+      <div style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center' }}>Falha ao conectar com o servidor.</div>
+      <button
+        onClick={fetchData}
+        style={{ backgroundColor: accent, color: '#000', border: 'none', padding: '12px 28px', borderRadius: '10px', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
+      >
+        Tentar novamente
+      </button>
+      <button
+        onClick={() => navigate('/daily-training')}
+        style={{ backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, padding: '10px 24px', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}
+      >
+        Voltar ao Treino
+      </button>
+    </div>
+  );
+
+  if (!group) return (
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: theme.textMuted, fontSize: '14px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>Carregando treino...</div>
+    </div>
+  );
 
   // ══════════════════════════════════════════════════
   // FASE 1: SALA DE ESPERA
@@ -594,10 +650,11 @@ function TrainingScorecard() {
 
             {isCreator && (
               <button
-                style={{ width: '100%', padding: '16px', backgroundColor: theme.accent, color: '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '12px', cursor: 'pointer', marginTop: '24px', boxShadow: `0 6px 20px -4px ${theme.accent}55` }}
+                disabled={isFinishing}
+                style={{ width: '100%', padding: '16px', backgroundColor: isFinishing ? theme.cardLight : accent, color: isFinishing ? theme.textMuted : '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '12px', cursor: isFinishing ? 'not-allowed' : 'pointer', marginTop: '24px', boxShadow: isFinishing ? 'none' : `0 6px 20px -4px ${accent}55`, transition: 'all 0.2s' }}
                 onClick={handleFinish}
               >
-                ✅ Confirmar e Encerrar Partida
+                {isFinishing ? 'Finalizando...' : '✅ Confirmar e Encerrar Partida'}
               </button>
             )}
             <button
