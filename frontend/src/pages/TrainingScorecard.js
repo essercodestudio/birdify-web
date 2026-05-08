@@ -161,9 +161,11 @@ function TrainingScorecard() {
         api.get(`/training/scores/${groupId}`),
       ]);
 
-      // Grupo não encontrado: pode ser erro transiente; não ejeta o usuário no F5.
-      // A tela de erro com retry cuida disso com segurança.
+      // Grupo não encontrado: limpa localStorage para destravar criação de novo treino,
+      // depois mostra tela de retry em vez de ejetar o usuário automaticamente.
       if (!groupData.data?.id) {
+        localStorage.removeItem('activeTrainingGroup');
+        localStorage.removeItem(`training_hole_${groupId}`);
         setFetchError(true);
         return;
       }
@@ -190,6 +192,12 @@ function TrainingScorecard() {
       const status = groupData.data.status || 'aguardando';
       setGroupStatus(status);
       setPlayers(groupData.data.players || []);
+
+      // Grupo finalizado: libera o slot — DailyTraining já pode criar novo treino
+      if (status === 'finalizado') {
+        localStorage.removeItem('activeTrainingGroup');
+        localStorage.removeItem(`training_hole_${groupId}`);
+      }
 
       if (status === 'ativo' || status === 'finalizado') {
         await loadScorecardData(savedGroup, groupData.data.players || [], scoresData.data);
@@ -287,6 +295,7 @@ function TrainingScorecard() {
       const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
       await api.post('/training/cancel', { group_id: Number(groupId), creator_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
+      localStorage.removeItem(`training_hole_${groupId}`);
       navigate('/daily-training', { replace: true });
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao cancelar treino.');
@@ -300,6 +309,7 @@ function TrainingScorecard() {
       const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
       await api.post('/training/leave', { group_id: Number(groupId), user_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
+      localStorage.removeItem(`training_hole_${groupId}`);
       navigate('/daily-training', { replace: true });
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao sair do grupo.');
@@ -396,6 +406,11 @@ function TrainingScorecard() {
     isFinishingRef.current = true;
     setIsFinishing(true);
     try {
+      // Limpeza atômica ANTES da rede: garante que, mesmo se a API falhar,
+      // o localStorage não bloqueia a criação de novo treino.
+      localStorage.removeItem('activeTrainingGroup');
+      localStorage.removeItem(`training_hole_${groupId}`);
+
       // Drena qualquer timer pendente antes de finalizar
       const pending = Object.entries(saveTimers.current);
       await Promise.all(pending.map(([key]) => {
@@ -414,8 +429,6 @@ function TrainingScorecard() {
       const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
       try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
 
-      localStorage.removeItem('activeTrainingGroup');
-      localStorage.removeItem(`training_hole_${groupId}`);
       setShowSummary(false);
       setGroupStatus('finalizado');
     } finally {

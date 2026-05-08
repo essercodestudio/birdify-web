@@ -27,13 +27,26 @@ function DailyTraining() {
 
   const [joinState, setJoinState] = useState({});
 
-  const pollRef = useRef(null);
+  const pollRef      = useRef(null);
+  const isCreatingRef = useRef(false);
 
   const checkCurrentGroup = useCallback(async () => {
     if (!loggedUser?.id) return;
     try {
       const res = await api.get(`/training/current?user_id=${loggedUser.id}`);
-      setCurrentGroup(res.data.group_id ? res.data : null);
+      if (res.data.group_id) {
+        setCurrentGroup(res.data);
+      } else {
+        setCurrentGroup(null);
+        // Banco confirma: nenhum grupo ativo. Limpa resquícios de sessão anterior
+        // que bloqueiam a criação de novos treinos.
+        const stored = localStorage.getItem('activeTrainingGroup');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          localStorage.removeItem('activeTrainingGroup');
+          if (parsed?.id) localStorage.removeItem(`training_hole_${parsed.id}`);
+        }
+      }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -71,8 +84,18 @@ function DailyTraining() {
   };
 
   const handleCreate = async () => {
+    // Ref guard: impede duplo clique antes da re-renderização desabilitar o botão
+    if (isCreatingRef.current) return;
     if (!courseId) { setCreateError('Selecione um campo.'); return; }
     if (!loggedUser) { navigate('/login'); return; }
+
+    // Se há grupo ativo no estado, navega direto em vez de tentar criar
+    if (currentGroup?.group_id) {
+      navigate(`/training-scorecard/${currentGroup.group_id}`);
+      return;
+    }
+
+    isCreatingRef.current = true;
     setCreateLoading(true); setCreateError('');
     try {
       const res = await api.post('/training/create', {
@@ -90,8 +113,13 @@ function DailyTraining() {
       }));
       navigate(`/training-scorecard/${res.data.groupId}`);
     } catch (err) {
-      setCreateError(err.response?.data?.message || 'Erro ao criar treino.');
+      const msg = err.response?.data?.message || 'Erro ao criar treino.';
+      setCreateError(msg);
+      // 409 = já está em grupo ativo. Atualiza currentGroup para bloquear nova tentativa.
+      if (err.response?.status === 409) checkCurrentGroup();
       setCreateLoading(false);
+    } finally {
+      isCreatingRef.current = false;
     }
   };
 
