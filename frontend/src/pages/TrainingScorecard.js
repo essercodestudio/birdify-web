@@ -172,6 +172,8 @@ function TrainingScorecard() {
 
       setFetchError(false);
 
+      const status = groupData.data.status || 'aguardando';
+
       let savedGroup = JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null');
       if (!savedGroup || savedGroup.id !== Number(groupId)) {
         savedGroup = {
@@ -181,7 +183,11 @@ function TrainingScorecard() {
           group_name:    groupData.data.group_name,
           access_code:   groupData.data.access_code,
           starting_hole: groupData.data.starting_hole || 1,
+          status,
         };
+        localStorage.setItem('activeTrainingGroup', JSON.stringify(savedGroup));
+      } else if (savedGroup.status !== status) {
+        savedGroup = { ...savedGroup, status };
         localStorage.setItem('activeTrainingGroup', JSON.stringify(savedGroup));
       }
 
@@ -189,7 +195,6 @@ function TrainingScorecard() {
       setIsCreator(!!(loggedUser && loggedUser.id === savedGroup.creator_id));
       setGroup(savedGroup);
 
-      const status = groupData.data.status || 'aguardando';
       setGroupStatus(status);
       setPlayers(groupData.data.players || []);
 
@@ -282,7 +287,7 @@ function TrainingScorecard() {
     try {
       await api.post('/training/start', { group_id: Number(groupId) });
       setGroupStatus('ativo');
-      fetchData();
+      // onStarted socket listener calls fetchData — não duplicar aqui para evitar race condition
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao iniciar treino.');
     }
@@ -361,6 +366,24 @@ function TrainingScorecard() {
             }).catch(err => console.error('[flush] score falhou:', err))
           : Promise.resolve();
       });
+    return Promise.all(saves);
+  };
+
+  // Drena todos os timers de debounce pendentes (qualquer buraco) antes de navegar para fora
+  // do scorecard. Evita que scores não salvos sejam cancelados pelo cleanup do useEffect.
+  const flushAllPending = () => {
+    const saves = Object.entries(saveTimers.current).map(([key, timerId]) => {
+      clearTimeout(timerId);
+      const [uid, hNum] = key.split('-');
+      const s = scores[key];
+      delete saveTimers.current[key];
+      return s > 0
+        ? api.post('/training/score', {
+            group_id: Number(groupId), user_id: Number(uid),
+            hole_number: Number(hNum), strokes: Number(s),
+          }).catch(() => {})
+        : Promise.resolve();
+    });
     return Promise.all(saves);
   };
 
@@ -713,7 +736,7 @@ function TrainingScorecard() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `1px solid ${theme.cardLight}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅</button>
+          <button style={st.btnBack} onClick={async () => { await flushAllPending(); navigate('/daily-training'); }}>⬅</button>
           <div style={{ textAlign: 'left' }}>
             <small style={{ color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '1px', fontSize: '10px' }}>TREINO DO DIA</small>
             <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '15px', marginTop: '2px' }}>{group.group_name || 'Treino'}</div>
@@ -721,7 +744,7 @@ function TrainingScorecard() {
           </div>
         </div>
         <button
-          onClick={() => navigate('/training-leaderboard')}
+          onClick={async () => { await flushAllPending(); navigate('/training-leaderboard'); }}
           style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', boxShadow: '0 2px 5px rgba(0,0,0,0.5)' }}
         >
           🏆 Ranking

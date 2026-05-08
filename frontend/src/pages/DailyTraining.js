@@ -15,7 +15,11 @@ function DailyTraining() {
   };
 
   const [mode, setMode]                     = useState(null);
-  const [currentGroup, setCurrentGroup]     = useState(null);
+  // Pré-popula do localStorage para evitar flash de "Criar" antes da API responder
+  const _stored = JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null');
+  const [currentGroup, setCurrentGroup]     = useState(
+    _stored?.id ? { group_id: _stored.id, status: _stored.status || 'aguardando' } : null
+  );
   const [lobbies, setLobbies]               = useState([]);
   const [lobbiesLoading, setLobbiesLoading] = useState(true);
 
@@ -110,6 +114,7 @@ function DailyTraining() {
         group_name:    res.data.group_name,
         access_code:   res.data.access_code,
         starting_hole: Number(startingHole),
+        status:        'aguardando',
       }));
       navigate(`/training-scorecard/${res.data.groupId}`);
     } catch (err) {
@@ -149,6 +154,7 @@ function DailyTraining() {
         group_name:    t.group_name,
         access_code:   t.access_code,
         starting_hole: t.starting_hole || 1,
+        status:        t.status || 'aguardando',
       }));
       navigate(`/training-scorecard/${t.id}`);
     } catch (err) {
