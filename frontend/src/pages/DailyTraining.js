@@ -15,11 +15,14 @@ function DailyTraining() {
   };
 
   const [mode, setMode]                     = useState(null);
-  // Pré-popula do localStorage para evitar flash de "Criar" antes da API responder
-  const _stored = JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null');
-  const [currentGroup, setCurrentGroup]     = useState(
-    _stored?.id ? { group_id: _stored.id, status: _stored.status || 'aguardando' } : null
-  );
+  // Pré-popula somente se status não for 'finalizado' — evita botão "Continuar" para treino morto.
+  // Se status for 'finalizado' ou desconhecido, mostra "Verificando..." até o banco confirmar.
+  const _stored   = JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null');
+  const _preGroup = (_stored?.id && _stored?.status !== 'finalizado')
+    ? { group_id: _stored.id, status: _stored.status || 'aguardando' }
+    : null;
+  const [currentGroup, setCurrentGroup]       = useState(_preGroup);
+  const [isCheckingGroup, setIsCheckingGroup] = useState(true);
   const [lobbies, setLobbies]               = useState([]);
   const [lobbiesLoading, setLobbiesLoading] = useState(true);
 
@@ -35,15 +38,14 @@ function DailyTraining() {
   const isCreatingRef = useRef(false);
 
   const checkCurrentGroup = useCallback(async () => {
-    if (!loggedUser?.id) return;
+    if (!loggedUser?.id) { setIsCheckingGroup(false); return; }
     try {
       const res = await api.get(`/training/current?user_id=${loggedUser.id}`);
       if (res.data.group_id) {
         setCurrentGroup(res.data);
       } else {
         setCurrentGroup(null);
-        // Banco confirma: nenhum grupo ativo. Limpa resquícios de sessão anterior
-        // que bloqueiam a criação de novos treinos.
+        // Banco confirma: nenhum grupo ativo. Limpa resquícios de sessão anterior.
         const stored = localStorage.getItem('activeTrainingGroup');
         if (stored) {
           const parsed = JSON.parse(stored);
@@ -51,7 +53,11 @@ function DailyTraining() {
           if (parsed?.id) localStorage.removeItem(`training_hole_${parsed.id}`);
         }
       }
-    } catch {}
+    } catch {
+      // Falha de rede: mantém o estado pré-populado sem travar o fluxo
+    } finally {
+      setIsCheckingGroup(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,10 +124,30 @@ function DailyTraining() {
       }));
       navigate(`/training-scorecard/${res.data.groupId}`);
     } catch (err) {
-      const msg = err.response?.data?.message || 'Erro ao criar treino.';
-      setCreateError(msg);
-      // 409 = já está em grupo ativo. Atualiza currentGroup para bloquear nova tentativa.
-      if (err.response?.status === 409) checkCurrentGroup();
+      const status = err.response?.status;
+
+      if (status === 409 || status === 400) {
+        // Cache zombie: o banco sabe que o usuário já está em um treino.
+        // Limpa o localStorage e navega para o treino correto.
+        const stored = localStorage.getItem('activeTrainingGroup');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          localStorage.removeItem('activeTrainingGroup');
+          if (parsed?.id) localStorage.removeItem(`training_hole_${parsed.id}`);
+        }
+        try {
+          const res = await api.get(`/training/current?user_id=${loggedUser.id}`);
+          if (res.data.group_id) {
+            setCurrentGroup(res.data);
+            navigate(`/training-scorecard/${res.data.group_id}`);
+            return;
+          } else {
+            setCurrentGroup(null);
+          }
+        } catch {}
+      }
+
+      setCreateError(err.response?.data?.message || 'Erro ao criar treino.');
       setCreateLoading(false);
     } finally {
       isCreatingRef.current = false;
@@ -233,6 +259,13 @@ function DailyTraining() {
           🏆 VER RANKING DO DIA
         </button>
 
+        {/* Verificando sessão — substitui "Criar" enquanto o banco confirma o estado */}
+        {isCheckingGroup && !currentGroup && (
+          <div style={{ ...s.btn, backgroundColor: theme.cardLight, color: theme.textMuted, cursor: 'default', textAlign: 'center', borderRadius: '12px', fontSize: '14px' }}>
+            Verificando sessão...
+          </div>
+        )}
+
         {/* Recovery: partida ativa */}
         {currentGroup?.status === 'ativo' && (
           <button
@@ -253,8 +286,8 @@ function DailyTraining() {
           </button>
         )}
 
-        {/* Criar */}
-        {!currentGroup && (
+        {/* Criar — só aparece após o banco confirmar que não há grupo ativo */}
+        {!isCheckingGroup && !currentGroup && (
           <button
             style={{ ...s.btn, backgroundColor: theme.accent, color: '#000', borderRadius: '12px' }}
             onClick={() => { setMode('create'); loadCourses(); }}

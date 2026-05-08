@@ -161,12 +161,12 @@ function TrainingScorecard() {
         api.get(`/training/scores/${groupId}`),
       ]);
 
-      // Grupo não encontrado: limpa localStorage para destravar criação de novo treino,
-      // depois mostra tela de retry em vez de ejetar o usuário automaticamente.
+      // Grupo não encontrado (deletado ou expirado): limpa cache zombie e retorna ao lobby.
+      // Erro de rede real cai no catch e mostra tela de retry.
       if (!groupData.data?.id) {
         localStorage.removeItem('activeTrainingGroup');
         localStorage.removeItem(`training_hole_${groupId}`);
-        setFetchError(true);
+        navigate('/daily-training', { replace: true });
         return;
       }
 
@@ -213,7 +213,7 @@ function TrainingScorecard() {
     } finally {
       setIsLoading(false);
     }
-  }, [groupId, loadScorecardData]);
+ }, [groupId, navigate, loadScorecardData]);
 
   // Mantém refs sempre atualizadas para uso dentro de listeners de socket
   useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
