@@ -4,23 +4,24 @@ import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
 
-// Cores dos scores: Eagle=ouro, Birdie=verde, Par=cinza, Bogey+=vermelho, vazio=cardLight
 const getScoreColor = (strokes, par, cardLight, gold, danger) => {
-  if (!strokes || strokes === 0) return cardLight;
-  const diff = strokes - par;
-  if (strokes === 1 || diff <= -2) return gold;
-  if (diff === -1)                  return '#4ade80';
-  if (diff === 0)                   return '#cbd5e1';
+  const s = Number(strokes), p = Number(par) || 4;
+  if (!s) return cardLight;
+  const diff = s - p;
+  if (s === 1 || diff <= -2) return gold;
+  if (diff === -1)            return '#4ade80';
+  if (diff === 0)             return '#cbd5e1';
   return danger;
 };
 
 const holeBoxStyle = (strokes, par) => {
-  if (!strokes) return { bg: 'rgba(51,65,85,0.5)', color: '#64748b', border: '#334155' };
-  const diff = strokes - par;
-  if (strokes === 1 || diff <= -2) return { bg: 'rgba(234,179,8,0.18)',   color: '#eab308', border: '#eab308' };
-  if (diff === -1)                  return { bg: 'rgba(74,222,128,0.15)',  color: '#4ade80', border: '#4ade80' };
-  if (diff === 0)                   return { bg: 'rgba(203,213,225,0.07)', color: '#cbd5e1', border: '#475569' };
-  return                                   { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444', border: '#ef4444' };
+  const s = Number(strokes), p = Number(par) || 4;
+  if (!s) return { bg: 'rgba(51,65,85,0.5)', color: '#64748b', border: '#334155' };
+  const diff = s - p;
+  if (s === 1 || diff <= -2) return { bg: 'rgba(234,179,8,0.18)',   color: '#eab308', border: '#eab308' };
+  if (diff === -1)            return { bg: 'rgba(74,222,128,0.15)',  color: '#4ade80', border: '#4ade80' };
+  if (diff === 0)             return { bg: 'rgba(203,213,225,0.07)', color: '#cbd5e1', border: '#475569' };
+  return                             { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444', border: '#ef4444' };
 };
 
 function TrainingScorecard() {

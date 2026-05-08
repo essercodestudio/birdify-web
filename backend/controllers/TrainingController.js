@@ -421,7 +421,7 @@ exports.getDailyRanking = async (req, res) => {
 
     const [holeScores] = await db.execute(
       `SELECT ts.user_id, ts.group_id, ts.hole_number, ts.strokes,
-              COALESCE(h.par, ch.par, 4) AS par
+              COALESCE(h.par, ch.par, 4) AS hole_par
        FROM training_scores ts
        JOIN training_groups tg ON ts.group_id = tg.id
        LEFT JOIN holes h

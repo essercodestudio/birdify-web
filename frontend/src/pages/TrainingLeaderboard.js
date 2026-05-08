@@ -61,26 +61,31 @@ function TrainingLeaderboard() {
   };
 
   const getHoleStyle = (strokes, par) => {
-    if (!strokes) return { bg: theme.cardLight, color: theme.textMuted, border: theme.cardLight };
-    const diff = strokes - par;
-    if (strokes === 1 || diff <= -2) return { bg: 'rgba(234,179,8,0.25)',  color: theme.gold,   border: theme.gold };
-    if (diff === -1)                  return { bg: 'rgba(74,222,128,0.2)',  color: '#4ade80',    border: '#4ade80' };
-    if (diff === 0)                   return { bg: 'rgba(203,213,225,0.07)', color: '#cbd5e1',   border: '#475569' };
-    return                                   { bg: 'rgba(239,68,68,0.2)',   color: theme.danger, border: theme.danger };
+    const s = Number(strokes), p = Number(par) || 4;
+    if (!s) return { bg: theme.cardLight, color: theme.textMuted, border: theme.cardLight };
+    const diff = s - p;
+    if (s === 1 || diff <= -2) return { bg: 'rgba(234,179,8,0.25)',   color: theme.gold,   border: theme.gold };
+    if (diff === -1)            return { bg: 'rgba(74,222,128,0.2)',   color: '#4ade80',    border: '#4ade80' };
+    if (diff === 0)             return { bg: 'rgba(203,213,225,0.07)', color: '#cbd5e1',    border: '#475569' };
+    return                             { bg: 'rgba(239,68,68,0.2)',    color: theme.danger, border: theme.danger };
   };
 
   const getParFor = (holeNum) => {
-    const h = data.holesData.find(h => h.hole_number === holeNum);
-    return h ? h.par : 4;
+    const h = data.holesData.find(h => Number(h.hole_number) === holeNum);
+    return h ? Number(h.par) || 4 : 4;
   };
 
   const renderNine = (userId, groupId, from, to) => (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: '4px', marginBottom: '10px' }}>
       {Array.from({ length: to - from + 1 }, (_, i) => from + i).map(num => {
         const hit = data.hole_scores.find(
-          s => s.user_id === userId && s.group_id === groupId && s.hole_number === num
+          s => Number(s.user_id) === Number(userId) &&
+               Number(s.group_id) === Number(groupId) &&
+               Number(s.hole_number) === num
         );
-        const par = hit ? hit.par : getParFor(num);
+        // Sempre usa holesData como fonte autoritativa do par do campo.
+        // hit.hole_par é fallback caso holesData esteja vazio.
+        const par = getParFor(num) || Number(hit?.hole_par) || 4;
         const { bg, color, border } = getHoleStyle(hit?.strokes, par);
         return (
           <div key={num} style={{ backgroundColor: bg, border: `1px solid ${border}`, borderRadius: '6px', padding: '5px 2px', textAlign: 'center' }}>
