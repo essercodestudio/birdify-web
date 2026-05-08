@@ -173,31 +173,35 @@ function TrainingScorecard() {
 
   // ── Socket.io: tempo real ──
   useEffect(() => {
-    socket.connect();
+    let active = true;
+
+    // Só conecta se ainda não está conectado — evita dupla tentativa no StrictMode
+    if (!socket.connected) socket.connect();
     socket.emit('join:training', groupId);
 
-    const onConnect = () => socket.emit('join:training', groupId);
-
-    // Score salvo pelo criador → todos os membros atualizam instantaneamente
-    const onScoreSaved = ({ user_id, hole_number, strokes }) => {
-      setScores(prev => ({ ...prev, [`${user_id}-${hole_number}`]: strokes }));
+    const onConnect = () => {
+      if (active) socket.emit('join:training', groupId);
     };
 
-    // Novo jogador entrou na sala → atualiza lista de atletas
+    const onScoreSaved = ({ user_id, hole_number, strokes }) => {
+      if (active) setScores(prev => ({ ...prev, [`${user_id}-${hole_number}`]: strokes }));
+    };
+
     const onPlayerJoined = () => {
+      if (!active) return;
       api.get(`/training/group/${groupId}`)
-        .then(res => setPlayers(res.data.players || []))
+        .then(res => { if (active) setPlayers(res.data.players || []); })
         .catch(() => {});
     };
 
-    // Criador iniciou → todos na sala de espera entram no jogo
     const onStarted = () => {
+      if (!active) return;
       setGroupStatus('ativo');
       fetchDataRef.current?.();
     };
 
-    // Criador finalizou → todos veem a tela de resultado
     const onFinished = () => {
+      if (!active) return;
       setGroupStatus('finalizado');
       fetchDataRef.current?.();
     };
@@ -209,14 +213,14 @@ function TrainingScorecard() {
     socket.on('training:finished',      onFinished);
 
     return () => {
+      active = false;
       socket.off('connect',                onConnect);
       socket.off('training:score_saved',   onScoreSaved);
       socket.off('training:player_joined', onPlayerJoined);
       socket.off('training:started',       onStarted);
       socket.off('training:finished',      onFinished);
       socket.emit('leave:training', groupId);
-      socket.disconnect();
-      // Cancela qualquer save pendente ao sair
+      // ⚠️ NÃO desconectar: socket é singleton — disconnect aqui cancela o handshake WSS
       Object.values(saveTimers.current).forEach(clearTimeout);
       saveTimers.current = {};
     };
