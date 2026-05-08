@@ -24,9 +24,15 @@ const holeBoxStyle = (strokes, par) => {
 };
 
 function TrainingScorecard() {
-  const { groupId } = useParams();
-  const navigate    = useNavigate();
-  const { club }    = useClub();
+  const { groupId: routeGroupId } = useParams();
+  const navigate                  = useNavigate();
+  const { club }                  = useClub();
+
+  // F5 preserva a URL, mas se por algum motivo o parâmetro faltar, lê do localStorage.
+  // Só navega para /daily-training se realmente não houver ID de lugar nenhum.
+  const groupId = routeGroupId
+    || JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null')?.id?.toString()
+    || null;
 
   const [group, setGroup]               = useState(null);
   const [players, setPlayers]           = useState([]);
@@ -58,6 +64,22 @@ function TrainingScorecard() {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent,
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444',
   };
+
+  // Redireciona se não houver groupId de forma alguma (efeito — não pode ser síncrono no render)
+  useEffect(() => {
+    if (!groupId) navigate('/daily-training', { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Limpeza de chaves training_hole_XX de treinos antigos que não foram encerrados corretamente.
+  // Roda uma vez na montagem: remove todas as chaves training_hole_ exceto a do grupo atual.
+  useEffect(() => {
+    if (!groupId) return;
+    const prefix = 'training_hole_';
+    const currentKey = `${prefix}${groupId}`;
+    Object.keys(localStorage)
+      .filter(k => k.startsWith(prefix) && k !== currentKey)
+      .forEach(k => localStorage.removeItem(k));
+  }, [groupId]);
 
   // ── Hidratação do scorecard a partir do banco ──
   // Regra: posiciona no ÚLTIMO buraco onde todos têm score (não no próximo).
@@ -107,10 +129,10 @@ function TrainingScorecard() {
     }
     if (history.length === 0) history.push(startHole);
 
-    // sessionStorage tem prioridade absoluta — reflete a última ação manual do usuário.
+    // localStorage tem prioridade absoluta — persiste F5 e fecha/abre aba.
     // Não valida contra o estado do banco (evita regressão por latência de rede).
     const storageKey    = `training_hole_${groupId}`;
-    const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10) || null;
+    const persistedHole = parseInt(localStorage.getItem(storageKey), 10) || null;
 
     if (persistedHole >= 1 && persistedHole <= 18) {
       // Reconstrói história contínua do startHole até o buraco persistido
@@ -337,12 +359,12 @@ function TrainingScorecard() {
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
       setCurrentHole(next);
-      sessionStorage.setItem(`training_hole_${groupId}`, next);
+      localStorage.setItem(`training_hole_${groupId}`, next);
     } else if (delta < 0) {
       let prev = currentHole - 1; if (prev < 1) prev = 18;
       if (!playedHoles.includes(prev)) { alert('🛑 Você não pode voltar antes do tee de saída.'); return; }
       setCurrentHole(prev);
-      sessionStorage.setItem(`training_hole_${groupId}`, prev);
+      localStorage.setItem(`training_hole_${groupId}`, prev);
     }
   };
 
@@ -387,7 +409,7 @@ function TrainingScorecard() {
       try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
 
       localStorage.removeItem('activeTrainingGroup');
-      sessionStorage.removeItem(`training_hole_${groupId}`);
+      localStorage.removeItem(`training_hole_${groupId}`);
       setShowSummary(false);
       setGroupStatus('finalizado');
     } finally {
@@ -406,6 +428,8 @@ function TrainingScorecard() {
     finishBtn:  { width: '100%', padding: '15px', backgroundColor: 'transparent', color: '#fff', fontSize: '17px', fontWeight: 'bold', border: `2px solid ${accent}`, borderRadius: '10px', cursor: 'pointer', marginTop: '30px', marginBottom: '20px' },
     btnBack:    { backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
   };
+
+  if (!groupId) return null;
 
   if (isLoading) return (
     <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
