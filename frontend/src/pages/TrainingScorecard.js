@@ -334,27 +334,33 @@ function TrainingScorecard() {
     }, 400);
   };
 
-  // Garante que saves pendentes do buraco atual sejam disparados antes de avançar
+  // Drena timers pendentes do buraco e aguarda confirmação do backend.
+  // Retorna Promise para que changeHole possa fazer await antes de avançar.
   const flushPendingForHole = (hole) => {
-    players.forEach(p => {
-      const key = `${p.id}-${hole}`;
-      if (!saveTimers.current[key]) return;
-      clearTimeout(saveTimers.current[key]);
-      const s = scores[key];
-      if (s > 0) {
-        api.post('/training/score', {
-          group_id: Number(groupId), user_id: p.id, hole_number: hole, strokes: s,
-        }).catch(err => console.error(err));
-      }
-      delete saveTimers.current[key];
-    });
+    const saves = players
+      .filter(p => saveTimers.current[`${p.id}-${hole}`])
+      .map(p => {
+        const key = `${p.id}-${hole}`;
+        clearTimeout(saveTimers.current[key]);
+        const s = scores[key];
+        delete saveTimers.current[key];
+        return s > 0
+          ? api.post('/training/score', {
+              group_id: Number(groupId), user_id: Number(p.id),
+              hole_number: Number(hole), strokes: Number(s),
+            }).catch(err => console.error('[flush] score falhou:', err))
+          : Promise.resolve();
+      });
+    return Promise.all(saves);
   };
 
-  const changeHole = (delta) => {
+  // Avança ou recua o buraco. Aguarda o backend confirmar os scores antes de avançar
+  // para garantir que o buraco só muda após persistência real no banco.
+  const changeHole = async (delta) => {
     if (delta > 0) {
       const missing = players.find(p => !(scores[`${p.id}-${currentHole}`] > 0));
       if (missing) { alert(`⚠️ Falta anotar o score de: ${missing.name}`); return; }
-      flushPendingForHole(currentHole);
+      await flushPendingForHole(currentHole);
       if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);

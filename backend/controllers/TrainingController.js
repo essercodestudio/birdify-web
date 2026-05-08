@@ -199,11 +199,16 @@ exports.getTableDetails = async (req, res) => {
 
 // UPSERT atômico — elimina race condition do DELETE+INSERT anterior
 exports.saveScore = async (req, res) => {
-  try {
-    const { group_id, user_id, hole_number, strokes } = req.body;
+  // Força conversão para inteiro — MySQL2 pode enviar strings do body JSON
+  // e o UNIQUE KEY (group_id, user_id, hole_number) falha silenciosamente com tipo errado
+  const group_id    = Number(req.body.group_id);
+  const user_id     = Number(req.body.user_id);
+  const hole_number = Number(req.body.hole_number);
+  const strokes     = Number(req.body.strokes);
 
-    if (!group_id || !user_id || !hole_number || strokes === undefined)
-      return res.status(400).json({ error: "Dados incompletos." });
+  try {
+    if (!group_id || !user_id || !hole_number || isNaN(strokes))
+      return res.status(400).json({ error: "Dados incompletos ou inválidos." });
 
     await db.execute(
       `INSERT INTO training_scores (group_id, user_id, hole_number, strokes)
@@ -220,7 +225,7 @@ exports.saveScore = async (req, res) => {
 
     res.json({ ok: true, strokes, hole: hole_number });
   } catch (error) {
-    console.error("Erro ao salvar score de treino:", error);
+    console.error("[saveScore] ERRO:", error.message, { group_id, user_id, hole_number, strokes });
     res.status(500).json({ error: error.message });
   }
 };
@@ -263,11 +268,17 @@ exports.startTraining = async (req, res) => {
 };
 
 exports.finishTraining = async (req, res) => {
+  const group_id   = Number(req.body.group_id);
+  const creator_id = req.body.creator_id != null ? Number(req.body.creator_id) : null;
+  const cid        = clubId(req);
+
   try {
-    const { group_id, creator_id } = req.body;
+    if (!group_id) return res.status(400).json({ error: "group_id ausente." });
+
+    console.log(`[finishTraining] group_id=${group_id} creator_id=${creator_id} club_id=${cid}`);
 
     const whereCreator = creator_id ? "AND creator_id = ?" : "";
-    const params       = creator_id ? [group_id, clubId(req), creator_id] : [group_id, clubId(req)];
+    const params       = creator_id ? [group_id, cid, creator_id] : [group_id, cid];
 
     const [result] = await db.execute(
       `UPDATE training_groups SET status = 'finalizado'
@@ -275,15 +286,23 @@ exports.finishTraining = async (req, res) => {
       params,
     );
 
-    if (result.affectedRows === 0)
+    console.log(`[finishTraining] affectedRows=${result.affectedRows}`);
+
+    if (result.affectedRows === 0) {
+      const [[debug]] = await db.execute(
+        "SELECT id, status, creator_id, club_id FROM training_groups WHERE id = ?",
+        [group_id],
+      );
+      console.error("[finishTraining] Sem match no WHERE:", debug || "grupo não existe");
       return res.status(403).json({ message: "Acesso negado ou treino não encontrado." });
+    }
 
     socketService.emitToRoom(`training:${group_id}`, "training:finished", { group_id });
     socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
 
     res.json({ message: "Treino finalizado!" });
   } catch (error) {
-    console.error("Erro ao finalizar treino:", error);
+    console.error("[finishTraining] ERRO:", error.message, { group_id, creator_id, cid });
     res.status(500).json({ error: error.message });
   }
 };
