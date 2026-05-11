@@ -113,15 +113,7 @@ function DailyTraining() {
         course_id:     Number(courseId),
         starting_hole: Number(startingHole),
       });
-      localStorage.setItem('activeTrainingGroup', JSON.stringify({
-        id:            res.data.groupId,
-        creator_id:    loggedUser.id,
-        course_id:     Number(courseId),
-        group_name:    res.data.group_name,
-        access_code:   res.data.access_code,
-        starting_hole: Number(startingHole),
-        status:        'aguardando',
-      }));
+      localStorage.removeItem('activeTrainingGroup');
       navigate(`/training-scorecard/${res.data.groupId}`);
     } catch (err) {
       const status = err.response?.status;
@@ -172,17 +164,8 @@ function DailyTraining() {
     updateJoin(lobby.id, { loading: true, error: '' });
     try {
       const res = await api.post('/training/join', { access_code: code, user_id: loggedUser.id });
-      const t   = res.data.table;
-      localStorage.setItem('activeTrainingGroup', JSON.stringify({
-        id:            t.id,
-        creator_id:    t.creator_id,
-        course_id:     t.course_id,
-        group_name:    t.group_name,
-        access_code:   t.access_code,
-        starting_hole: t.starting_hole || 1,
-        status:        t.status || 'aguardando',
-      }));
-      navigate(`/training-scorecard/${t.id}`);
+      localStorage.removeItem('activeTrainingGroup');
+      navigate(`/training-scorecard/${res.data.table.id}`);
     } catch (err) {
       updateJoin(lobby.id, { loading: false, error: err.response?.data?.message || 'Código inválido.' });
     }

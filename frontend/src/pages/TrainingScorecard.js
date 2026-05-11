@@ -71,20 +71,8 @@ function TrainingScorecard() {
     if (!groupId) navigate('/daily-training', { replace: true });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Limpeza de chaves training_hole_XX de treinos antigos que não foram encerrados corretamente.
-  // Roda uma vez na montagem: remove todas as chaves training_hole_ exceto a do grupo atual.
-  useEffect(() => {
-    if (!groupId) return;
-    const prefix = 'training_hole_';
-    const currentKey = `${prefix}${groupId}`;
-    Object.keys(localStorage)
-      .filter(k => k.startsWith(prefix) && k !== currentKey)
-      .forEach(k => localStorage.removeItem(k));
-  }, [groupId]);
-
   // ── Hidratação do scorecard a partir do banco ──
-  // Regra: posiciona no ÚLTIMO buraco onde todos têm score (não no próximo).
-  // Isso garante que voltar do Ranking não avance o buraco automaticamente.
+  // Deriva currentHole exclusivamente dos scores da API: avança para o próximo após o último completo.
   const loadScorecardData = useCallback(async (savedGroup, allPlayers, scoresRaw) => {
     if (savedGroup.course_id) {
       const holesRes = await api.get(`/courses/${savedGroup.course_id}/holes`);
@@ -130,28 +118,24 @@ function TrainingScorecard() {
     }
     if (history.length === 0) history.push(startHole);
 
-    // localStorage tem prioridade absoluta — persiste F5 e fecha/abre aba.
-    // Não valida contra o estado do banco (evita regressão por latência de rede).
-    const storageKey    = `training_hole_${groupId}`;
-    const persistedHole = parseInt(localStorage.getItem(storageKey), 10) || null;
-
-    if (persistedHole >= 1 && persistedHole <= 18) {
-      // Reconstrói história contínua do startHole até o buraco persistido
-      const fullHistory = [];
-      if (startHole <= persistedHole) {
-        for (let i = startHole; i <= persistedHole; i++) fullHistory.push(i);
-      } else {
-        for (let i = startHole; i <= 18; i++) fullHistory.push(i);
-        for (let i = 1; i <= persistedHole; i++) fullHistory.push(i);
-      }
-      setPlayedHoles(fullHistory);
-      setCurrentHole(persistedHole);
-    } else {
+    if (holesCompleted === 18) {
       setPlayedHoles(history);
       setCurrentHole(lastFullHole);
+      setShowSummary(true);
+      return;
     }
 
-    if (holesCompleted === 18) setShowSummary(true);
+    if (holesCompleted === 0) {
+      setCurrentHole(startHole);
+      setPlayedHoles([startHole]);
+      return;
+    }
+
+    let nextHole = lastFullHole + 1;
+    if (nextHole > 18) nextHole = 1;
+    if (!history.includes(nextHole)) history.push(nextHole);
+    setPlayedHoles(history);
+    setCurrentHole(nextHole);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
@@ -399,12 +383,10 @@ function TrainingScorecard() {
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
       setCurrentHole(next);
-      localStorage.setItem(`training_hole_${groupId}`, next);
     } else if (delta < 0) {
       let prev = currentHole - 1; if (prev < 1) prev = 18;
       if (!playedHoles.includes(prev)) { alert('🛑 Você não pode voltar antes do tee de saída.'); return; }
       setCurrentHole(prev);
-      localStorage.setItem(`training_hole_${groupId}`, prev);
     }
   };
 
@@ -430,11 +412,6 @@ function TrainingScorecard() {
     isFinishingRef.current = true;
     setIsFinishing(true);
     try {
-      // Limpeza atômica ANTES da rede: garante que, mesmo se a API falhar,
-      // o localStorage não bloqueia a criação de novo treino.
-      localStorage.removeItem('activeTrainingGroup');
-      localStorage.removeItem(`training_hole_${groupId}`);
-
       // Drena qualquer timer pendente antes de finalizar
       const pending = Object.entries(saveTimers.current);
       await Promise.all(pending.map(([key]) => {
@@ -451,10 +428,15 @@ function TrainingScorecard() {
       }));
 
       const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
-      try { await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id }); } catch {}
+      await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
 
+      // Limpa localStorage APÓS o backend confirmar o encerramento
+      localStorage.removeItem('activeTrainingGroup');
+      localStorage.removeItem(`training_hole_${groupId}`);
       setShowSummary(false);
       setGroupStatus('finalizado');
+    } catch {
+      alert('Falha ao encerrar o treino. Verifique a conexão e tente novamente.');
     } finally {
       isFinishingRef.current = false;
       setIsFinishing(false);
