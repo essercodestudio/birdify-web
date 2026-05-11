@@ -93,7 +93,9 @@ function DailyTraining() {
       const list = res.data || [];
       setCourses(list);
       if (list.length > 0) setCourseId(list[0].id);
-    } catch {}
+    } catch {
+      setCreateError('Não foi possível carregar os campos. Tente novamente.');
+    }
   };
 
   const handleCreate = async () => {

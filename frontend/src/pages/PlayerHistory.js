@@ -186,7 +186,9 @@ function PlayerHistory() {
         `/training/scorecard/${groupId}/${loggedUser.id}`,
       );
       setScorecards((prev) => ({ ...prev, [key]: res.data }));
-    } catch {}
+    } catch {
+      setScorecards((prev) => ({ ...prev, [key]: 'ERROR' }));
+    }
     setLoadingCard(null);
   };
 
@@ -204,7 +206,9 @@ function PlayerHistory() {
         `/leaderboard/details/${tournamentId}/${loggedUser.id}`,
       );
       setScorecards((prev) => ({ ...prev, [key]: res.data }));
-    } catch {}
+    } catch {
+      setScorecards((prev) => ({ ...prev, [key]: 'ERROR' }));
+    }
     setLoadingCard(null);
   };
 
@@ -280,37 +284,17 @@ function PlayerHistory() {
   const renderAccordion = (key) => {
     if (expandedId !== key) return null;
     const holes = scorecards[key];
+    const msgStyle = { fontSize: "13px", textAlign: "center", padding: "16px 0" };
     return (
-      <div
-        style={{
-          padding: "0 14px 14px",
-          borderTop: `1px solid ${theme.cardLight}`,
-        }}
-      >
+      <div style={{ padding: "0 14px 14px", borderTop: `1px solid ${theme.cardLight}` }}>
         {loadingCard === key ? (
-          <p
-            style={{
-              color: theme.textMuted,
-              fontSize: "13px",
-              textAlign: "center",
-              padding: "16px 0",
-            }}
-          >
-            Carregando...
-          </p>
-        ) : holes ? (
+          <p style={{ ...msgStyle, color: theme.textMuted }}>Carregando...</p>
+        ) : holes === 'ERROR' ? (
+          <p style={{ ...msgStyle, color: theme.danger }}>Erro ao carregar detalhes. Tente novamente.</p>
+        ) : holes && holes.length > 0 ? (
           <ScorecardAccordion holes={holes} />
         ) : (
-          <p
-            style={{
-              color: theme.textMuted,
-              fontSize: "13px",
-              textAlign: "center",
-              padding: "16px 0",
-            }}
-          >
-            Sem dados de buraco.
-          </p>
+          <p style={{ ...msgStyle, color: theme.textMuted }}>Sem dados de buraco.</p>
         )}
       </div>
     );

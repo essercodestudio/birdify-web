@@ -148,8 +148,6 @@ exports.forgotPassword = async (req, res) => {
       },
     });
 
-    // Link que o usuário vai clicar
-    // ATENÇÃO: Na produção, mude localhost:3000 para o seu domínio real
     const resetUrl = `http://birdify.com.br/reset-password/${resetToken}`;
 
     const mailOptions = {
