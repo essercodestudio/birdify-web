@@ -92,12 +92,12 @@ function TrainingScorecard() {
 
     // Guard: currentHole e playedHoles só são definidos uma vez por montagem
     if (holeInitializedRef.current) return;
-    holeInitializedRef.current = true;
 
     const startHole = savedGroup.starting_hole || 1;
 
     // Retornando do Leaderboard: restaura exatamente o buraco que o jogador estava
     if (returnHole >= 1 && returnHole <= 18) {
+      holeInitializedRef.current = true;
       const history = [];
       if (startHole <= returnHole) {
         for (let i = startHole; i <= returnHole; i++) history.push(i);
@@ -110,7 +110,7 @@ function TrainingScorecard() {
       return;
     }
 
-    // Sem scores ainda: começa no buraco inicial
+    // Sem scores ainda: aguarda próxima chamada (não marca como inicializado)
     if (scoresRaw.length === 0) {
       setCurrentHole(startHole);
       setPlayedHoles([startHole]);
@@ -128,6 +128,8 @@ function TrainingScorecard() {
       setPlayedHoles([startHole]);
       return;
     }
+
+    holeInitializedRef.current = true;
 
     const nextHole = Math.min(maxHoleWithScore + 1, 18);
 
