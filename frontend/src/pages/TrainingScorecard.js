@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
@@ -27,7 +27,10 @@ const holeBoxStyle = (strokes, par) => {
 function TrainingScorecard() {
   const { groupId: routeGroupId } = useParams();
   const navigate                  = useNavigate();
+  const location                  = useLocation();
   const { club }                  = useClub();
+
+  const returnHole = location.state?.returnHole || null;
 
   // F5 preserva a URL, mas se por algum motivo o parâmetro faltar, lê do localStorage.
   // Só navega para /daily-training se realmente não houver ID de lugar nenhum.
@@ -52,13 +55,15 @@ function TrainingScorecard() {
   const [isFinishing, setIsFinishing] = useState(false);
 
   // Timers de debounce por chave "userId-holeNumber"
-  const saveTimers      = useRef({});
+  const saveTimers         = useRef({});
   // Ref estável para fetchData (evita stale closure nos listeners de socket)
-  const fetchDataRef    = useRef(null);
+  const fetchDataRef       = useRef(null);
   // Previne duplo clique no botão Finalizar
-  const isFinishingRef  = useRef(false);
+  const isFinishingRef     = useRef(false);
   // Espelho do groupStatus para uso dentro de closures de socket (sem stale closure)
-  const groupStatusRef  = useRef('aguardando');
+  const groupStatusRef     = useRef('aguardando');
+  // Garante que currentHole é calculado apenas na montagem inicial — não reage a fetchData subsequentes
+  const holeInitializedRef = useRef(false);
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -72,8 +77,10 @@ function TrainingScorecard() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Hidratação do scorecard a partir do banco ──
-  // Deriva currentHole exclusivamente dos scores da API: avança para o próximo após o último completo.
+  // Scores e holesData são sempre atualizados. currentHole só é calculado na montagem inicial
+  // (holeInitializedRef) para não reagir a fetchData subsequentes disparados por socket.
   const loadScorecardData = useCallback(async (savedGroup, allPlayers, scoresRaw) => {
+    // Sempre atualiza holesData e scores (fontes de verdade contínuas)
     if (savedGroup.course_id) {
       const holesRes = await api.get(`/courses/${savedGroup.course_id}/holes`);
       setHolesData(holesRes.data);
@@ -83,7 +90,25 @@ function TrainingScorecard() {
     scoresRaw.forEach(s => { scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes; });
     setScores(scoresMap);
 
+    // Guard: currentHole e playedHoles só são definidos uma vez por montagem
+    if (holeInitializedRef.current) return;
+    holeInitializedRef.current = true;
+
     const startHole = savedGroup.starting_hole || 1;
+
+    // Retornando do Leaderboard: restaura exatamente o buraco que o jogador estava
+    if (returnHole >= 1 && returnHole <= 18) {
+      const history = [];
+      if (startHole <= returnHole) {
+        for (let i = startHole; i <= returnHole; i++) history.push(i);
+      } else {
+        for (let i = startHole; i <= 18; i++) history.push(i);
+        for (let i = 1; i <= returnHole; i++) history.push(i);
+      }
+      setPlayedHoles(history);
+      setCurrentHole(returnHole);
+      return;
+    }
 
     // Sem scores ainda: começa no buraco inicial
     if (scoresRaw.length === 0 || allPlayers.length === 0) {
@@ -92,8 +117,7 @@ function TrainingScorecard() {
       return;
     }
 
-    // Percorre em ordem e para no primeiro buraco incompleto.
-    // O buraco ANTERIOR a esse é onde o usuário estava (último completo).
+    // Percorre em ordem e para no primeiro buraco incompleto
     let lastFullHole   = startHole;
     let holesCompleted = 0;
 
@@ -108,7 +132,7 @@ function TrainingScorecard() {
       holesCompleted++;
     }
 
-    // Reconstrói histórico de buracos navegados (permite voltar até startHole)
+    // Reconstrói histórico de buracos navegados
     const history = [];
     if (startHole <= lastFullHole) {
       for (let i = startHole; i <= lastFullHole; i++) history.push(i);
@@ -727,7 +751,7 @@ function TrainingScorecard() {
           </div>
         </div>
         <button
-          onClick={async () => { await flushAllPending(); navigate('/training-leaderboard'); }}
+          onClick={async () => { await flushAllPending(); navigate('/training-leaderboard', { state: { returnHole: currentHole, groupId } }); }}
           style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', boxShadow: '0 2px 5px rgba(0,0,0,0.5)' }}
         >
           🏆 Ranking

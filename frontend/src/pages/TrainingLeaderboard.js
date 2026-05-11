@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
@@ -8,7 +8,10 @@ const TABS = ['ABSOLUTO', 'MASCULINO', 'FEMININO'];
 
 function TrainingLeaderboard() {
   const navigate           = useNavigate();
+  const location           = useLocation();
   const { club } = useClub();
+
+  const { returnHole, groupId: returnGroupId } = location.state || {};
 
   const [data, setData]               = useState({ ranking: [], hole_scores: [], holesData: [] });
   const [activeTab, setActiveTab]     = useState('ABSOLUTO');
@@ -170,7 +173,16 @@ function TrainingLeaderboard() {
   return (
     <div style={styles.container}>
       <div style={styles.topBar}>
-        <button onClick={() => navigate(-1)} style={styles.btnBack}>⬅ VOLTAR</button>
+        <button
+          onClick={() => {
+            if (returnGroupId) {
+              navigate(`/training-scorecard/${returnGroupId}`, { state: { returnHole } });
+            } else {
+              navigate(-1);
+            }
+          }}
+          style={styles.btnBack}
+        >⬅ VOLTAR</button>
         <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span className="live-dot" /> AO VIVO
         </div>
