@@ -28,10 +28,7 @@ exports.getTournamentDetails = async (req, res) => {
         
     } catch (error) {
         console.error('Erro ao buscar detalhes do torneio:', error);
-        res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
-        });
+        res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 };
 
@@ -76,10 +73,7 @@ exports.createInscription = async (req, res) => {
         
     } catch (error) {
         console.error('Erro ao criar inscrição:', error);
-        res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
-        });
+        res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 };
 
@@ -114,10 +108,7 @@ exports.getInscriptions = async (req, res) => {
         
     } catch (error) {
         console.error('Erro ao listar inscrições:', error);
-        res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
-        });
+        res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 };
 
@@ -169,9 +160,6 @@ exports.updateStatus = async (req, res) => {
         
     } catch (error) {
         console.error('Erro ao atualizar status da inscrição:', error);
-        res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
-        });
+        res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 };
