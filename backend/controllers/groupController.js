@@ -1,4 +1,5 @@
 // backend/controllers/groupController.js
+const crypto = require("crypto");
 const db = require("../db");
 const ExcelJS = require('exceljs');
 
@@ -7,7 +8,7 @@ function generateAccessCode(length = 5) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
   for (let i = 0; i < length; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += chars[crypto.randomInt(chars.length)];
   }
   return code;
 }
@@ -38,7 +39,7 @@ exports.createGroup = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao criar grupo:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -102,7 +103,7 @@ exports.getGroupsByTournament = async (req, res) => {
     res.json(Object.values(groupsMap));
   } catch (error) {
     console.error('Erro ao listar grupos:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -150,7 +151,7 @@ exports.addPlayerToGroup = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao adicionar jogador:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -197,7 +198,7 @@ exports.removePlayer = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao remover jogador:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -252,7 +253,7 @@ exports.deleteGroup = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao excluir grupo:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -289,7 +290,7 @@ exports.generateCode = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao gerar código:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -341,7 +342,7 @@ exports.joinGroup = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao entrar no grupo:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
@@ -484,6 +485,6 @@ exports.exportGroupsToExcel = async (req, res) => {
     
   } catch (error) {
     console.error('Erro ao exportar Excel:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };

@@ -5,6 +5,14 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const jwt = require("jsonwebtoken");
 
+const escapeHtml = (str) =>
+  String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+
 // 1. REGISTRO
 exports.register = async (req, res) => {
   try {
@@ -150,7 +158,7 @@ exports.forgotPassword = async (req, res) => {
       subject: "Recuperação de Senha - Birdify",
       html: `
                 <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                    <h2 style="color: #22c55e;">Olá, ${user.name}!</h2>
+                    <h2 style="color: #22c55e;">Olá, ${escapeHtml(user.name)}!</h2>
                     <p>Recebemos um pedido para redefinir sua senha no Birdify.</p>
                     <p>Clique no botão abaixo para criar uma nova senha (o link expira em 1 hora):</p>
                     <a href="${resetUrl}" style="display: inline-block; padding: 12px 20px; background-color: #22c55e; color: #fff; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">Redefinir Minha Senha</a>

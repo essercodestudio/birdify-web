@@ -12,8 +12,7 @@ exports.listCourses = async (req, res) => {
   } catch (error) {
     console.error("Erro ao listar cursos:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };
@@ -67,8 +66,7 @@ exports.getCourseHoles = async (req, res) => {
   } catch (error) {
     console.error("Erro ao buscar buracos:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };
@@ -113,8 +111,7 @@ exports.createCourse = async (req, res) => {
   } catch (error) {
     console.error("Erro ao criar campo:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };
@@ -178,8 +175,7 @@ exports.updateHoles = async (req, res) => {
   } catch (error) {
     console.error("Erro ao atualizar buracos:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };
@@ -220,8 +216,7 @@ exports.deleteCourse = async (req, res) => {
   } catch (error) {
     console.error("Erro ao excluir campo:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };
@@ -261,8 +256,7 @@ exports.updateCourse = async (req, res) => {
   } catch (error) {
     console.error("Erro ao atualizar campo:", error);
     res.status(500).json({
-      error: "Erro interno do servidor",
-      message: error.message,
+      error: "Erro interno no servidor.",
     });
   }
 };

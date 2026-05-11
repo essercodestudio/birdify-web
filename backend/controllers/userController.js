@@ -12,8 +12,7 @@ exports.getAllPlayers = async (req, res) => {
     } catch (error) {
         console.error('Erro ao buscar jogadores:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };

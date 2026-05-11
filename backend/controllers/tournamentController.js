@@ -22,8 +22,7 @@ exports.listTournaments = async (req, res) => {
     } catch (error) {
         console.error('Erro ao listar torneios:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };
@@ -57,8 +56,7 @@ exports.getTournament = async (req, res) => {
     } catch (error) {
         console.error('Erro ao buscar torneio:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };
@@ -118,8 +116,7 @@ exports.createTournament = async (req, res) => {
     } catch (error) {
         console.error('Erro ao criar torneio:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };
@@ -184,8 +181,7 @@ exports.updateTournament = async (req, res) => {
     } catch (error) {
         console.error('Erro ao atualizar torneio:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };
@@ -240,8 +236,7 @@ exports.deleteTournament = async (req, res) => {
     } catch (error) {
         console.error('Erro ao excluir torneio:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };
@@ -270,8 +265,7 @@ exports.toggleStatus = async (req, res) => {
     } catch (error) {
         console.error('Erro ao alterar status do torneio:', error);
         res.status(500).json({ 
-            error: 'Erro interno do servidor',
-            message: error.message 
+            error: 'Erro interno no servidor.'
         });
     }
 };

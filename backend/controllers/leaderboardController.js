@@ -55,8 +55,7 @@ exports.getTournamentLeaderboard = async (req, res) => {
   } catch (error) {
     console.error('Erro ao buscar leaderboard:', error);
     res.status(500).json({ 
-      error: 'Erro interno do servidor',
-      message: error.message 
+      error: 'Erro interno no servidor.'
     });
   }
 };
@@ -95,8 +94,7 @@ exports.getPlayerScorecard = async (req, res) => {
   } catch (error) {
     console.error('Erro ao buscar scorecard do jogador:', error);
     res.status(500).json({ 
-      error: 'Erro interno do servidor',
-      message: error.message 
+      error: 'Erro interno no servidor.'
     });
   }
 };

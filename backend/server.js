@@ -6,6 +6,7 @@ const cors    = require("cors");
 const morgan  = require("morgan");
 const db      = require("./db");
 
+const rateLimit          = require("express-rate-limit");
 const { initCronJobs }   = require("./services/cronService");
 const socketService      = require("./services/socketService");
 
@@ -43,8 +44,24 @@ io.on("connection", (socket) => {
 });
 
 app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: "50kb" }));
 app.use(morgan("dev"));
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Muitas tentativas. Aguarde 15 minutos e tente novamente." },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Limite de cadastros atingido. Tente novamente em 1 hora." },
+});
 
 // Detetive de Domínios — multi-clubes
 app.use(async (req, res, next) => {
@@ -67,6 +84,8 @@ app.use(async (req, res, next) => {
   }
 });
 
+app.use("/api/auth/login",    loginLimiter);
+app.use("/api/auth/register", registerLimiter);
 app.use("/api/auth",         authRoutes);
 app.use("/api/tournaments",  tournamentRoutes);
 app.use("/api/groups",       groupRoutes);

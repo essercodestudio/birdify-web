@@ -25,6 +25,7 @@ function DailyTraining() {
   const [isCheckingGroup, setIsCheckingGroup] = useState(true);
   const [lobbies, setLobbies]               = useState([]);
   const [lobbiesLoading, setLobbiesLoading] = useState(true);
+  const [lobbiesError, setLobbiesError]     = useState(false);
 
   const [courses, setCourses]           = useState([]);
   const [courseId, setCourseId]         = useState('');
@@ -66,7 +67,9 @@ function DailyTraining() {
       const uid = loggedUser?.id;
       const res = await api.get(`/training/lobbies${uid ? `?user_id=${uid}` : ''}`);
       setLobbies(res.data || []);
+      setLobbiesError(false);
     } catch {
+      setLobbiesError(true);
     } finally {
       setLobbiesLoading(false);
     }
@@ -286,7 +289,21 @@ function DailyTraining() {
           <p style={{ color: theme.textMuted, textAlign: 'center', fontSize: '14px' }}>Carregando...</p>
         )}
 
-        {!lobbiesLoading && lobbies.length === 0 && (
+        {lobbiesError && !lobbiesLoading && (
+          <div style={{ ...s.card, textAlign: 'center', borderColor: theme.danger }}>
+            <p style={{ color: theme.danger, fontSize: '14px', margin: '0 0 10px' }}>
+              Falha ao carregar treinos.
+            </p>
+            <button
+              onClick={fetchLobbies}
+              style={{ background: 'none', border: `1px solid ${theme.accent}`, color: theme.accent, borderRadius: '8px', padding: '6px 16px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+            >
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
+        {!lobbiesLoading && !lobbiesError && lobbies.length === 0 && (
           <div style={{ ...s.card, textAlign: 'center' }}>
             <p style={{ color: theme.textMuted, fontSize: '14px', margin: 0 }}>
               Nenhum treino aberto agora.<br />Crie o seu e convide atletas!
