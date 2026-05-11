@@ -111,53 +111,34 @@ function TrainingScorecard() {
     }
 
     // Sem scores ainda: começa no buraco inicial
-    if (scoresRaw.length === 0 || allPlayers.length === 0) {
+    if (scoresRaw.length === 0) {
       setCurrentHole(startHole);
       setPlayedHoles([startHole]);
       return;
     }
 
-    // Percorre em ordem e para no primeiro buraco incompleto
-    let lastFullHole   = startHole;
-    let holesCompleted = 0;
+    // Buraco mais alto com qualquer strokes > 0 (usa Number() para evitar falha por tipo)
+    const maxHoleWithScore = scoresRaw.reduce(
+      (max, s) => (Number(s.strokes) > 0 ? Math.max(max, Number(s.hole_number)) : max),
+      0
+    );
 
-    for (let i = 1; i <= 18; i++) {
-      const h       = startHole + i - 1;
-      const actualH = h > 18 ? h - 18 : h;
-      const allDone = allPlayers.every(
-        p => scoresRaw.some(s => s.user_id === p.id && s.hole_number === actualH)
-      );
-      if (!allDone) break;
-      lastFullHole = actualH;
-      holesCompleted++;
+    if (maxHoleWithScore === 0) {
+      setCurrentHole(startHole);
+      setPlayedHoles([startHole]);
+      return;
     }
 
-    // Reconstrói histórico de buracos navegados
+    const nextHole = Math.min(maxHoleWithScore + 1, 18);
+
+    // Reconstrói histórico do startHole até o nextHole
     const history = [];
-    if (startHole <= lastFullHole) {
-      for (let i = startHole; i <= lastFullHole; i++) history.push(i);
+    if (startHole <= nextHole) {
+      for (let i = startHole; i <= nextHole; i++) history.push(i);
     } else {
       for (let i = startHole; i <= 18; i++) history.push(i);
-      for (let i = 1; i <= lastFullHole; i++) history.push(i);
+      for (let i = 1; i <= nextHole; i++) history.push(i);
     }
-    if (history.length === 0) history.push(startHole);
-
-    if (holesCompleted === 18) {
-      setPlayedHoles(history);
-      setCurrentHole(lastFullHole);
-      setShowSummary(true);
-      return;
-    }
-
-    if (holesCompleted === 0) {
-      setCurrentHole(startHole);
-      setPlayedHoles([startHole]);
-      return;
-    }
-
-    let nextHole = lastFullHole + 1;
-    if (nextHole > 18) nextHole = 1;
-    if (!history.includes(nextHole)) history.push(nextHole);
     setPlayedHoles(history);
     setCurrentHole(nextHole);
   // eslint-disable-next-line react-hooks/exhaustive-deps
