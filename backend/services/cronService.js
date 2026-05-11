@@ -4,7 +4,6 @@ const db = require('../db');
 const initCronJobs = () => {
   cron.schedule('59 59 23 * * *', async () => {
     console.log("🌙 Iniciando processamento de fecho diário...");
-    console.log(`🔌 Cron DB: host=${process.env.DB_HOST} user=${process.env.DB_USER} db=${process.env.DB_NAME}`);
 
     // Verifica conectividade antes de rodar as operações
     try {

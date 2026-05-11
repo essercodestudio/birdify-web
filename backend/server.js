@@ -22,8 +22,10 @@ const trainingRoutes     = require("./routes/trainingRoutes");
 const app    = express();
 const server = http.createServer(app);
 
+const ALLOWED_ORIGIN = process.env.FRONTEND_URL || "https://birdify.com.br";
+
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: { origin: ALLOWED_ORIGIN, methods: ["GET", "POST"] },
 });
 
 socketService.setIo(io);
@@ -40,7 +42,7 @@ io.on("connection", (socket) => {
   });
 });
 
-app.use(cors());
+app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
 app.use(express.json());
 app.use(morgan("dev"));
 
