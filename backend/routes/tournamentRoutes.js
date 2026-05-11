@@ -2,14 +2,13 @@
 const express = require('express');
 const router = express.Router();
 const tournamentController = require('../controllers/tournamentController');
+const { requireAuth } = require('../middlewares/authMiddleware');
 
 router.get('/list', tournamentController.listTournaments);
 router.get('/:id', tournamentController.getTournament);
-router.post('/create', tournamentController.createTournament);
-router.delete('/delete/:id', tournamentController.deleteTournament);
+router.post('/create',       requireAuth, tournamentController.createTournament);
+router.delete('/delete/:id', requireAuth, tournamentController.deleteTournament);
+router.put('/update/:id',    requireAuth, tournamentController.updateTournament);
+router.put('/status/:id',    requireAuth, tournamentController.toggleStatus);
 
-// 👉 A ROTA QUE ESTAVA FALTANDO PARA A EDIÇÃO FUNCIONAR:
-router.put('/update/:id', tournamentController.updateTournament);
-// 👉 ROTA PARA CONCLUIR/REABRIR O TORNEIO
-router.put('/status/:id', tournamentController.toggleStatus);
 module.exports = router;

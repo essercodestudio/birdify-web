@@ -2,11 +2,9 @@
 const express = require('express');
 const router = express.Router();
 const scoreController = require('../controllers/scoreController');
+const { requireAuth } = require('../middlewares/authMiddleware');
 
-// Rota para salvar (ou atualizar) a nota de um buraco
-router.post('/save', scoreController.saveScore);
-
-// Rota para buscar todas as notas do torneio (para preencher o cartão quando abrir)
+router.post('/save', requireAuth, scoreController.saveScore);
 router.get('/list/:tournamentId', scoreController.getScores);
 
 module.exports = router;

@@ -3,6 +3,7 @@ const db = require("../db");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const jwt = require("jsonwebtoken");
 
 // 1. REGISTRO
 exports.register = async (req, res) => {
@@ -62,8 +63,15 @@ exports.login = async (req, res) => {
 
     if (!isMatch) return res.status(400).json({ message: "Senha incorreta." });
 
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     res.json({
       message: "Login realizado com sucesso!",
+      token,
       user: {
         id: user.id,
         name: user.name,

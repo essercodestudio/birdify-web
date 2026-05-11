@@ -88,7 +88,20 @@ app.get("/api/theme", (req, res) => {
   });
 });
 
+app.use((err, req, res, next) => {
+  console.error("💥 Erro não tratado:", err);
+  res.status(500).json({ error: "Erro interno no servidor." });
+});
+
 initCronJobs();
+
+process.on("uncaughtException", (err) => {
+  console.error("💥 uncaughtException:", err.message, err.stack);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("💥 unhandledRejection:", reason);
+});
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {

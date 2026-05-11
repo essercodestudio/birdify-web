@@ -1,6 +1,6 @@
 // frontend/src/App.js
 import React, { useState, useEffect, createContext } from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import api from "./services/api"; // Importando a sua conexão com o backend
 
 // Importação das Páginas
@@ -26,6 +26,11 @@ import ResetPassword from "./pages/ResetPassword";
 
 // --- 1. CRIANDO A "MEMÓRIA GLOBAL" DO CAMALEÃO ---
 export const ThemeContext = createContext();
+
+const ProtectedRoute = ({ children }) => {
+  const token = localStorage.getItem("token");
+  return token ? children : <Navigate to="/login" replace />;
+};
 
 function App() {
   const [clubTheme, setClubTheme] = useState(null);
@@ -97,18 +102,18 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/tournament/:id" element={<TournamentManager />} />
-          <Route path="/scorecard/:groupId" element={<Scorecard />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/tournament/:id" element={<ProtectedRoute><TournamentManager /></ProtectedRoute>} />
+          <Route path="/scorecard/:groupId" element={<ProtectedRoute><Scorecard /></ProtectedRoute>} />
           <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
-          <Route path="/courses" element={<CourseManager />} />
-          <Route path="/player" element={<PlayerDashboard />} />
-          
+          <Route path="/courses" element={<ProtectedRoute><CourseManager /></ProtectedRoute>} />
+          <Route path="/player" element={<ProtectedRoute><PlayerDashboard /></ProtectedRoute>} />
+
           {/* ROTAS DE TREINO */}
-          <Route path="/daily-training" element={<DailyTraining />} />
-          <Route path="/training-scorecard/:groupId" element={<TrainingScorecard />} />
-          <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
-          <Route path="/player-history" element={<PlayerHistory />} />
+          <Route path="/daily-training" element={<ProtectedRoute><DailyTraining /></ProtectedRoute>} />
+          <Route path="/training-scorecard/:groupId" element={<ProtectedRoute><TrainingScorecard /></ProtectedRoute>} />
+          <Route path="/training-leaderboard" element={<ProtectedRoute><TrainingLeaderboard /></ProtectedRoute>} />
+          <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
           
           <Route path="/privacidade" element={<Privacidade />} />
         </Routes>

@@ -36,7 +36,8 @@ function Login() {
         email: email,
         password: password,
       });
-      const user = response.data.user;
+      const { token, user } = response.data;
+      localStorage.setItem("token", token);
       localStorage.setItem("user", JSON.stringify(user));
       if (user.role === "ADMIN") {
         navigate("/dashboard");

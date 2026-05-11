@@ -2,18 +2,16 @@
 const express = require("express");
 const router = express.Router();
 const groupController = require("../controllers/groupController");
+const { requireAuth } = require("../middlewares/authMiddleware");
 
-// Rotas antigas que já funcionam
-router.get('/export/:tournamentId', groupController.exportGroupsToExcel);
-router.post("/create", groupController.createGroup);
-router.get("/list/:tournamentId", groupController.getGroupsByTournament);
-router.post("/add-player", groupController.addPlayerToGroup);
-router.delete('/remove-player/:groupId/:userId', groupController.removePlayer);
-router.delete("/delete/:id", groupController.deleteGroup);
-router.post("/generate-code", groupController.generateCode);
-router.post('/join', groupController.joinGroup);
-
-// A ROTA NOVA QUE ESTAVA FALTANDO (A culpada do erro 404):
-router.put("/save-handicaps", groupController.saveGroupHandicaps);
+router.get('/export/:tournamentId',              groupController.exportGroupsToExcel);
+router.get("/list/:tournamentId",                groupController.getGroupsByTournament);
+router.post("/create",          requireAuth,     groupController.createGroup);
+router.post("/add-player",      requireAuth,     groupController.addPlayerToGroup);
+router.delete('/remove-player/:groupId/:userId', requireAuth, groupController.removePlayer);
+router.delete("/delete/:id",    requireAuth,     groupController.deleteGroup);
+router.post("/generate-code",   requireAuth,     groupController.generateCode);
+router.post('/join',            requireAuth,     groupController.joinGroup);
+router.put("/save-handicaps",   requireAuth,     groupController.saveGroupHandicaps);
 
 module.exports = router;
