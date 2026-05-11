@@ -60,7 +60,7 @@ exports.createTable = async (req, res) => {
     res.json({ groupId, access_code, group_name, starting_hole: starting_hole || 1, course_id, creator_id });
   } catch (error) {
     console.error("Erro ao criar mesa de treino:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -117,7 +117,7 @@ exports.joinTable = async (req, res) => {
     res.json({ table: group });
   } catch (error) {
     console.error("Erro ao entrar na mesa:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -145,7 +145,7 @@ exports.leaveGroup = async (req, res) => {
     res.json({ message: "Saiu do grupo." });
   } catch (error) {
     console.error("Erro ao sair do grupo:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -165,7 +165,7 @@ exports.deleteGroup = async (req, res) => {
     res.json({ message: "Treino cancelado." });
   } catch (error) {
     console.error("Erro ao excluir treino:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -193,7 +193,7 @@ exports.getTableDetails = async (req, res) => {
     res.json({ ...groups[0], players: participants });
   } catch (error) {
     console.error("Erro ao buscar mesa:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -226,7 +226,7 @@ exports.saveScore = async (req, res) => {
     res.json({ ok: true, strokes, hole: hole_number });
   } catch (error) {
     console.error("[saveScore] ERRO:", error.message, { group_id, user_id, hole_number, strokes });
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -240,7 +240,7 @@ exports.getScores = async (req, res) => {
     res.json(results);
   } catch (error) {
     console.error("Erro ao buscar scores de treino:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -263,7 +263,7 @@ exports.startTraining = async (req, res) => {
     res.json({ message: "Treino iniciado!" });
   } catch (error) {
     console.error("Erro ao iniciar treino:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -273,17 +273,15 @@ exports.finishTraining = async (req, res) => {
   const cid        = clubId(req);
 
   try {
-    if (!group_id) return res.status(400).json({ error: "group_id ausente." });
+    if (!group_id)   return res.status(400).json({ error: "group_id ausente." });
+    if (!creator_id) return res.status(403).json({ error: "Acesso negado.", message: "ID do criador é obrigatório para encerrar o treino." });
 
     console.log(`[finishTraining] group_id=${group_id} creator_id=${creator_id} club_id=${cid}`);
 
-    const whereCreator = creator_id ? "AND creator_id = ?" : "";
-    const params       = creator_id ? [group_id, cid, creator_id] : [group_id, cid];
-
     const [result] = await db.execute(
       `UPDATE training_groups SET status = 'finalizado'
-       WHERE id = ? AND club_id = ? ${whereCreator}`,
-      params,
+       WHERE id = ? AND club_id = ? AND creator_id = ?`,
+      [group_id, cid, creator_id],
     );
 
     console.log(`[finishTraining] affectedRows=${result.affectedRows}`);
@@ -303,7 +301,7 @@ exports.finishTraining = async (req, res) => {
     res.json({ message: "Treino finalizado!" });
   } catch (error) {
     console.error("[finishTraining] ERRO:", error.message, { group_id, creator_id, cid });
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -327,7 +325,7 @@ exports.getCurrentGroup = async (req, res) => {
     res.json(rows.length > 0 ? { group_id: rows[0].group_id, status: rows[0].status } : { group_id: null });
   } catch (error) {
     console.error("Erro ao buscar grupo atual:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -382,7 +380,7 @@ exports.getOpenLobbies = async (req, res) => {
     res.json(lobbies);
   } catch (error) {
     console.error("Erro ao buscar lobbies:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -472,7 +470,7 @@ exports.getDailyRanking = async (req, res) => {
     res.json({ ranking: labeledRanking, hole_scores: holeScores, holesData });
   } catch (error) {
     console.error("Erro ao buscar ranking diário:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -502,7 +500,7 @@ exports.getTrainingScorecard = async (req, res) => {
     }
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -571,6 +569,6 @@ exports.getPlayerHistory = async (req, res) => {
     res.json({ trainings, tournaments });
   } catch (error) {
     console.error("Erro ao buscar histórico:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };

@@ -7,7 +7,7 @@ const nodemailer = require("nodemailer");
 // 1. REGISTRO
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, gender, role } = req.body;
+    const { name, email, password, gender } = req.body;
 
     if (!name || !email || !password || !gender) {
       return res.status(400).json({ message: "Preencha todos os campos!" });
@@ -22,7 +22,7 @@ exports.register = async (req, res) => {
 
     const salt = bcrypt.genSaltSync(10);
     const hash = bcrypt.hashSync(password, salt);
-    const userRole = role === "ADMIN" ? "ADMIN" : "PLAYER";
+    const userRole = "PLAYER";
 
     const insertQuery =
       "INSERT INTO users (name, email, password_hash, gender, role) VALUES (?, ?, ?, ?, ?)";
@@ -42,7 +42,7 @@ exports.register = async (req, res) => {
       });
   } catch (error) {
     console.error("Erro no registro:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -74,7 +74,7 @@ exports.login = async (req, res) => {
     });
   } catch (error) {
     console.error("Erro no login:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -86,7 +86,7 @@ exports.getAllPlayers = async (req, res) => {
     res.json(players);
   } catch (error) {
     console.error("Erro ao listar jogadores:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -157,7 +157,7 @@ exports.forgotPassword = async (req, res) => {
     console.error("Erro ao solicitar recuperação:", error);
     res
       .status(500)
-      .json({ error: "Erro ao enviar e-mail", message: error.message });
+      .json({ error: "Erro interno no servidor." });
   }
 };
 
@@ -202,6 +202,6 @@ exports.resetPassword = async (req, res) => {
     });
   } catch (error) {
     console.error("Erro ao redefinir senha:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
