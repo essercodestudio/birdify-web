@@ -2,6 +2,7 @@
 // ALTER TABLE training_scores
 //   ADD UNIQUE KEY uq_training_score (group_id, user_id, hole_number);
 
+const crypto        = require("crypto");
 const db            = require("../db");
 const socketService = require("../services/socketService");
 
@@ -9,7 +10,7 @@ function generateCode(len = 5) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
   for (let i = 0; i < len; i++)
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[crypto.randomInt(chars.length)];
   return code;
 }
 
