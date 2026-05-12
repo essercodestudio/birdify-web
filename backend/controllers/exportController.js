@@ -56,7 +56,7 @@ exports.exportTournamentToExcel = async (req, res) => {
         }
       }
     }
-
+    
     console.log("🔍 [ESPIÃO EXCEL] BURACOS ENCONTRADOS:", holes.length);
     if (holes.length > 0) {
       console.log("⛳ [RAIO-X] DADOS DO BURACO 1:", holes[0]);

@@ -38,6 +38,8 @@ function TrainingScorecard() {
     || JSON.parse(localStorage.getItem('activeTrainingGroup') || 'null')?.id?.toString()
     || null;
 
+  const sessionKey = groupId ? `birdify_viewed_hole_${groupId}` : null;
+
   const [group, setGroup]               = useState(null);
   const [players, setPlayers]           = useState([]);
   const [groupStatus, setGroupStatus]   = useState('aguardando');
@@ -95,54 +97,51 @@ function TrainingScorecard() {
 
     const startHole = savedGroup.starting_hole || 1;
 
-    // Retornando do Leaderboard: restaura exatamente o buraco que o jogador estava
-    if (returnHole >= 1 && returnHole <= 18) {
-      holeInitializedRef.current = true;
-      const history = [];
-      if (startHole <= returnHole) {
-        for (let i = startHole; i <= returnHole; i++) history.push(i);
-      } else {
-        for (let i = startHole; i <= 18; i++) history.push(i);
-        for (let i = 1; i <= returnHole; i++) history.push(i);
-      }
-      setPlayedHoles(history);
-      setCurrentHole(returnHole);
-      return;
-    }
+    const buildHistory = (from, to) => {
+      const h = [];
+      if (from <= to) { for (let i = from; i <= to; i++) h.push(i); }
+      else { for (let i = from; i <= 18; i++) h.push(i); for (let i = 1; i <= to; i++) h.push(i); }
+      return h;
+    };
 
-    // Sem scores ainda: aguarda próxima chamada (não marca como inicializado)
-    if (scoresRaw.length === 0) {
-      setCurrentHole(startHole);
-      setPlayedHoles([startHole]);
-      return;
-    }
-
-    // Buraco mais alto com qualquer strokes > 0 (usa Number() para evitar falha por tipo)
     const maxHoleWithScore = scoresRaw.reduce(
       (max, s) => (Number(s.strokes) > 0 ? Math.max(max, Number(s.hole_number)) : max),
       0
     );
+    const fallbackNext = maxHoleWithScore > 0 ? Math.min(maxHoleWithScore + 1, 18) : startHole;
 
-    if (maxHoleWithScore === 0) {
+    // Prioridade 1: returnHole — voltando do Leaderboard com buraco exato
+    if (returnHole >= 1 && returnHole <= 18) {
+      holeInitializedRef.current = true;
+      sessionStorage.setItem(sessionKey, returnHole);
+      setPlayedHoles(buildHistory(startHole, Math.max(returnHole, fallbackNext)));
+      setCurrentHole(returnHole);
+      return;
+    }
+
+    // Prioridade 2: sessionHole — F5 mantém exatamente onde o usuário estava
+    const sessionHole = parseInt(sessionStorage.getItem(sessionKey), 10);
+    if (sessionHole >= 1 && sessionHole <= 18) {
+      holeInitializedRef.current = true;
+      setPlayedHoles(buildHistory(startHole, Math.max(sessionHole, fallbackNext)));
+      setCurrentHole(sessionHole);
+      return;
+    }
+
+    // Prioridade 3: fallback — primeira abertura ou sem sessionStorage
+    // Sem scores: define startHole e persiste no sessionStorage, mas não trava o guard
+    // (pode receber scores via socket logo a seguir)
+    if (scoresRaw.length === 0 || maxHoleWithScore === 0) {
+      sessionStorage.setItem(sessionKey, startHole);
       setCurrentHole(startHole);
       setPlayedHoles([startHole]);
       return;
     }
 
     holeInitializedRef.current = true;
-
-    const nextHole = Math.min(maxHoleWithScore + 1, 18);
-
-    // Reconstrói histórico do startHole até o nextHole
-    const history = [];
-    if (startHole <= nextHole) {
-      for (let i = startHole; i <= nextHole; i++) history.push(i);
-    } else {
-      for (let i = startHole; i <= 18; i++) history.push(i);
-      for (let i = 1; i <= nextHole; i++) history.push(i);
-    }
-    setPlayedHoles(history);
-    setCurrentHole(nextHole);
+    sessionStorage.setItem(sessionKey, fallbackNext);
+    setPlayedHoles(buildHistory(startHole, fallbackNext));
+    setCurrentHole(fallbackNext);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
@@ -293,6 +292,7 @@ function TrainingScorecard() {
       await api.post('/training/cancel', { group_id: Number(groupId), creator_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
+      sessionStorage.removeItem(sessionKey);
       navigate('/daily-training', { replace: true });
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao cancelar treino.');
@@ -307,6 +307,7 @@ function TrainingScorecard() {
       await api.post('/training/leave', { group_id: Number(groupId), user_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
+      sessionStorage.removeItem(sessionKey);
       navigate('/daily-training', { replace: true });
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao sair do grupo.');
@@ -389,10 +390,12 @@ function TrainingScorecard() {
       if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
+      sessionStorage.setItem(sessionKey, next);
       setCurrentHole(next);
     } else if (delta < 0) {
       let prev = currentHole - 1; if (prev < 1) prev = 18;
       if (!playedHoles.includes(prev)) { alert('🛑 Você não pode voltar antes do tee de saída.'); return; }
+      sessionStorage.setItem(sessionKey, prev);
       setCurrentHole(prev);
     }
   };
@@ -437,9 +440,10 @@ function TrainingScorecard() {
       const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
       await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
 
-      // Limpa localStorage APÓS o backend confirmar o encerramento
+      // Limpa localStorage e sessionStorage APÓS o backend confirmar o encerramento
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
+      sessionStorage.removeItem(sessionKey);
       setShowSummary(false);
       setGroupStatus('finalizado');
     } catch {
