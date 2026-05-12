@@ -44,7 +44,11 @@ function TrainingScorecard() {
   const [players, setPlayers]           = useState([]);
   const [groupStatus, setGroupStatus]   = useState('aguardando');
   const [holesData, setHolesData]       = useState([]);
-  const [currentHole, setCurrentHole]   = useState(1);
+  const [currentHole, setCurrentHole]   = useState(() => {
+    if (!sessionKey) return 1;
+    const stored = parseInt(sessionStorage.getItem(sessionKey), 10);
+    return (stored >= 1 && stored <= 18) ? stored : 1;
+  });
   const [scores, setScores]             = useState({});
   const [playedHoles, setPlayedHoles]   = useState([1]);
   const [showSummary, setShowSummary]   = useState(false);
@@ -129,16 +133,10 @@ function TrainingScorecard() {
       return;
     }
 
-    // Prioridade 3: fallback — primeira abertura ou sem sessionStorage
-    // Sem scores: define startHole e persiste no sessionStorage, mas não trava o guard
-    // (pode receber scores via socket logo a seguir)
-    if (scoresRaw.length === 0 || maxHoleWithScore === 0) {
-      sessionStorage.setItem(sessionKey, startHole);
-      setCurrentHole(startHole);
-      setPlayedHoles([startHole]);
-      return;
-    }
-
+    // Prioridade 3: fallback — primeira abertura sem sessionStorage válido.
+    // Guard sempre travado: currentHole já está correto via useState lazy.
+    // Scores continuam chegando via socket (setScores acima do guard) independentemente.
+    // Quando maxHoleWithScore === 0, fallbackNext === startHole — comportamento idêntico ao anterior.
     holeInitializedRef.current = true;
     sessionStorage.setItem(sessionKey, fallbackNext);
     setPlayedHoles(buildHistory(startHole, fallbackNext));
