@@ -55,6 +55,7 @@ function TrainingScorecard() {
 
   const [fetchError, setFetchError]   = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [isSaving, setIsSaving]       = useState(false);
 
   // Timers de debounce por chave "userId-holeNumber"
   const saveTimers         = useRef({});
@@ -356,7 +357,7 @@ function TrainingScorecard() {
           ? api.post('/training/score', {
               group_id: Number(groupId), user_id: Number(p.id),
               hole_number: Number(hole), strokes: Number(s),
-            }).catch(err => console.error('[flush] score falhou:', err))
+            })
           : Promise.resolve();
       });
     return Promise.all(saves);
@@ -383,10 +384,19 @@ function TrainingScorecard() {
   // Avança ou recua o buraco. Aguarda o backend confirmar os scores antes de avançar
   // para garantir que o buraco só muda após persistência real no banco.
   const changeHole = async (delta) => {
+    if (isSaving) return;
     if (delta > 0) {
       const missing = players.find(p => !(scores[`${p.id}-${currentHole}`] > 0));
       if (missing) { alert(`⚠️ Falta anotar o score de: ${missing.name}`); return; }
-      await flushPendingForHole(currentHole);
+      setIsSaving(true);
+      try {
+        await flushPendingForHole(currentHole);
+      } catch {
+        alert('⚠️ Falha na conexão. A nota não foi salva. Tente novamente.');
+        return;
+      } finally {
+        setIsSaving(false);
+      }
       if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
       let next = currentHole + 1; if (next > 18) next = 1;
       if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
@@ -752,7 +762,13 @@ function TrainingScorecard() {
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold }}>Buraco {currentHole}</div>
           <div style={{ color: theme.textMuted, fontSize: '16px', marginTop: '5px' }}>PAR {currentHoleData.par}</div>
         </div>
-        <button style={st.navBtn} onClick={() => changeHole(1)}>▶</button>
+        <button
+          style={{ ...st.navBtn, ...(isSaving && { opacity: 0.5, cursor: 'not-allowed' }) }}
+          onClick={() => changeHole(1)}
+          disabled={isSaving}
+        >
+          {isSaving ? 'Salvando...' : '▶'}
+        </button>
       </div>
 
       {/* Cards dos atletas */}
