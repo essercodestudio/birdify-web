@@ -3,6 +3,42 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
+// ─── helpers de fuso horário (Brasília) ──────────────────────────────────────
+const TZ = 'America/Sao_Paulo';
+
+// Formata qualquer data/datetime no formato brasileiro: DD/MM/YYYY HH:mm
+const fmtBR = (dateStr) => {
+  if (!dateStr) return '—';
+  try {
+    return new Date(dateStr).toLocaleString('pt-BR', {
+      timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return '—'; }
+};
+
+// Prepara valor para <input type="datetime-local"> em horário de Brasília
+const formatForInput = (d) => {
+  if (!d) return '';
+  // toLocaleString('sv-SE') dá formato "YYYY-MM-DD HH:MM:SS" sem sufixo de fuso
+  return new Date(d).toLocaleString('sv-SE', { timeZone: TZ }).replace(' ', 'T').slice(0, 16);
+};
+
+// True se a data do torneio for hoje em horário de Brasília
+const isToday = (dateStr) => {
+  if (!dateStr) return false;
+  const d = new Date(dateStr).toLocaleDateString('pt-BR', { timeZone: TZ });
+  const n = new Date().toLocaleDateString('pt-BR', { timeZone: TZ });
+  return d === n;
+};
+
+// Valida se o ano da data está no intervalo permitido
+const validYear = (dateStr) => {
+  if (!dateStr) return true;
+  const y = new Date(dateStr).getFullYear();
+  return y >= 2024 && y <= 2030;
+};
+
 function Dashboard() {
   const navigate = useNavigate();
   
@@ -107,6 +143,8 @@ function Dashboard() {
   const handleSubmitTournament = async (e) => {
     e.preventDefault();
     if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
+    if (!validYear(newTournamentDate)) { alert('Ano inválido. Use uma data entre 2024 e 2030.'); return; }
+    if (registrationDeadline && !validYear(registrationDeadline)) { alert('Ano da data limite inválido. Use entre 2024 e 2030.'); return; }
     
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
@@ -126,16 +164,20 @@ function Dashboard() {
     try {
       const res = await api.get(`/tournaments/${id}`);
       const t = res.data;
-      const formatDate = (d) => d ? new Date(new Date(d).getTime() - new Date(d).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
-      
-      setNewTournamentName(t.name); setNewTournamentDate(formatDate(t.start_date));
-      setSelectedCourseId(t.course_id); setDescription(t.description || '');
-      setFee(t.fee || ''); setPaymentInfo(t.payment_info || ''); setWhatsappContact(t.whatsapp_contact || '');
-      setRegistrationDeadline(formatDate(t.registration_deadline));
-      setSelectedCategories(t.categories || []); setSponsors(t.sponsors || []);
+      setNewTournamentName(t.name);
+      setNewTournamentDate(formatForInput(t.start_date));
+      setSelectedCourseId(t.course_id);
+      setDescription(t.description || '');
+      setFee(t.fee || '');
+      setPaymentInfo(t.payment_info || '');
+      setWhatsappContact(t.whatsapp_contact || '');
+      setRegistrationDeadline(formatForInput(t.registration_deadline));
+      setSelectedCategories(t.categories || []);
+      setSponsors(t.sponsors || []);
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
-      
-      setIsEditing(true); setEditTournamentId(t.id); window.scrollTo(0, 0);
+      setIsEditing(true);
+      setEditTournamentId(t.id);
+      window.scrollTo(0, 0);
     } catch (error) { alert('Erro ao carregar dados.'); }
   };
 
@@ -163,9 +205,11 @@ function Dashboard() {
 
   return (
     <div style={styles.container}>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
       <div style={styles.header}>
         <h1 style={{fontSize: '24px', margin: 0}}>Painel do Organizador</h1>
         <div style={{display: 'flex', gap: '10px'}}>
+          <button onClick={() => navigate('/circuits')} style={{...styles.btnAction, backgroundColor: '#a78bfa', padding: '10px 15px'}}>CIRCUITOS / LIGAS</button>
           <button onClick={() => navigate('/courses')} style={{...styles.btnAction, backgroundColor: theme.info, padding: '10px 15px'}}>GERENCIAR CAMPOS</button>
           <button onClick={() => { localStorage.removeItem('user'); navigate('/login'); }} style={{...styles.btnAction, backgroundColor: theme.cardLight}}>SAIR</button>
         </div>
@@ -195,8 +239,8 @@ function Dashboard() {
               </select>
             </div>
             <div style={styles.inputGroup}>
-              <label style={styles.label}>DATA E HORA</label>
-              <input style={styles.input} type="datetime-local" value={newTournamentDate} onChange={e => setNewTournamentDate(e.target.value)} required />
+              <label style={styles.label}>DATA E HORA (Horário de Brasília)</label>
+              <input style={styles.input} type="datetime-local" value={newTournamentDate} onChange={e => setNewTournamentDate(e.target.value)} min="2024-01-01T00:00" max="2030-12-31T23:59" required />
             </div>
           </div>
           <div style={{...styles.inputGroup, marginTop: '20px'}}>
@@ -242,8 +286,8 @@ function Dashboard() {
               <input style={styles.input} type="text" value={whatsappContact} onChange={e => setWhatsappContact(e.target.value)} />
             </div>
             <div style={styles.inputGroup}>
-              <label style={styles.label}>DATA LIMITE INSCRIÇÃO</label>
-              <input style={styles.input} type="datetime-local" value={registrationDeadline} onChange={e => setRegistrationDeadline(e.target.value)} />
+              <label style={styles.label}>DATA LIMITE INSCRIÇÃO (Horário de Brasília)</label>
+              <input style={styles.input} type="datetime-local" value={registrationDeadline} onChange={e => setRegistrationDeadline(e.target.value)} min="2024-01-01T00:00" max="2030-12-31T23:59" />
             </div>
           </div>
 
@@ -272,17 +316,30 @@ function Dashboard() {
       </div>
 
       <h3 style={{color: theme.textMuted, fontSize: '14px', letterSpacing: '1px', marginBottom: '15px'}}>📅 MEUS TORNEIOS</h3>
-      {tournaments.map(t => (
-        <div key={t.id} style={{...styles.tournamentItem, borderLeft: `6px solid ${t.status === 'concluido' ? theme.danger : theme.accent}`}}>
+      {tournaments.map(t => {
+        const hoje = isToday(t.start_date) && t.status !== 'concluido';
+        return (
+        <div key={t.id} style={{...styles.tournamentItem, borderLeft: `6px solid ${hoje ? '#22d3ee' : t.status === 'concluido' ? theme.danger : theme.accent}`}}>
           <div>
-            <div style={{fontSize: '18px', fontWeight: 'bold'}}>{t.name}</div>
+            <div style={{display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap'}}>
+              <span style={{fontSize: '18px', fontWeight: 'bold'}}>{t.name}</span>
+              {hoje && (
+                <span style={{
+                  backgroundColor: '#22d3ee', color: '#000',
+                  fontSize: '10px', fontWeight: '900', padding: '3px 9px',
+                  borderRadius: '10px', letterSpacing: '1px', animation: 'pulse 1.5s infinite',
+                }}>
+                  AO VIVO
+                </span>
+              )}
+            </div>
             <div style={{fontSize: '13px', color: theme.textMuted, marginTop: '4px'}}>
               📍 {t.course_name || 'Local não definido'} {t.course_city ? `- ${t.course_city}/${t.course_state}` : ''}
             </div>
-            <div style={{fontSize: '12px', color: theme.textMuted, marginTop: '2px'}}>
-              📅 {new Date(t.start_date).toLocaleString()}
+            <div style={{fontSize: '12px', color: hoje ? '#22d3ee' : theme.textMuted, marginTop: '2px', fontWeight: hoje ? 'bold' : 'normal'}}>
+              📅 {fmtBR(t.start_date)}
             </div>
-            <div style={{marginTop: '8px'}}>
+            <div style={{marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
               <span style={{backgroundColor: t.status === 'concluido' ? theme.danger : theme.accent, color: '#000', fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold'}}>
                 {t.status === 'concluido' ? 'FINALIZADO' : 'ATIVO'}
               </span>
@@ -300,7 +357,8 @@ function Dashboard() {
             <button onClick={() => handleDeleteTournament(t.id, t.name)} style={{...styles.btnAction, backgroundColor: theme.danger}}>🗑️</button>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

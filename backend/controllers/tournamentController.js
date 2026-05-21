@@ -13,7 +13,7 @@ exports.listTournaments = async (req, res) => {
             FROM tournaments t
             LEFT JOIN courses c ON t.course_id = c.id
             WHERE t.club_id = ?
-            ORDER BY t.start_date DESC
+            ORDER BY t.start_date ASC
         `;
         
         const [results] = await db.execute(query, [userId, req.club.id]);
@@ -61,13 +61,26 @@ exports.getTournament = async (req, res) => {
     }
 };
 
+// ─── helper de validação de ano ──────────────────────────────────────────────
+function validateYear(dateStr) {
+    const year = parseInt(String(dateStr || '').substring(0, 4));
+    return !isNaN(year) && year >= 2024 && year <= 2030;
+}
+
 // 3. CRIAR TORNEIO
 exports.createTournament = async (req, res) => {
     try {
-        const { 
+        const {
             name, start_date, course_id, description, fee, payment_info, pix_key_type,
-            whatsapp_contact, registration_deadline, categories, sponsors 
+            whatsapp_contact, registration_deadline, categories, sponsors
         } = req.body;
+
+        if (!validateYear(start_date)) {
+            return res.status(400).json({ error: 'Data inválida. Use um ano entre 2024 e 2030.' });
+        }
+        if (registration_deadline && !validateYear(registration_deadline)) {
+            return res.status(400).json({ error: 'Data limite inválida. Use um ano entre 2024 e 2030.' });
+        }
 
         // Verifica se o campo pertence ao clube
         const [courseCheck] = await db.execute(
@@ -125,10 +138,17 @@ exports.createTournament = async (req, res) => {
 exports.updateTournament = async (req, res) => {
     try {
         const { id } = req.params;
-        const { 
-            name, start_date, course_id, description, fee, payment_info, pix_key_type, 
-            whatsapp_contact, registration_deadline, categories, sponsors 
+        const {
+            name, start_date, course_id, description, fee, payment_info, pix_key_type,
+            whatsapp_contact, registration_deadline, categories, sponsors
         } = req.body;
+
+        if (!validateYear(start_date)) {
+            return res.status(400).json({ error: 'Data inválida. Use um ano entre 2024 e 2030.' });
+        }
+        if (registration_deadline && !validateYear(registration_deadline)) {
+            return res.status(400).json({ error: 'Data limite inválida. Use um ano entre 2024 e 2030.' });
+        }
 
         // Verifica se o torneio pertence ao clube
         const [tournamentCheck] = await db.execute(

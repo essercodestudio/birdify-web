@@ -1,6 +1,7 @@
 // frontend/src/pages/Scorecard.js
 import React, { useState, useEffect, useCallback } from "react";
-import api from "../services/api"; 
+import api from "../services/api";
+import syncService from "../services/syncService";
 import { useParams, useNavigate } from "react-router-dom";
 
 // --- O CÉREBRO DAS CATEGORIAS E CORES DE TEE ---
@@ -39,6 +40,7 @@ function Scorecard() {
   const [isReviewMode, setIsReviewMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
 
   const theme = {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent: '#22c55e', 
@@ -85,6 +87,33 @@ function Scorecard() {
     }
   }, [getDraftKey]);
 
+  // Snapshot consolidado: buraco ativo + todas as tacadas + ID do torneio.
+  // F5/navegação para o ranking e volta restauram tudo exatamente como estava.
+  const getStateKey = useCallback(() => `scorecard_state_${groupId}`, [groupId]);
+
+  const persistState = useCallback((next) => {
+    try {
+      localStorage.setItem(getStateKey(), JSON.stringify({
+        tournament_id: next.tournament_id,
+        groupId: Number(groupId),
+        currentHole: next.currentHole,
+        scores: next.scores,
+        playedHoles: next.playedHoles,
+        savedAt: Date.now(),
+      }));
+    } catch (e) {
+      console.warn("Falha ao persistir estado local do scorecard", e);
+    }
+  }, [getStateKey, groupId]);
+
+  const loadPersistedState = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(getStateKey());
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  }, [getStateKey]);
+
   const fetchData = useCallback(async () => {
     try {
       const savedGroup = JSON.parse(localStorage.getItem("activeGroup"));
@@ -96,6 +125,21 @@ function Scorecard() {
       }
       setGroup(savedGroup);
       setPlayedHoles([savedGroup.starting_hole]);
+
+      // Restauração imediata do snapshot local — garante que F5 ou volta do
+      // ranking renderizem a tela exatamente onde o usuário parou, mesmo antes
+      // de qualquer resposta da API.
+      const persisted = loadPersistedState();
+      const hasPersisted = persisted && persisted.tournament_id === savedGroup.tournament_id;
+      if (hasPersisted) {
+        if (persisted.scores) setScores(persisted.scores);
+        if (Array.isArray(persisted.playedHoles) && persisted.playedHoles.length) {
+          setPlayedHoles(persisted.playedHoles);
+        }
+        if (persisted.currentHole >= 1 && persisted.currentHole <= 18) {
+          setCurrentHole(persisted.currentHole);
+        }
+      }
 
       const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
       const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
@@ -115,7 +159,9 @@ function Scorecard() {
       scoresRes.data.forEach((s) => {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
       });
-      setScores(scoresMap);
+      // Merge: scores locais (offline/pendentes) têm prioridade sobre o servidor
+      // para o caso do usuário ter marcado tacadas sem conexão.
+      setScores((prev) => ({ ...scoresMap, ...prev }));
       
       // Encontrar o primeiro buraco sem pontuação
       let finalCurrentHole = savedGroup.starting_hole;
@@ -147,23 +193,32 @@ function Scorecard() {
           
           finalCurrentHole = nextHole;
           
-          // Reconstruir histórico de buracos jogados
-          const reconstructedHistory = [];
-          if (savedGroup.starting_hole <= nextHole) {
-            for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
-          } else {
-            for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
-            for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
+          // Reconstruir histórico de buracos jogados — só aplica se não há
+          // snapshot local (snapshot é fonte mais recente, inclui buracos
+          // marcados offline que ainda não chegaram ao servidor).
+          if (!hasPersisted) {
+            const reconstructedHistory = [];
+            if (savedGroup.starting_hole <= nextHole) {
+              for (let i = savedGroup.starting_hole; i <= nextHole; i++) reconstructedHistory.push(i);
+            } else {
+              for (let i = savedGroup.starting_hole; i <= 18; i++) reconstructedHistory.push(i);
+              for (let i = 1; i <= nextHole; i++) reconstructedHistory.push(i);
+            }
+            setPlayedHoles(reconstructedHistory);
           }
-          setPlayedHoles(reconstructedHistory);
         }
       }
-      
-      // sessionStorage tem prioridade absoluta — reflete última ação manual do usuário
-      const storageKey = `scorecard_hole_${groupId}`;
-      const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10);
-      const resolvedHole = (persistedHole >= 1 && persistedHole <= 18) ? persistedHole : finalCurrentHole;
-      setCurrentHole(resolvedHole);
+
+      // Snapshot local tem prioridade. Fallback: sessionStorage → cálculo do servidor.
+      let resolvedHole;
+      if (hasPersisted && persisted.currentHole >= 1 && persisted.currentHole <= 18) {
+        resolvedHole = persisted.currentHole;
+      } else {
+        const storageKey = `scorecard_hole_${groupId}`;
+        const persistedHole = parseInt(sessionStorage.getItem(storageKey), 10);
+        resolvedHole = (persistedHole >= 1 && persistedHole <= 18) ? persistedHole : finalCurrentHole;
+        setCurrentHole(resolvedHole);
+      }
 
       // Carregar rascunhos do localStorage para o buraco atual
       if (savedGroup.tournament_id) {
@@ -173,16 +228,34 @@ function Scorecard() {
         }
       }
       
-    } catch (error) { 
+    } catch (error) {
       console.error("Erro ao carregar dados", error);
       // REGRA 4: Bloco catch apenas console.error, sem alert
     } finally {
       // REGRA 4: Finally sempre seta isLoading false
       setIsInitialLoading(false);
     }
-  }, [groupId, navigate, loadDraftFromLocalStorage]);
+  }, [groupId, navigate, loadDraftFromLocalStorage, loadPersistedState]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Persistência reativa: a cada mudança no estado relevante, salva o snapshot.
+  // Não persiste durante o loading inicial para evitar gravar estado vazio.
+  useEffect(() => {
+    if (isInitialLoading || !group?.tournament_id) return;
+    persistState({
+      tournament_id: group.tournament_id,
+      currentHole,
+      scores,
+      playedHoles,
+    });
+  }, [isInitialLoading, group, currentHole, scores, playedHoles, persistState]);
+
+  // Inscreve no syncService para mostrar indicador "Aguardando Conexão"
+  useEffect(() => {
+    syncService.bootstrap();
+    return syncService.subscribe(setSyncStatus);
+  }, []);
 
   const currentHoleData = holesData.find(
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
@@ -219,40 +292,32 @@ function Scorecard() {
     }
   };
 
-  // REGRA 2: saveCurrentHoleScores com trava offline e catch com alert
+  // Enfileira as tacadas do buraco atual. Online → envia imediatamente.
+  // Offline → permanece pendente e é reenviado pelo syncService quando voltar.
+  // Em ambos os casos avança o buraco sem bloquear o usuário.
   const saveCurrentHoleScores = async () => {
-    // Trava offline: impede save e impede avanço
-    if (!navigator.onLine) {
-      alert("Conexão instável. Os pontos estão anotados na tela, aguarde o sinal voltar e clique na seta para salvar e avançar.");
-      return false;
-    }
-    
+    if (!group?.tournament_id) return true;
     setIsSaving(true);
     try {
-      const savePromises = players.map(p => {
+      players.forEach((p) => {
         const score = scores[`${p.id}-${currentHole}`];
         if (score && score > 0) {
-          return api.post("/scores/save", {
-            tournament_id: group.tournament_id,
-            user_id: p.id,
-            hole_number: currentHole,
-            strokes: score,
+          syncService.enqueue({
+            endpoint: "/scores/save",
+            payload: {
+              tournament_id: group.tournament_id,
+              user_id: p.id,
+              hole_number: currentHole,
+              strokes: score,
+            },
+            dedupKey: `score:${group.tournament_id}:${p.id}:${currentHole}`,
           });
         }
-        return Promise.resolve(); 
       });
-      
-      await Promise.all(savePromises);
-      
-      if (group?.tournament_id) {
-        clearDraftFromLocalStorage(group.tournament_id, currentHole);
-      }
+      // Rascunho do buraco pode ser limpo: o syncService já é o source-of-truth
+      // dos envios pendentes e o snapshot consolidado mantém os scores na tela.
+      clearDraftFromLocalStorage(group.tournament_id, currentHole);
       return true;
-    } catch (error) {
-      // REGRA 2: catch com alert de erro de servidor e retorna false
-      console.warn("Erro ao salvar pontuação:", error);
-      alert("Erro de servidor. Não foi possível salvar os pontos. Tente novamente.");
-      return false;
     } finally {
       setIsSaving(false);
     }
@@ -356,21 +421,21 @@ function Scorecard() {
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
-  // REGRA 3: handleConfirmGame com trava offline no início
+  // Assinar cartão exige conexão real — o placar oficial precisa de
+  // confirmação do servidor antes de limpar o estado local.
   const handleConfirmGame = async () => {
-    // Trava offline: impede finalização sem conexão
     if (!navigator.onLine) {
       alert("⚠️ Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
       return;
     }
-    
+
     const holesToSave = [...new Set(playedHoles)];
     for (const hole of holesToSave) {
       const hasScoresForHole = players.some(p => {
         const score = scores[`${p.id}-${hole}`];
         return score && score > 0;
       });
-      
+
       if (hasScoresForHole) {
         try {
           const savePromises = players.map(p => {
@@ -386,8 +451,7 @@ function Scorecard() {
             return Promise.resolve();
           });
           await Promise.all(savePromises);
-          
-          // Limpar rascunho de cada buraco salvo
+
           if (group?.tournament_id) {
             clearDraftFromLocalStorage(group.tournament_id, hole);
           }
@@ -397,12 +461,15 @@ function Scorecard() {
         }
       }
     }
-    
-    // Limpar todos os rascunhos e posição persistida após finalizar
+
+    // Drena qualquer pendência da fila antes de finalizar
+    await syncService.flush();
+
     if (group?.tournament_id) {
       clearAllDraftsForMatch(group.tournament_id);
     }
     sessionStorage.removeItem(`scorecard_hole_${groupId}`);
+    localStorage.removeItem(`scorecard_state_${groupId}`);
 
     alert("✅ Cartão Assinado! Placar Oficializado.");
     navigate("/");
@@ -489,9 +556,32 @@ function Scorecard() {
         <div style={styles.headerInfo}>
           <small style={{ color: theme.textMuted, textTransform: "uppercase", letterSpacing: "1px" }}>{group.tournament_name}</small>
           <h3 style={{ margin: "5px 0", color: "#fff" }}>{group.group_name}</h3>
+          {(!syncStatus.online || syncStatus.pending > 0) && (
+            <div
+              title={syncStatus.online ? "Sincronizando tacadas pendentes..." : "Sem conexão — tacadas serão enviadas ao reconectar"}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: "6px",
+                marginTop: "4px", padding: "3px 8px", borderRadius: "12px",
+                fontSize: "11px", fontWeight: "bold",
+                backgroundColor: syncStatus.online ? "rgba(234,179,8,0.15)" : "rgba(239,68,68,0.15)",
+                color: syncStatus.online ? theme.gold : theme.danger,
+                border: `1px solid ${syncStatus.online ? theme.gold : theme.danger}55`,
+              }}
+            >
+              <span style={{
+                width: "6px", height: "6px", borderRadius: "50%",
+                backgroundColor: syncStatus.online ? theme.gold : theme.danger,
+                animation: "birdifyPulse 1.5s infinite",
+              }} />
+              {syncStatus.online
+                ? `Sincronizando${syncStatus.pending > 0 ? ` (${syncStatus.pending})` : ""}`
+                : `Aguardando Conexão${syncStatus.pending > 0 ? ` (${syncStatus.pending})` : ""}`}
+            </div>
+          )}
         </div>
         <button onClick={openLeaderboard} style={styles.leaderboardBtn}>🏆 Ranking</button>
       </div>
+      <style>{`@keyframes birdifyPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
 
       <div style={styles.holeNav}>
         <button style={styles.navBtn} onClick={() => changeHole(-1)} disabled={isSaving}>◀</button>

@@ -18,4 +18,13 @@ const requireAuth = (req, res, next) => {
   }
 };
 
-module.exports = { requireAuth };
+const requireAdmin = (req, res, next) => {
+  requireAuth(req, res, () => {
+    if (req.user.role !== "ADMIN") {
+      return res.status(403).json({ message: "Acesso restrito a administradores." });
+    }
+    next();
+  });
+};
+
+module.exports = { requireAuth, requireAdmin };

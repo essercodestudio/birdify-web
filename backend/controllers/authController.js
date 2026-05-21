@@ -148,7 +148,8 @@ exports.forgotPassword = async (req, res) => {
       },
     });
 
-    const resetUrl = `http://birdify.com.br/reset-password/${resetToken}`;
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
     const mailOptions = {
       from: '"Suporte Birdify" <suporte@birdify.com.br>',

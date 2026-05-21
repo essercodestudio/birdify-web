@@ -2,8 +2,13 @@ import axios from 'axios';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+// REACT_APP_API_URL prevalece em qualquer ambiente. Em produção, o fallback
+// é o path relativo /api (mesma origem). Em dev, o backend local.
+const baseURL = process.env.REACT_APP_API_URL
+  || (isProduction ? '/api' : 'http://localhost:3001/api');
+
 const api = axios.create({
-  baseURL: isProduction ? '/api' : 'http://localhost:3001/api',
+  baseURL,
   timeout: 10000,
 });
 
