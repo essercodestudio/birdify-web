@@ -2,9 +2,9 @@
 const express = require("express");
 const router = express.Router();
 const groupController = require("../controllers/groupController");
-const { requireAuth } = require("../middlewares/authMiddleware");
+const { requireAuth, requireAdmin } = require("../middlewares/authMiddleware");
 
-router.get('/export/:tournamentId',              groupController.exportGroupsToExcel);
+router.get('/export/:tournamentId',              requireAdmin, groupController.exportGroupsToExcel);
 router.get("/list/:tournamentId",                groupController.getGroupsByTournament);
 router.post("/create",          requireAuth,     groupController.createGroup);
 router.post("/add-player",      requireAuth,     groupController.addPlayerToGroup);
