@@ -297,14 +297,12 @@ exports.generateCode = async (req, res) => {
 // Entrar no Jogo (Validando código e jogador)
 exports.joinGroup = async (req, res) => {
   try {
-    const { access_code, user_id } = req.body;
+    // user_id vem do token — o sócio só verifica a própria escalação no grupo.
+    const user_id = req.user.id;
+    const { access_code } = req.body;
 
     if (!access_code) {
       return res.status(400).json({ message: "Código não fornecido." });
-    }
-    
-    if (!user_id) {
-      return res.status(400).json({ message: "Usuário não identificado. Faça login novamente." });
     }
 
     const cleanCode = access_code.trim().toUpperCase();

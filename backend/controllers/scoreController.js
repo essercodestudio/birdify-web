@@ -23,6 +23,21 @@ exports.saveScore = async (req, res) => {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
 
+    // Autorização de posse (espelha TrainingController.saveScore): o user_id do
+    // body é o jogador alvo (colega no cartão), mas quem CHAMA precisa estar
+    // escalado num grupo deste torneio. Impede lançar score em torneio alheio.
+    const caller_id = req.user.id;
+    const [membership] = await db.execute(
+      `SELECT 1 FROM group_players gp
+         JOIN tournament_groups tg ON gp.group_id = tg.id
+        WHERE tg.tournament_id = ? AND gp.user_id = ?
+        LIMIT 1`,
+      [tournament_id, caller_id]
+    );
+    if (membership.length === 0) {
+      return res.status(403).json({ error: 'Acesso negado. Você não participa deste torneio.' });
+    }
+
     // 1. PRIMEIRO PASSO: Deleta qualquer pontuação velha ou duplicada desse jogador nesse buraco
     const deleteQuery =
       "DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ?";

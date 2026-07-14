@@ -45,7 +45,10 @@ exports.getTournamentDetails = async (req, res) => {
 // 2. O Jogador faz a inscrição
 exports.createInscription = async (req, res) => {
   try {
-    const { tournament_id, user_id, category_id } = req.body;
+    // user_id vem SEMPRE do token — inscrição é auto-serviço. Ignora qualquer
+    // user_id do body (impede inscrever terceiros / forjar identidade).
+    const user_id = req.user.id;
+    const { tournament_id, category_id } = req.body;
 
     // Verifica se o torneio existe e pertence ao clube
     const [tournamentCheck] = await db.execute(

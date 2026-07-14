@@ -3,8 +3,7 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 
 router.post('/register', authController.register);
-router.post('/login', authController.login); 
-router.get('/list', authController.getAllPlayers);
+router.post('/login', authController.login);
 
 // Novas rotas para recuperação de senha
 router.post('/forgot-password', authController.forgotPassword);

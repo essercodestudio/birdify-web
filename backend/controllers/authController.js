@@ -94,18 +94,6 @@ exports.login = async (req, res) => {
   }
 };
 
-// 3. LISTAR JOGADORES
-exports.getAllPlayers = async (req, res) => {
-  try {
-    const query = "SELECT id, name FROM users ORDER BY name ASC";
-    const [players] = await db.execute(query);
-    res.json(players);
-  } catch (error) {
-    console.error("Erro ao listar jogadores:", error);
-    res.status(500).json({ error: "Erro interno no servidor." });
-  }
-};
-
 // ==========================================
 // NOVAS FUNÇÕES: RECUPERAÇÃO DE SENHA
 // ==========================================
