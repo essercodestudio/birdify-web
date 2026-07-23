@@ -380,7 +380,6 @@ function PlayerHome() {
   const shortcuts = [
     { icon: LuCalendarDays, label: "Reservar", onClick: () => navigate("/tee-times") },
     { icon: LuClipboardList, label: "Minhas Reservas", onClick: () => navigate("/my-bookings") },
-    { icon: LuFlag, label: "Handicap", onClick: () => navigate("/handicap") },
     { icon: LuHistory, label: "Histórico", onClick: () => navigate("/player-history") },
     { icon: LuLandPlot, label: "Treino do dia", onClick: () => navigate("/daily-training") },
     { icon: LuPlay, label: "Entrar na Partida", onClick: () => setJoinOpen(true) },

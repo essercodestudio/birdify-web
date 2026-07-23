@@ -272,14 +272,6 @@ exports.getOnboardingChecklist = async (req, res) => {
     );
     const teeConfigured = teeRows.length > 0 && teeRows[0].active && !!teeRows[0].whatsapp_number;
 
-    // Ao menos 1 tee (course_tees) cadastrado em algum campo do clube?
-    const [[{ n: teesCount }]] = await db.query(
-      `SELECT COUNT(*) AS n FROM course_tees ct
-         JOIN courses c ON ct.course_id = c.id
-        WHERE c.club_id = ?`,
-      [cid]
-    );
-
     const steps = [
       {
         id: "nome",
@@ -316,12 +308,6 @@ exports.getOnboardingChecklist = async (req, res) => {
         label: "Configurar reservas de tee time",
         done: teeConfigured,
         link: "/admin/tee-settings",
-      },
-      {
-        id: "ratings",
-        label: "Cadastrar Course Rating / Slope (WHS)",
-        done: teesCount > 0,
-        link: "/courses",
       },
       {
         id: "socio",

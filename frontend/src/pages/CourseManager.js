@@ -4,7 +4,7 @@ import api from "../services/api"; // Ajuste o caminho se necessário
 import { mediaUrl } from "../services/media";
 import { useNavigate } from "react-router-dom";
 import AdminNavMenu from "../components/AdminNavMenu";
-import { LuFlag, LuTarget, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX } from "react-icons/lu";
+import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX } from "react-icons/lu";
 
 function CourseManager() {
   const navigate = useNavigate();
@@ -417,21 +417,6 @@ function CourseManager() {
                   }}
                 >
                   {c.name} {c.city ? `(${c.city})` : ""}
-                </button>
-                <button
-                  onClick={() => navigate(`/admin/course-tees/${c.id}`)}
-                  style={{
-                    backgroundColor: theme.info,
-                    color: "#000",
-                    border: "none",
-                    padding: "0 12px",
-                    cursor: "pointer",
-                    fontWeight: "bold",
-                    fontSize: "12px",
-                  }}
-                  title="Course Rating / Slope (WHS)"
-                >
-                  <LuTarget size={14} />
                 </button>
                 <button
                   onClick={() => handleDeleteCourse(c.id, c.name)}

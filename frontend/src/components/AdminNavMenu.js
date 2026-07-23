@@ -35,7 +35,7 @@ const GROUPS = [
       { icon: LuTrophy, label: "Torneios", path: "/dashboard" },
       { icon: LuCalendarClock, label: "Tee Times", path: "/admin/tee-bookings", match: ["/admin/tee-bookings", "/admin/tee-settings"] },
       { icon: LuLink, label: "Circuitos / Ligas", path: "/circuits" },
-      { icon: LuFlag, label: "Gerenciar Campos", path: "/courses", match: ["/courses", "/admin/course-tees"] },
+      { icon: LuFlag, label: "Gerenciar Campos", path: "/courses" },
     ],
   },
 ];

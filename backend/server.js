@@ -27,7 +27,6 @@ const trainingRoutes = require("./routes/trainingRoutes");
 const circuitRoutes = require("./routes/circuitRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const teeTimeRoutes = require("./routes/teeTimeRoutes");
-const handicapRoutes = require("./routes/handicapRoutes");
 const userRoutes = require("./routes/userRoutes");
 const { saveMyPhoto } = require("./controllers/userController");
 
@@ -182,7 +181,6 @@ app.use("/api/training", trainingRoutes);
 app.use("/api/circuits", circuitRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/tee-times", teeTimeRoutes);
-app.use("/api/handicap", handicapRoutes);
 app.use("/api/users", userRoutes);
 
 // Upload da foto de perfil — requireAuth (qualquer usuário logado, só a própria foto)

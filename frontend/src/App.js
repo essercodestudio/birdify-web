@@ -26,8 +26,6 @@ import AdminTeeSettings from './pages/AdminTeeSettings';
 import AdminTeeBookings from './pages/AdminTeeBookings';
 import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
-import AdminCourseTees from './pages/AdminCourseTees';
-import Handicap from './pages/Handicap';
 import CoursePreview from './pages/CoursePreview';
 
 // Importação da LGPD e Recuperação de Senha
@@ -180,8 +178,6 @@ function App() {
             <Route path="/admin/tee-bookings" element={<AdminRoute><AdminTeeBookings /></AdminRoute>} />
             <Route path="/tee-times" element={<ProtectedRoute><TeeTimes /></ProtectedRoute>} />
             <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
-            <Route path="/admin/course-tees/:courseId" element={<AdminRoute><AdminCourseTees /></AdminRoute>} />
-            <Route path="/handicap" element={<ProtectedRoute><Handicap /></ProtectedRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />
 
             <Route path="/privacidade" element={<Privacidade />} />

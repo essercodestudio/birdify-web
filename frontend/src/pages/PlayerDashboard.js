@@ -347,7 +347,6 @@ function PlayerDashboard() {
         {[
           { icon: "⏰", label: "RESERVAR", path: "/tee-times" },
           { icon: "📋", label: "MINHAS RESERVAS", path: "/my-bookings" },
-          { icon: "🏌️", label: "MEU HANDICAP", path: "/handicap" },
         ].map((a) => (
           <button
             key={a.path}
