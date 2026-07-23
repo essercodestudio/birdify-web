@@ -33,7 +33,7 @@ function ResetPassword() {
   };
 
   return (
-    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', color: theme.text, fontFamily: 'sans-serif' }}>
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', color: theme.text }}>
       <div style={{ backgroundColor: theme.card, padding: '30px', borderRadius: '12px', width: '100%', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
         <h2 style={{ color: theme.accent, marginBottom: '20px' }}>Criar Nova Senha</h2>
         

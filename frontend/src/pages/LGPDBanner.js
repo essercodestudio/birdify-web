@@ -23,8 +23,7 @@ const LGPDBanner = () => {
       position: 'fixed', bottom: 0, left: 0, right: 0,
       background: '#2c3e50', color: 'white',
       padding: '20px', textAlign: 'center', zIndex: 9999,
-      boxShadow: '0 -2px 10px rgba(0,0,0,0.3)',
-      fontFamily: 'sans-serif'
+      boxShadow: '0 -2px 10px rgba(0,0,0,0.3)'
     }}>
       <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>
         Este site utiliza cookies para garantir a melhor experiência na marcação de scores. 

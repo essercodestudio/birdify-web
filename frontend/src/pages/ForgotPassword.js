@@ -25,7 +25,7 @@ function ForgotPassword() {
   };
 
   return (
-    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', color: theme.text, fontFamily: 'sans-serif' }}>
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', color: theme.text }}>
       <div style={{ backgroundColor: theme.card, padding: '30px', borderRadius: '12px', width: '100%', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
         <h2 style={{ color: theme.accent, marginBottom: '20px' }}>Recuperar Senha</h2>
         <p style={{ color: theme.textMuted, fontSize: '14px', marginBottom: '20px' }}>Digite seu e-mail abaixo e enviaremos um link para você redefinir sua senha.</p>

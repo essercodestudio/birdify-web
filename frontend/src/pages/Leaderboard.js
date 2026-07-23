@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { LuArrowLeft, LuFlag } from "react-icons/lu";
+import { applyCategoryFilter, isNetCategory } from "../utils/categories";
 
 const theme = {
   bg:        "#0f172a",
@@ -23,33 +25,9 @@ function getScoreStyle(strokes, par) {
   return         { color: theme.danger, bg: "rgba(239,68,68,0.15)",        border: theme.danger };
 }
 
-function applyFilter(players, tab) {
-  return players.filter(p => {
-    const hc = p.handicap || 0;
-    const sx = p.gender || p.sexo || "M";
-    if (sx === "M" || sx === "Masculino") {
-      if (tab.includes("Feminino") || tab.startsWith("F")) return false;
-      if (tab.includes("Masculino Livre") || tab.includes("M0")) return true;
-      if (tab.includes("M1") && hc >= 0    && hc <= 8.5)  return true;
-      if (tab.includes("M2") && hc >= 8.6  && hc <= 14.0) return true;
-      if (tab.includes("M3") && hc >= 14.1 && hc <= 22.1) return true;
-      if (tab.includes("M4") && hc >= 22.2 && hc <= 36.4) return true;
-    }
-    if (sx === "F" || sx === "Feminino") {
-      if (tab.includes("Masculino") || tab.startsWith("M")) return false;
-      if (tab.includes("Feminino Livre") || tab.includes("F0")) return true;
-      if (tab.includes("F1") && hc >= 0    && hc <= 16.1) return true;
-      if (tab.includes("F2") && hc >= 16.1 && hc <= 23.7) return true;
-      if (tab.includes("F3") && hc >= 23.8 && hc <= 36.4) return true;
-    }
-    return tab.includes("Sênior") || tab.includes("Duplas");
-  });
-}
-
-function isNet(tab) {
-  return (tab.includes("Net") || /[MF][1-4]/.test(tab)) &&
-    !tab.includes("M0") && !tab.includes("F0");
-}
+// Filtro e regra Net/Gross vêm da fonte única em utils/categories.js
+const applyFilter = applyCategoryFilter;
+const isNet = isNetCategory;
 
 // ─── LeaderboardView ─────────────────────────────────────────────────────────
 // Reusable: aceita tournamentId como prop. embedded=true oculta topBar e bg.
@@ -62,12 +40,17 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   const [isScoreModalOpen,    setIsScoreModalOpen]    = useState(false);
   const [sponsors,            setSponsors]            = useState([]);
   const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0);
+  // Status do torneio: "LIVE" só aparece com torneio em andamento (não em histórico)
+  const [tournamentStatus,    setTournamentStatus]    = useState(null);
+  const [courseId,            setCourseId]            = useState(null);
 
   const fetchInfo = useCallback(async () => {
     if (!tournamentId) return;
     try {
       const res = await api.get(`/tournaments/${tournamentId}`);
       if (res.data.sponsors) setSponsors(res.data.sponsors);
+      setTournamentStatus(res.data.status || null);
+      setCourseId(res.data.course_id || null);
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
@@ -148,9 +131,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   );
 
   return (
-    <div style={embedded ? { fontFamily: "'Segoe UI', Roboto, sans-serif", color: theme.textMain } : {
+    <div style={embedded ? { color: theme.textMain } : {
       padding: "20px", backgroundColor: theme.bg, minHeight: "100vh",
-      fontFamily: "'Segoe UI', Roboto, sans-serif", color: theme.textMain,
+      color: theme.textMain,
       display: "flex", flexDirection: "column",
     }}>
 
@@ -158,12 +141,28 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       {!embedded && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
           {!isPublic && onBack && (
-            <button onClick={onBack} style={{ backgroundColor: "transparent", color: theme.gold, border: `1px solid ${theme.gold}`, padding: "8px 16px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer" }}>
-              ⬅ VOLTAR AO JOGO
+            <button onClick={onBack} style={{ backgroundColor: "transparent", color: theme.textMuted, border: "none", padding: "8px 12px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <LuArrowLeft size={15} />
+              VOLTAR AO JOGO
             </button>
           )}
-          <div style={{ color: theme.danger, fontWeight: "bold", fontSize: "12px", display: "flex", alignItems: "center", gap: "5px", marginLeft: (isPublic || !onBack) ? "0" : "auto" }}>
-            <span className="lb-dot" /> LIVE
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: (isPublic || !onBack) ? "0" : "auto" }}>
+            {courseId && (
+              <a
+                href={`/campo/${courseId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: theme.textMuted, fontSize: "12px", fontWeight: 700, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                <LuFlag size={13} /> VER CAMPO
+              </a>
+            )}
+            {/* LIVE só com torneio em andamento — histórico/concluído não é "ao vivo" */}
+            {tournamentStatus === "OPEN" && (
+              <div style={{ color: theme.danger, fontWeight: "bold", fontSize: "12px", display: "flex", alignItems: "center", gap: "5px" }}>
+                <span className="lb-dot" /> LIVE
+              </div>
+            )}
           </div>
         </div>
       )}

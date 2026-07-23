@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
+import { getUser } from '../services/authStorage';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
+import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList } from 'react-icons/lu';
+import HolePhotoBadge from '../components/HolePhotoBadge';
+import HoleDistanceBadge from '../components/HoleDistanceBadge';
 
 const getScoreColor = (strokes, par, cardLight, gold, danger) => {
   const s = Number(strokes), p = Number(par) || 4;
@@ -59,6 +63,12 @@ function TrainingScorecard() {
 
   const [fetchError, setFetchError]   = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+
+  // Handicaps declarados antes de iniciar (mesmo modelo do torneio):
+  // o criador preenche o HC de cada atleta; alimenta NET e categorias do ranking.
+  const [showHcModal, setShowHcModal] = useState(false);
+  const [hcValues, setHcValues] = useState({});
+  const [hcSaving, setHcSaving] = useState(false);
   const [isSaving, setIsSaving]       = useState(false);
 
   // Timers de debounce por chave "userId-holeNumber"
@@ -181,7 +191,7 @@ function TrainingScorecard() {
         localStorage.setItem('activeTrainingGroup', JSON.stringify(savedGroup));
       }
 
-      const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      const loggedUser = getUser();
       setIsCreator(!!(loggedUser && loggedUser.id === savedGroup.creator_id));
       setGroup(savedGroup);
 
@@ -272,14 +282,43 @@ function TrainingScorecard() {
   }, [groupId]);
 
   // ── Ações do Lobby ──
-  const handleStartTraining = async () => {
+  // Passo 1: INICIAR TREINO abre o modal de handicaps com os atletas da sala
+  const openHandicapModal = () => {
     if (!isCreator) return;
+    const initial = {};
+    players.forEach(p => {
+      initial[p.id] = p.handicap > 0 ? String(p.handicap) : '';
+    });
+    setHcValues(initial);
+    setShowHcModal(true);
+  };
+
+  // Passo 2: confirma handicaps -> salva -> inicia o treino
+  const handleStartTraining = async () => {
+    if (!isCreator || hcSaving) return;
+
+    for (const p of players) {
+      const v = hcValues[p.id];
+      if (v === '' || v === undefined || isNaN(parseFloat(v))) {
+        alert(`Por favor, insira o handicap de ${p.name}`);
+        return;
+      }
+    }
+
+    setHcSaving(true);
     try {
+      await api.post('/training/save-handicaps', {
+        group_id: Number(groupId),
+        players_data: players.map(p => ({ user_id: p.id, handicap: parseFloat(hcValues[p.id]) })),
+      });
       await api.post('/training/start', { group_id: Number(groupId) });
+      setShowHcModal(false);
       setGroupStatus('ativo');
       // onStarted socket listener calls fetchData — não duplicar aqui para evitar race condition
     } catch (err) {
-      alert(err.response?.data?.message || 'Erro ao iniciar treino.');
+      alert(err.response?.data?.error || err.response?.data?.message || 'Erro ao iniciar treino.');
+    } finally {
+      setHcSaving(false);
     }
   };
 
@@ -287,7 +326,7 @@ function TrainingScorecard() {
     if (!isCreator) return;
     if (!window.confirm('Cancelar o treino? Todos os atletas serão removidos da sala.')) return;
     try {
-      const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      const loggedUser = getUser();
       await api.post('/training/cancel', { group_id: Number(groupId), creator_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
@@ -302,7 +341,7 @@ function TrainingScorecard() {
     if (isCreator) return;
     if (!window.confirm('Sair do grupo?')) return;
     try {
-      const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      const loggedUser = getUser();
       await api.post('/training/leave', { group_id: Number(groupId), user_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
@@ -385,12 +424,12 @@ function TrainingScorecard() {
     if (isSaving) return;
     if (delta > 0) {
       const missing = players.find(p => !(scores[`${p.id}-${currentHole}`] > 0));
-      if (missing) { alert(`⚠️ Falta anotar o score de: ${missing.name}`); return; }
+      if (missing) { alert(`Falta anotar o score de: ${missing.name}`); return; }
       setIsSaving(true);
       try {
         await flushPendingForHole(currentHole);
       } catch {
-        alert('⚠️ Falha na conexão. A nota não foi salva. Tente novamente.');
+        alert('Falha na conexão. A nota não foi salva. Tente novamente.');
         return;
       } finally {
         setIsSaving(false);
@@ -402,7 +441,7 @@ function TrainingScorecard() {
       setCurrentHole(next);
     } else if (delta < 0) {
       let prev = currentHole - 1; if (prev < 1) prev = 18;
-      if (!playedHoles.includes(prev)) { alert('🛑 Você não pode voltar antes do tee de saída.'); return; }
+      if (!playedHoles.includes(prev)) { alert('Você não pode voltar antes do tee de saída.'); return; }
       sessionStorage.setItem(sessionKey, prev);
       setCurrentHole(prev);
     }
@@ -425,7 +464,7 @@ function TrainingScorecard() {
 
   const handleFinish = async () => {
     if (!isCreator || isFinishingRef.current) return;
-    if (!navigator.onLine) { alert('⚠️ Aguarde a conexão voltar para finalizar o treino.'); return; }
+    if (!navigator.onLine) { alert('Aguarde a conexão voltar para finalizar o treino.'); return; }
 
     isFinishingRef.current = true;
     setIsFinishing(true);
@@ -445,7 +484,7 @@ function TrainingScorecard() {
           : Promise.resolve();
       }));
 
-      const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+      const loggedUser = getUser();
       await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
 
       // Limpa localStorage e sessionStorage APÓS o backend confirmar o encerramento
@@ -464,25 +503,25 @@ function TrainingScorecard() {
 
   // ── Estilos compartilhados ──
   const st = {
-    page:       { padding: '15px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', Roboto, sans-serif", textAlign: 'center' },
+    page:       { padding: '15px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, textAlign: 'center' },
     holeNav:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: theme.card, padding: '15px', borderRadius: '10px', marginBottom: '20px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' },
     navBtn:     { backgroundColor: theme.cardLight, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '5px', fontSize: '20px', cursor: 'pointer' },
     playerCard: { backgroundColor: theme.card, padding: '15px', borderRadius: '10px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${theme.cardLight}` },
     scoreBtn:   { width: '45px', height: '45px', borderRadius: '50%', border: 'none', fontSize: '24px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     finishBtn:  { width: '100%', padding: '15px', backgroundColor: 'transparent', color: '#fff', fontSize: '17px', fontWeight: 'bold', border: `2px solid ${accent}`, borderRadius: '10px', cursor: 'pointer', marginTop: '30px', marginBottom: '20px' },
-    btnBack:    { backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
+    btnBack:    { backgroundColor: 'transparent', color: theme.textMuted, border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' },
   };
 
   if (!groupId) return null;
 
   if (isLoading) return (
     <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: theme.textMuted, fontSize: '14px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>Carregando treino...</div>
+      <div style={{ color: theme.textMuted, fontSize: '14px' }}>Carregando treino...</div>
     </div>
   );
 
   if (fetchError) return (
-    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '20px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
+    <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '20px' }}>
       <div style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center' }}>Falha ao conectar com o servidor.</div>
       <button
         onClick={fetchData}
@@ -501,7 +540,7 @@ function TrainingScorecard() {
 
   if (!group) return (
     <div style={{ backgroundColor: theme.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: theme.textMuted, fontSize: '14px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>Carregando treino...</div>
+      <div style={{ color: theme.textMuted, fontSize: '14px' }}>Carregando treino...</div>
     </div>
   );
 
@@ -510,11 +549,11 @@ function TrainingScorecard() {
   // ══════════════════════════════════════════════════
   if (groupStatus === 'aguardando') {
     return (
-      <div style={{ backgroundColor: theme.bg, minHeight: '100vh', padding: '20px', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
+      <div style={{ backgroundColor: theme.bg, minHeight: '100vh', padding: '20px' }}>
         <div style={{ maxWidth: '420px', margin: '0 auto' }}>
 
           <div style={{ marginBottom: '16px' }}>
-            <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅ VOLTAR</button>
+            <button style={st.btnBack} onClick={() => navigate('/daily-training')}><LuArrowLeft size={15} /> VOLTAR</button>
           </div>
 
           <div style={{ backgroundColor: theme.card, borderRadius: '20px', padding: '28px 24px', border: `1px solid ${theme.cardLight}`, boxShadow: '0 20px 50px rgba(0,0,0,0.5)', textAlign: 'center' }}>
@@ -533,7 +572,8 @@ function TrainingScorecard() {
                   onClick={() => navigator.clipboard?.writeText(group.access_code).catch(() => {})}
                   style={{ backgroundColor: 'transparent', border: `1px solid ${theme.gold}`, color: theme.gold, padding: '8px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
                 >
-                  📋 COPIAR CÓDIGO
+                  <LuCopy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+                  COPIAR CÓDIGO
                 </button>
               </div>
             )}
@@ -562,8 +602,8 @@ function TrainingScorecard() {
 
             {isCreator ? (
               <button
-                onClick={handleStartTraining}
-                style={{ width: '100%', padding: '18px', backgroundColor: accent, color: '#000', fontSize: '18px', fontWeight: '800', border: 'none', borderRadius: '12px', cursor: 'pointer', boxShadow: `0 8px 20px -4px ${accent}66`, marginBottom: '12px' }}
+                onClick={openHandicapModal}
+                style={{ width: '100%', padding: '18px', backgroundColor: accent, color: '#000', fontSize: '18px', fontWeight: '800', border: 'none', borderRadius: '8px', cursor: 'pointer', marginBottom: '12px' }}
               >
                 INICIAR TREINO
               </button>
@@ -575,15 +615,68 @@ function TrainingScorecard() {
 
             {isCreator ? (
               <button onClick={handleCancel} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.danger, border: `1px solid ${theme.danger}55`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-                🗑 Cancelar Treino
+                <LuTrash2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+                Cancelar Treino
               </button>
             ) : (
               <button onClick={handleLeave} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-                ← Sair do Grupo
+                <LuLogOut size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+                Sair do Grupo
               </button>
             )}
           </div>
         </div>
+
+        {/* Modal: handicaps antes de iniciar (criador) */}
+        {showHcModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(2,6,23,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+            <div style={{ backgroundColor: theme.card, borderRadius: '12px', padding: '28px 24px', width: '100%', maxWidth: '420px', border: `1px solid ${theme.cardLight}`, boxShadow: '0 20px 60px rgba(0,0,0,0.8)', maxHeight: '90vh', overflowY: 'auto' }}>
+              <h2 style={{ color: accent, margin: 0, textAlign: 'center', fontSize: '20px', fontWeight: '800' }}>HANDICAPS</h2>
+              <p style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center', margin: '8px 0 20px' }}>
+                Insira o handicap de cada atleta para o <strong style={{ color: theme.textMain }}>Net Score</strong> e as categorias do ranking.
+              </p>
+
+              {players.map(p => (
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: `1px solid ${theme.cardLight}` }}>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontSize: '15px', fontWeight: 'bold', color: theme.textMain }}>{p.name}</div>
+                    <div style={{ fontSize: '12px', color: theme.textMuted }}>
+                      {p.gender === 'M' || p.gender === 'Masculino' ? 'Masculino' : 'Feminino'}
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="54"
+                    placeholder="0.0"
+                    value={hcValues[p.id] ?? ''}
+                    onChange={e => setHcValues(v => ({ ...v, [p.id]: e.target.value }))}
+                    style={{ width: '90px', padding: '10px', borderRadius: '8px', border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: accent, textAlign: 'center', fontSize: '18px', fontWeight: 'bold' }}
+                  />
+                </div>
+              ))}
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+                <button
+                  onClick={() => setShowHcModal(false)}
+                  disabled={hcSaving}
+                  style={{ flex: 1, padding: '14px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  VOLTAR
+                </button>
+                <button
+                  onClick={handleStartTraining}
+                  disabled={hcSaving}
+                  style={{ flex: 2, padding: '14px', backgroundColor: hcSaving ? theme.cardLight : accent, color: hcSaving ? theme.textMuted : '#000', border: 'none', borderRadius: '8px', cursor: hcSaving ? 'wait' : 'pointer', fontWeight: '800' }}
+                >
+                  {hcSaving ? 'Iniciando...' : 'CONFIRMAR E INICIAR'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <style>{`@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
       </div>
     );
@@ -614,17 +707,21 @@ function TrainingScorecard() {
       <div style={{ ...st.page, textAlign: 'left' }}>
         <div style={{ maxWidth: '480px', margin: '0 auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '12px', borderBottom: `1px solid ${theme.cardLight}` }}>
-            <button style={st.btnBack} onClick={() => navigate('/daily-training')}>⬅ VOLTAR</button>
+            <button style={st.btnBack} onClick={() => navigate('/daily-training')}><LuArrowLeft size={15} /> VOLTAR</button>
             <button
               onClick={() => navigate('/training-leaderboard')}
               style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
             >
-              🏆 Ranking
+              <LuTrophy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              Ranking
             </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '11px', color: accent, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1.5px' }}>✅ TREINO FINALIZADO</span>
+            <span style={{ fontSize: '11px', color: accent, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <LuCircleCheck size={13} />
+              TREINO FINALIZADO
+            </span>
           </div>
           <h2 style={{ color: '#fff', margin: '0 0 20px', fontSize: '20px', fontWeight: '800' }}>{group.group_name}</h2>
 
@@ -677,9 +774,10 @@ function TrainingScorecard() {
 
           <button
             onClick={() => navigate('/training-leaderboard')}
-            style={{ width: '100%', padding: '16px', backgroundColor: theme.gold, color: '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '12px', cursor: 'pointer', marginTop: '8px', boxShadow: `0 6px 20px -4px ${theme.gold}55` }}
+            style={{ width: '100%', padding: '16px', backgroundColor: theme.gold, color: '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '8px', cursor: 'pointer', marginTop: '8px' }}
           >
-            🏆 Ver Ranking do Dia
+            <LuTrophy size={15} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
+            Ver Ranking do Dia
           </button>
           <div style={{ height: '40px' }} />
         </div>
@@ -719,17 +817,23 @@ function TrainingScorecard() {
             {isCreator && (
               <button
                 disabled={isFinishing}
-                style={{ width: '100%', padding: '16px', backgroundColor: isFinishing ? theme.cardLight : accent, color: isFinishing ? theme.textMuted : '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '12px', cursor: isFinishing ? 'not-allowed' : 'pointer', marginTop: '24px', boxShadow: isFinishing ? 'none' : `0 6px 20px -4px ${accent}55`, transition: 'all 0.2s' }}
+                style={{ width: '100%', padding: '16px', backgroundColor: isFinishing ? theme.cardLight : accent, color: isFinishing ? theme.textMuted : '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '8px', cursor: isFinishing ? 'not-allowed' : 'pointer', marginTop: '24px', transition: 'all 0.2s' }}
                 onClick={handleFinish}
               >
-                {isFinishing ? 'Finalizando...' : '✅ Confirmar e Encerrar Partida'}
+                {isFinishing ? 'Finalizando...' : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <LuCheck size={16} />
+                    Confirmar e Encerrar Partida
+                  </span>
+                )}
               </button>
             )}
             <button
               style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, fontSize: '14px', fontWeight: 'bold', borderRadius: '10px', cursor: 'pointer', marginTop: '10px' }}
               onClick={() => { setShowSummary(false); setIsReviewMode(true); }}
             >
-              ✏️ Voltar e Editar
+              <LuPencil size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              Voltar e Editar
             </button>
           </div>
         </div>
@@ -738,18 +842,24 @@ function TrainingScorecard() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `1px solid ${theme.cardLight}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button style={st.btnBack} onClick={async () => { await flushAllPending(); navigate('/daily-training'); }}>⬅</button>
+          <button style={st.btnBack} onClick={async () => { await flushAllPending(); navigate('/daily-training'); }} aria-label="Voltar"><LuArrowLeft size={16} /></button>
           <div style={{ textAlign: 'left' }}>
             <small style={{ color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '1px', fontSize: '10px' }}>TREINO DO DIA</small>
             <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '15px', marginTop: '2px' }}>{group.group_name || 'Treino'}</div>
-            {!isCreator && <small style={{ color: theme.textMuted, fontSize: '10px' }}>👁 Modo Visualização</small>}
+            {!isCreator && (
+              <small style={{ color: theme.textMuted, fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <LuEye size={11} />
+                Modo Visualização
+              </small>
+            )}
           </div>
         </div>
         <button
           onClick={async () => { await flushAllPending(); navigate('/training-leaderboard', { state: { returnHole: currentHole, groupId } }); }}
-          style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', boxShadow: '0 2px 5px rgba(0,0,0,0.5)' }}
+          style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
         >
-          🏆 Ranking
+          <LuTrophy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+          Ranking
         </button>
       </div>
 
@@ -757,8 +867,14 @@ function TrainingScorecard() {
       <div style={st.holeNav}>
         <button style={st.navBtn} onClick={() => changeHole(-1)}>◀</button>
         <div>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold }}>Buraco {currentHole}</div>
-          <div style={{ color: theme.textMuted, fontSize: '16px', marginTop: '5px' }}>PAR {currentHoleData.par}</div>
+          <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold, display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            Buraco {currentHole}
+            <HolePhotoBadge imagePath={currentHoleData.image_path} holeNumber={currentHole} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+            <span style={{ color: theme.textMuted, fontSize: '16px' }}>PAR {currentHoleData.par}</span>
+            <HoleDistanceBadge hole={currentHoleData} />
+          </div>
         </div>
         <button
           style={{ ...st.navBtn, ...(isSaving && { opacity: 0.5, cursor: 'not-allowed' }) }}
@@ -802,7 +918,8 @@ function TrainingScorecard() {
 
       {isCreator && (
         <button style={st.finishBtn} onClick={() => setShowSummary(true)}>
-          📋 Finalizar Treino
+          <LuClipboardList size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+          Finalizar Treino
         </button>
       )}
     </div>

@@ -7,8 +7,7 @@ const Privacidade = () => {
       maxWidth: '800px', 
       margin: '0 auto', 
       lineHeight: '1.6', 
-      color: '#333',
-      fontFamily: 'sans-serif' 
+      color: '#333' 
     }}>
       <h1 style={{ color: '#27ae60' }}>Política de Privacidade</h1>
       <p>A sua privacidade é fundamental para nós. Esta política explica como os seus dados são tratados no nosso sistema de gestão de golfe.</p>

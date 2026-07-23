@@ -58,7 +58,7 @@ exports.register = async (req, res) => {
 // 2. LOGIN
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, keepConnected } = req.body;
 
     const query = "SELECT * FROM users WHERE email = ?";
     const [users] = await db.execute(query, [email]);
@@ -71,10 +71,11 @@ exports.login = async (req, res) => {
 
     if (!isMatch) return res.status(400).json({ message: "Senha incorreta." });
 
+    const expiresIn = keepConnected ? "365d" : "1d";
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn }
     );
 
     res.json({

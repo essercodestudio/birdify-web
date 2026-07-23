@@ -1,7 +1,12 @@
 // frontend/src/pages/Dashboard.js
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
+import { getUser } from '../services/authStorage';
 import { useNavigate } from 'react-router-dom';
+import AdminNavMenu from '../components/AdminNavMenu';
+import { downloadFile } from '../services/download';
+import { LuCalendarDays, LuMapPin, LuLink, LuTrash2 } from 'react-icons/lu';
+import { TOURNAMENT_CATEGORIES } from '../utils/categories';
 
 // ─── helpers de fuso horário (Brasília) ──────────────────────────────────────
 const TZ = 'America/Sao_Paulo';
@@ -51,6 +56,14 @@ function Dashboard() {
   const [description, setDescription] = useState('');
   const [paymentInfo, setPaymentInfo] = useState('');
   const [fee, setFee] = useState('');
+
+  // Máscara de moeda: usuário digita só números e o campo formata como R$ automaticamente.
+  // Estilo "centavos" (padrão bancário BR): 15000 → R$ 150,00. Campo vazio permanece vazio.
+  const formatFeeBRL = (raw) => {
+    const digits = String(raw).replace(/\D/g, '');
+    if (!digits) return '';
+    return (parseInt(digits, 10) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
   const [pixKeyType, setPixKeyType] = useState('Chave Aleatória'); 
   const [whatsappContact, setWhatsappContact] = useState('');
   const [registrationDeadline, setRegistrationDeadline] = useState('');
@@ -59,12 +72,8 @@ function Dashboard() {
   const [sponsorName, setSponsorName] = useState('');
   const [sponsorLogo, setSponsorLogo] = useState('');
 
-  const defaultCategories = [
-    "Masculino Gross (M0)", "Masculino Net (M1) - 0 a 8.5", "Masculino Net (M2) - 8.6 a 14.0",
-    "Masculino Net (M3) - 14.1 a 22.1", "Masculino Net (M4) - 22.2 a 36.4",
-    "Feminino Gross (F0)", "Feminino Net (F1) - 0 a 16.1", "Feminino Net (F2) - 16.1 a 23.7",
-    "Feminino Net (F3) - 23.8 a 36.4"
-  ];
+  // Fonte única das categorias — utils/categories.js (compartilhada com os leaderboards)
+  const defaultCategories = TOURNAMENT_CATEGORIES;
   const [selectedCategories, setSelectedCategories] = useState([]);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -97,9 +106,8 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (!storedUser) { navigate('/login'); return; }
-    const parsedUser = JSON.parse(storedUser);
+    const parsedUser = getUser();
+    if (!parsedUser) { navigate('/login'); return; }
     if (parsedUser.role !== 'ADMIN') { navigate('/'); return; }
     fetchTournaments();
     fetchCourses();
@@ -108,7 +116,7 @@ function Dashboard() {
   const handleCopyLink = (id) => {
     const link = `${window.location.origin}/leaderboard/${id}?public=true`;
     navigator.clipboard.writeText(link).then(() => {
-      alert("✅ Link Público copiado!");
+      alert("Link Público copiado!");
     });
   };
   const toggleCategory = (cat) => {
@@ -123,7 +131,13 @@ function Dashboard() {
     }
   };
 
-  const handleExport = (id) => window.open(`http://localhost:3001/api/export/${id}`, '_blank');
+  const handleExport = async (id) => {
+    try {
+      await downloadFile(`/export/${id}`, `torneio_${id}.xlsx`);
+    } catch {
+      alert('Erro ao exportar. Confira se você está logado como administrador do clube.');
+    }
+  };
 
   const handleDeleteTournament = async (id, name) => {
     if (window.confirm(`ATENÇÃO: Deseja excluir "${name}"?`) && window.confirm(`TEM CERTEZA ABSOLUTA?`)) {
@@ -189,8 +203,7 @@ function Dashboard() {
   };
 
   const styles = {
-    container: { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', sans-serif" },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', borderBottom: `1px solid ${theme.cardLight}`, paddingBottom: '15px' },
+    container: { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain },
     card: { backgroundColor: theme.card, padding: '25px', borderRadius: '15px', marginBottom: '25px', border: isEditing ? `1px solid ${theme.info}` : 'none' },
     sectionTitle: { fontSize: '16px', color: theme.accent, fontWeight: 'bold', marginBottom: '15px', borderLeft: `4px solid ${theme.accent}`, paddingLeft: '10px' },
     formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' },
@@ -206,14 +219,8 @@ function Dashboard() {
   return (
     <div style={styles.container}>
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
-      <div style={styles.header}>
-        <h1 style={{fontSize: '24px', margin: 0}}>Painel do Organizador</h1>
-        <div style={{display: 'flex', gap: '10px'}}>
-          <button onClick={() => navigate('/circuits')} style={{...styles.btnAction, backgroundColor: '#a78bfa', padding: '10px 15px'}}>CIRCUITOS / LIGAS</button>
-          <button onClick={() => navigate('/courses')} style={{...styles.btnAction, backgroundColor: theme.info, padding: '10px 15px'}}>GERENCIAR CAMPOS</button>
-          <button onClick={() => { localStorage.removeItem('user'); navigate('/login'); }} style={{...styles.btnAction, backgroundColor: theme.cardLight}}>SAIR</button>
-        </div>
-      </div>
+      <AdminNavMenu />
+      <h1 style={{fontSize: '24px', margin: '0 0 30px 0'}}>Painel do Organizador</h1>
 
       <div style={styles.card}>
         <h2 style={{color: isEditing ? theme.info : theme.gold, marginTop: 0}}>
@@ -265,7 +272,7 @@ function Dashboard() {
           <div style={styles.formGrid}>
             <div style={styles.inputGroup}>
               <label style={styles.label}>VALOR DA INSCRIÇÃO</label>
-              <input style={styles.input} type="text" placeholder="Ex: R$ 150,00" value={fee} onChange={e => setFee(e.target.value)} />
+              <input style={styles.input} type="text" inputMode="numeric" placeholder="R$ 0,00" value={fee} onChange={e => setFee(formatFeeBRL(e.target.value))} />
             </div>
 
             <div style={styles.inputGroup}>
@@ -315,7 +322,10 @@ function Dashboard() {
         </form>
       </div>
 
-      <h3 style={{color: theme.textMuted, fontSize: '14px', letterSpacing: '1px', marginBottom: '15px'}}>📅 MEUS TORNEIOS</h3>
+      <h3 style={{color: theme.textMuted, fontSize: '14px', letterSpacing: '1px', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: 8}}>
+        <LuCalendarDays size={15} />
+        MEUS TORNEIOS
+      </h3>
       {tournaments.map(t => {
         const hoje = isToday(t.start_date) && t.status !== 'concluido';
         return (
@@ -333,11 +343,13 @@ function Dashboard() {
                 </span>
               )}
             </div>
-            <div style={{fontSize: '13px', color: theme.textMuted, marginTop: '4px'}}>
-              📍 {t.course_name || 'Local não definido'} {t.course_city ? `- ${t.course_city}/${t.course_state}` : ''}
+            <div style={{fontSize: '13px', color: theme.textMuted, marginTop: '4px', display: 'flex', alignItems: 'center', gap: 6}}>
+              <LuMapPin size={13} />
+              {t.course_name || 'Local não definido'} {t.course_city ? `- ${t.course_city}/${t.course_state}` : ''}
             </div>
-            <div style={{fontSize: '12px', color: hoje ? '#22d3ee' : theme.textMuted, marginTop: '2px', fontWeight: hoje ? 'bold' : 'normal'}}>
-              📅 {fmtBR(t.start_date)}
+            <div style={{fontSize: '12px', color: hoje ? '#22d3ee' : theme.textMuted, marginTop: '2px', fontWeight: hoje ? 'bold' : 'normal', display: 'flex', alignItems: 'center', gap: 6}}>
+              <LuCalendarDays size={13} />
+              {fmtBR(t.start_date)}
             </div>
             <div style={{marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
               <span style={{backgroundColor: t.status === 'concluido' ? theme.danger : theme.accent, color: '#000', fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold'}}>
@@ -346,7 +358,10 @@ function Dashboard() {
             </div>
           </div>
           <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end'}}>
-            <button onClick={() => handleCopyLink(t.id)} style={{...styles.btnAction, backgroundColor: '#fff', color: '#000'}}>🔗 LINK</button>
+            <button onClick={() => handleCopyLink(t.id)} style={{...styles.btnAction, backgroundColor: '#fff', color: '#000'}}>
+              <LuLink size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+              LINK
+            </button>
             <button onClick={() => handleToggleStatus(t.id, t.status)} style={{...styles.btnAction, backgroundColor: t.status === 'concluido' ? theme.gold : theme.accent, color: '#000'}}>
                 {t.status === 'concluido' ? 'REABRIR' : 'CONCLUIR'}
             </button>
@@ -354,7 +369,9 @@ function Dashboard() {
             <button onClick={() => navigate(`/tournament/${t.id}`)} style={{...styles.btnAction, backgroundColor: theme.cardLight}}>GRUPOS</button>
             <button onClick={() => navigate(`/leaderboard/${t.id}`)} style={{...styles.btnAction, backgroundColor: theme.gold, color: '#000'}}>RANKING</button>
             <button onClick={() => handleExport(t.id)} style={{...styles.btnAction, backgroundColor: '#10b981'}}>EXCEL</button>
-            <button onClick={() => handleDeleteTournament(t.id, t.name)} style={{...styles.btnAction, backgroundColor: theme.danger}}>🗑️</button>
+            <button onClick={() => handleDeleteTournament(t.id, t.name)} style={{...styles.btnAction, backgroundColor: theme.danger}}>
+              <LuTrash2 size={13} />
+            </button>
           </div>
         </div>
         );

@@ -257,6 +257,49 @@ exports.getScores = async (req, res) => {
   }
 };
 
+// Handicaps declarados na sala de espera — mesmo modelo do torneio: o criador
+// informa o HC de cada atleta antes de iniciar. Alimenta o NET e as categorias
+// (M1-M4 / F1-F3) do ranking do dia.
+exports.saveHandicaps = async (req, res) => {
+  const group_id = Number(req.body.group_id);
+  const players_data = req.body.players_data;
+  const caller_id = req.user.id;
+
+  try {
+    if (!group_id || !Array.isArray(players_data) || players_data.length === 0)
+      return res.status(400).json({ error: "Dados incompletos." });
+
+    const [groups] = await db.execute(
+      "SELECT id FROM training_groups WHERE id = ? AND club_id = ?",
+      [group_id, clubId(req)],
+    );
+    if (groups.length === 0)
+      return res.status(404).json({ error: "Mesa não encontrada." });
+
+    // Só participante do grupo pode salvar (mesma regra do saveScore)
+    const [[{ cnt }]] = await db.execute(
+      "SELECT COUNT(*) AS cnt FROM training_participants WHERE group_id = ? AND user_id = ?",
+      [group_id, caller_id],
+    );
+    if (cnt === 0) return res.status(403).json({ error: "Acesso negado." });
+
+    for (const p of players_data) {
+      const hc = parseFloat(p.handicap);
+      if (isNaN(hc) || hc < 0 || hc > 54)
+        return res.status(400).json({ error: "Handicap inválido (0 a 54)." });
+      await db.execute(
+        "UPDATE training_participants SET handicap = ? WHERE group_id = ? AND user_id = ?",
+        [hc, group_id, Number(p.user_id)],
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("Erro ao salvar handicaps do treino:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
 exports.startTraining = async (req, res) => {
   try {
     const { group_id } = req.body;
@@ -397,6 +440,7 @@ exports.getDailyRanking = async (req, res) => {
          tg.id                                                      AS group_id,
          tg.group_name,
          tg.course_id,
+         tg.status                                                  AS group_status,
          u.id,
          u.name,
          u.gender,
@@ -416,7 +460,7 @@ exports.getDailyRanking = async (req, res) => {
        WHERE tg.club_id = ?
          AND DATE(tg.created_at) = CURDATE()
          AND tg.status IN ('ativo', 'finalizado')
-       GROUP BY tg.id, tg.group_name, tg.course_id, u.id, u.name, u.gender, tp.handicap
+       GROUP BY tg.id, tg.group_name, tg.course_id, tg.status, u.id, u.name, u.gender, tp.handicap
        ORDER BY holes_played DESC, score_to_par ASC, tg.id ASC`,
       [cid],
     );

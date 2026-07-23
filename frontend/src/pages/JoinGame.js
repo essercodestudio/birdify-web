@@ -1,6 +1,8 @@
 // frontend/src/pages/JoinGame.js
 import React, { useState, useEffect, useContext } from 'react';
-import api from '../services/api'; 
+import api from '../services/api';
+import { getUser } from '../services/authStorage';
+import { logout } from '../services/session'; 
 import { useNavigate } from 'react-router-dom';
 import logoImg from '../assets/logo_birdify.png'; 
 import { ThemeContext } from '../App';
@@ -30,9 +32,9 @@ function JoinGame() {
   };
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
+    const storedUser = getUser();
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      setUser(storedUser);
     } else {
       navigate('/login');
     }
@@ -113,20 +115,17 @@ function JoinGame() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    navigate('/login');
-  };
+  const handleLogout = () => logout(navigate);
 
   const styles = {
-    container: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: theme.bg, color: theme.textMain, fontFamily: "'Inter', sans-serif", padding: '20px' },
+    container: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: theme.bg, color: theme.textMain, padding: '20px' },
     card: { backgroundColor: theme.card, padding: '40px 30px', borderRadius: '24px', boxShadow: `0 25px 50px -12px rgba(0,0,0,0.5), 0 0 20px ${theme.accent}1A`, textAlign: 'center', width: '100%', maxWidth: '400px', border: `1px solid ${theme.cardLight}` },
     title: { color: theme.gold, margin: '0 0 10px 0', fontSize: '32px', fontWeight: '900', letterSpacing: '-1px' },
     form: { borderBottom: `1px solid ${theme.cardLight}`, paddingBottom: '30px', marginBottom: '30px' },
     input: { padding: '18px', width: '100%', borderRadius: '12px', border: `2px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: 'white', fontSize: '24px', textAlign: 'center', textTransform: 'uppercase', marginBottom: '20px', boxSizing: 'border-box', letterSpacing: '4px', fontWeight: 'bold', outline: 'none' },
     btnPlay: { padding: '18px', width: '100%', backgroundColor: theme.accent, color: '#000', border: 'none', borderRadius: '12px', fontSize: '18px', fontWeight: '800', cursor: 'pointer', boxShadow: `0 8px 20px -4px ${theme.accent}66` },
-    btnPortal: { padding: '14px', width: '100%', backgroundColor: theme.blue, color: 'white', border: 'none', borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
-    btnAdmin: { padding: '14px', width: '100%', backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
+    btnPortal: { padding: '14px', width: '100%', backgroundColor: 'transparent', color: theme.accent, border: `1px solid ${theme.accent}`, borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
+    btnAdmin: { padding: '14px', width: '100%', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
     btnTraining: { padding: '14px', width: '100%', backgroundColor: 'transparent', color: theme.accent, border: `1px solid ${theme.accent}`, borderRadius: '12px', fontSize: '14px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' },
     modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.95)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(8px)' },
     modalContent: { backgroundColor: theme.card, padding: '30px', borderRadius: '24px', width: '100%', maxWidth: '420px', border: `1px solid ${theme.accent}`, boxShadow: `0 0 30px ${theme.accent}33` },

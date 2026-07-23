@@ -1,8 +1,10 @@
 // frontend/src/pages/CircuitRankingPublic.js
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../services/api';
+import { getUser } from '../services/authStorage';
 import { useParams } from 'react-router-dom';
 import { LeaderboardView } from './Leaderboard';
+import { LuFlag, LuTriangleAlert, LuTrophy } from 'react-icons/lu';
 
 const T = {
   bg:        '#0a101f',
@@ -17,7 +19,8 @@ const T = {
   danger:    '#ef4444',
 };
 
-const MEDALS = ['🥇', '🥈', '🥉'];
+// Top 3 destacado por cor (ouro/prata/bronze) em vez de medalha emoji
+const MEDAL_COLORS = ['#eab308', '#9ca3af', '#b45309'];
 const COL    = '44px 1fr 64px 76px';
 
 const fmt = (pts) =>
@@ -68,8 +71,7 @@ export default function CircuitRankingPublic() {
   const [leaderboardModal, setLeaderboardModal] = useState(null);
 
   const isAdmin = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem('user') || '{}').role === 'ADMIN'; }
-    catch { return false; }
+    return getUser()?.role === 'ADMIN';
   }, []);
 
   const load = useCallback(async () => {
@@ -110,13 +112,13 @@ export default function CircuitRankingPublic() {
 
   const page = {
     backgroundColor: T.bg, minHeight: '100vh', color: T.textMain,
-    fontFamily: "'Segoe UI', system-ui, sans-serif", padding: '0',
+    padding: '0',
   };
 
   if (loading) return (
     <div style={{ ...page, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '44px', marginBottom: '14px' }}>⛳</div>
+        <div style={{ marginBottom: '14px' }}><LuFlag size={44} color={T.accent} /></div>
         <div style={{ color: T.textSub, fontSize: '14px', letterSpacing: '0.5px' }}>Calculando ranking...</div>
       </div>
     </div>
@@ -125,7 +127,7 @@ export default function CircuitRankingPublic() {
   if (error || !data) return (
     <div style={{ ...page, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
       <div style={{ textAlign: 'center', maxWidth: '280px', padding: '24px' }}>
-        <div style={{ fontSize: '32px', marginBottom: '10px' }}>⚠️</div>
+        <div style={{ marginBottom: '10px' }}><LuTriangleAlert size={32} color={T.danger} /></div>
         <div style={{ color: T.danger, fontSize: '14px' }}>{error || 'Circuito não encontrado.'}</div>
       </div>
     </div>
@@ -184,7 +186,7 @@ export default function CircuitRankingPublic() {
             backgroundColor: T.card, borderRadius: '16px', padding: '56px 24px',
             textAlign: 'center', color: T.textSub, border: `1px solid ${T.border}`,
           }}>
-            <div style={{ fontSize: '44px', marginBottom: '12px' }}>🏆</div>
+            <div style={{ marginBottom: '12px' }}><LuTrophy size={44} color={T.textMuted} /></div>
             <div style={{ fontSize: '15px', fontWeight: '500', marginBottom: '6px' }}>Nenhuma etapa finalizada.</div>
             <div style={{ fontSize: '12px', color: T.textMuted }}>O ranking aparece após ao menos uma etapa ser concluída.</div>
           </div>
@@ -314,7 +316,7 @@ function PlayerRow({ player, pos, showDiscard, viewMode, finishedCount, onClick 
       {/* POS */}
       <div style={{ textAlign: 'center' }}>
         {isTop3
-          ? <span style={{ fontSize: '18px' }}>{MEDALS[pos - 1]}</span>
+          ? <span style={{ fontSize: '14px', fontWeight: '800', color: MEDAL_COLORS[pos - 1] }}>{pos}º</span>
           : <span style={{ fontSize: '13px', fontWeight: '700', color: T.textSub }}>{pos}º</span>}
       </div>
 
@@ -325,7 +327,7 @@ function PlayerRow({ player, pos, showDiscard, viewMode, finishedCount, onClick 
         </div>
         {showDiscard && discards.length > 0 && (
           <div style={{ fontSize: '10px', color: T.textMuted, marginTop: '2px' }}>
-            ✕ {discards.map((d, i) => <span key={d.stage_number}>{i > 0 && ' · '}E{d.stage_number}</span>)}
+            Descartes: {discards.map((d, i) => <span key={d.stage_number}>{i > 0 && ' · '}E{d.stage_number}</span>)}
           </div>
         )}
       </div>
@@ -414,7 +416,7 @@ function PlayerExtractModal({ player, stageGrid, showDiscard, viewMode, onClose 
               </div>
             </div>
 
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: '20px', cursor: 'pointer', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: '20px', cursor: 'pointer', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
           </div>
         </div>
 
@@ -426,7 +428,7 @@ function PlayerExtractModal({ player, stageGrid, showDiscard, viewMode, onClose 
           {showDiscard && discards.length > 0 && (
             <div style={{ padding: '8px 14px', borderRadius: '8px', backgroundColor: T.bg, border: `1px solid ${T.danger}30`, marginBottom: '4px' }}>
               <span style={{ fontSize: '11px', color: T.danger, fontWeight: '600' }}>
-                ✕ {discards.length} etapa{discards.length > 1 ? 's' : ''} descartada{discards.length > 1 ? 's' : ''} do total oficial
+                {discards.length} etapa{discards.length > 1 ? 's' : ''} descartada{discards.length > 1 ? 's' : ''} do total oficial
               </span>
             </div>
           )}
@@ -492,7 +494,7 @@ function ExtractRow({ stage, entry, discarded }) {
   if (!entry || entry.pending) return (
     <div style={base}>
       {stageLabel}
-      <span style={{ fontSize: '12px', color: T.gold, fontWeight: '600' }}>⏳ Pendente</span>
+      <span style={{ fontSize: '12px', color: T.gold, fontWeight: '600' }}>Pendente</span>
     </div>
   );
 
@@ -563,7 +565,7 @@ function StagePill({ stage, onView }) {
         </button>
       ) : (
         <span style={{ fontSize: '10px', color: pnd ? T.gold : T.textMuted }}>
-          {stage.virtual ? '—' : '⏳ Pendente'}
+          {stage.virtual ? '—' : 'Pendente'}
         </span>
       )}
     </div>
@@ -678,7 +680,7 @@ function TournamentLeaderboardModal({ tournamentId, tournamentName, stageNumber,
               </p>
               <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: T.textMain }}>{tournamentName}</h2>
             </div>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: '20px', cursor: 'pointer', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: '20px', cursor: 'pointer', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         </div>
 
@@ -691,7 +693,8 @@ function TournamentLeaderboardModal({ tournamentId, tournamentName, stageNumber,
         <div style={{ padding: '12px 16px', flexShrink: 0, borderTop: `1px solid ${T.border}` }}>
           {isAdmin && stageId && !showPodiumForm && (
             <button onClick={() => setShowPodiumForm(true)} style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', border: `1px solid ${hasTopTie ? T.gold : T.border}`, backgroundColor: 'transparent', color: hasTopTie ? T.gold : T.textSub }}>
-              🏆 {hasTopTie ? 'Realizar Desempate de Pódio' : 'Definir Posições Manuais'}
+              <LuTrophy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              {hasTopTie ? 'Realizar Desempate de Pódio' : 'Definir Posições Manuais'}
             </button>
           )}
 
@@ -735,7 +738,7 @@ function TournamentLeaderboardModal({ tournamentId, tournamentName, stageNumber,
                 <button onClick={handleClearPositions} disabled={savingPodium} style={{ flex: 1, padding: '9px', borderRadius: '8px', fontWeight: '700', fontSize: '12px', cursor: 'pointer', border: `1px solid ${T.danger}50`, backgroundColor: 'transparent', color: T.danger, opacity: savingPodium ? 0.6 : 1 }}>
                   LIMPAR
                 </button>
-                <button onClick={() => setShowPodiumForm(false)} style={{ padding: '9px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', border: `1px solid ${T.border}`, backgroundColor: 'transparent', color: T.textSub, flexShrink: 0 }}>✕</button>
+                <button onClick={() => setShowPodiumForm(false)} style={{ padding: '9px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', border: `1px solid ${T.border}`, backgroundColor: 'transparent', color: T.textSub, flexShrink: 0 }}>×</button>
               </div>
             </div>
           )}

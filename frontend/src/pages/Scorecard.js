@@ -3,6 +3,9 @@ import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api";
 import syncService from "../services/syncService";
 import { useParams, useNavigate } from "react-router-dom";
+import { LuClipboardList, LuCheck, LuPencil, LuTrophy } from "react-icons/lu";
+import HolePhotoBadge from "../components/HolePhotoBadge";
+import HoleDistanceBadge from "../components/HoleDistanceBadge";
 
 // --- O CÉREBRO DAS CATEGORIAS E CORES DE TEE ---
 const calcularPerfilGolfista = (genero, handicap) => {
@@ -331,7 +334,7 @@ function Scorecard() {
       });
 
       if (missingPlayer) {
-        alert(`⚠️ Falta anotar o score de: ${missingPlayer.name}`);
+        alert(`Falta anotar o score de: ${missingPlayer.name}`);
         return;
       }
     }
@@ -378,7 +381,7 @@ function Scorecard() {
       if (prevHole < 1) prevHole = 18;
 
       if (!playedHoles.includes(prevHole)) {
-        alert("🛑 Você não pode voltar para um buraco antes do seu tee de saída.");
+        alert("Você não pode voltar para um buraco antes do seu tee de saída.");
         return;
       }
       setCurrentHole(prevHole);
@@ -425,7 +428,7 @@ function Scorecard() {
   // confirmação do servidor antes de limpar o estado local.
   const handleConfirmGame = async () => {
     if (!navigator.onLine) {
-      alert("⚠️ Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
+      alert("Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
       return;
     }
 
@@ -456,7 +459,7 @@ function Scorecard() {
             clearDraftFromLocalStorage(group.tournament_id, hole);
           }
         } catch (error) {
-          alert(`❌ Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
+          alert(`Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
           return;
         }
       }
@@ -471,7 +474,7 @@ function Scorecard() {
     sessionStorage.removeItem(`scorecard_hole_${groupId}`);
     localStorage.removeItem(`scorecard_state_${groupId}`);
 
-    alert("✅ Cartão Assinado! Placar Oficializado.");
+    alert("Cartão Assinado! Placar Oficializado.");
     navigate("/");
   };
 
@@ -485,10 +488,10 @@ function Scorecard() {
   };
 
   const styles = {
-    container: { padding: "15px", backgroundColor: theme.bg, minHeight: "100vh", color: theme.textMain, fontFamily: "'Segoe UI', Roboto, sans-serif", textAlign: "center" },
+    container: { padding: "15px", backgroundColor: theme.bg, minHeight: "100vh", color: theme.textMain, textAlign: "center" },
     header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", paddingBottom: "10px", borderBottom: `1px solid ${theme.cardLight}` },
     headerInfo: { textAlign: "left" },
-    leaderboardBtn: { backgroundColor: theme.gold, color: "black", border: "none", padding: "8px 12px", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", boxShadow: "0 2px 5px rgba(0,0,0,0.5)" },
+    leaderboardBtn: { backgroundColor: theme.gold, color: "black", border: "none", padding: "8px 12px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px" },
     holeNav: { display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.card, padding: "15px", borderRadius: "10px", marginBottom: "20px", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" },
     navBtn: { backgroundColor: theme.cardLight, color: "white", border: "none", padding: "10px 20px", borderRadius: "5px", fontSize: "20px", cursor: "pointer", opacity: isSaving ? 0.5 : 1, pointerEvents: isSaving ? "none" : "auto" },
     holeTitle: { fontSize: "28px", fontWeight: "bold", color: theme.gold },
@@ -518,7 +521,10 @@ function Scorecard() {
   if (showSummary) {
     return (
       <div style={styles.container}>
-        <h2 style={{ color: theme.gold }}>📋 Conferência Final</h2>
+        <h2 style={{ color: theme.gold, display: "flex", alignItems: "center", gap: 8 }}>
+          <LuClipboardList size={20} />
+          Conferência Final
+        </h2>
         <p style={{ color: theme.textMuted }}>Net Score (Relação ao Par - Handicap)</p>
         <div style={styles.summaryCard}>
           {players.map((p) => {
@@ -544,8 +550,14 @@ function Scorecard() {
             );
           })}
         </div>
-        <button style={styles.confirmBtn} onClick={handleConfirmGame}>✅ Assinar Cartão</button>
-        <button style={styles.editBtn} onClick={handleEditMode}>✏️ Voltar e Editar</button>
+        <button style={styles.confirmBtn} onClick={handleConfirmGame}>
+          <LuCheck size={16} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+          Assinar Cartão
+        </button>
+        <button style={styles.editBtn} onClick={handleEditMode}>
+          <LuPencil size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+          Voltar e Editar
+        </button>
       </div>
     );
   }
@@ -579,15 +591,24 @@ function Scorecard() {
             </div>
           )}
         </div>
-        <button onClick={openLeaderboard} style={styles.leaderboardBtn}>🏆 Ranking</button>
+        <button onClick={openLeaderboard} style={styles.leaderboardBtn}>
+          <LuTrophy size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+          Ranking
+        </button>
       </div>
       <style>{`@keyframes birdifyPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
 
       <div style={styles.holeNav}>
         <button style={styles.navBtn} onClick={() => changeHole(-1)} disabled={isSaving}>◀</button>
         <div>
-          <div style={styles.holeTitle}>Buraco {currentHole}</div>
-          <div style={styles.parInfo}>PAR {currentHoleData.par}</div>
+          <div style={{ ...styles.holeTitle, display: "inline-flex", alignItems: "center", gap: 10 }}>
+            Buraco {currentHole}
+            <HolePhotoBadge imagePath={currentHoleData.image_path} holeNumber={currentHole} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={styles.parInfo}>PAR {currentHoleData.par}</span>
+            <HoleDistanceBadge hole={currentHoleData} />
+          </div>
           <div style={styles.details}>
             {currentHoleData.yards_blue > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#0077b6", color: "white" }}>{currentHoleData.yards_blue} yds</span>}
             {currentHoleData.yards_white > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#ffffff", color: "black" }}>{currentHoleData.yards_white} yds</span>}
@@ -630,7 +651,10 @@ function Scorecard() {
       </div>
 
       {isReviewMode && (
-        <button style={styles.reviewBtn} onClick={() => setShowSummary(true)}>📋 Finalizar Cartão</button>
+        <button style={styles.reviewBtn} onClick={() => setShowSummary(true)}>
+          <LuClipboardList size={16} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+          Finalizar Cartão
+        </button>
       )}
     </div>
   );

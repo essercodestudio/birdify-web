@@ -3,8 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
+import { LuArrowLeft, LuTrophy } from 'react-icons/lu';
+import { TOURNAMENT_CATEGORIES, applyCategoryFilter, isNetCategory } from '../utils/categories';
 
-const TABS = ['ABSOLUTO', 'MASCULINO', 'FEMININO'];
+// Categorias da MESMA fonte do torneio (utils/categories.js) — lista completa,
+// mesmo sem atleta na faixa. ABSOLUTO = gross geral; categorias Net rankeiam
+// por NET (par - handicap); Gross (M0/F0) rankeiam bruto por gênero.
 
 function TrainingLeaderboard() {
   const navigate           = useNavigate();
@@ -49,16 +53,26 @@ function TrainingLeaderboard() {
     };
   }, [fetchRanking]);
 
+  // "AO VIVO" só quando existe treino em andamento agora (mesma lógica do LIVE
+  // do torneio): algum grupo do dia com status 'ativo'. Dia sem treino ou só
+  // com treinos finalizados não é "ao vivo".
+  const isLiveDay = data.ranking.some(r => r.group_status === 'ativo');
+
+  // ABSOLUTO + as 9 categorias completas do torneio (sempre visíveis)
+  const tabs = ['ABSOLUTO', ...TOURNAMENT_CATEGORIES];
+  const isNetTab = activeTab !== 'ABSOLUTO' && isNetCategory(activeTab);
+
+  const netOf = (p) => (p.score_to_par || 0) - (parseFloat(p.handicap) || 0);
+
   const getFiltered = () => {
     let list = [...data.ranking];
-    if (activeTab === 'MASCULINO') list = list.filter(p => p.gender === 'M' || p.gender === 'Masculino');
-    if (activeTab === 'FEMININO')  list = list.filter(p => p.gender === 'F' || p.gender === 'Feminino');
+    if (activeTab !== 'ABSOLUTO') list = applyCategoryFilter(list, activeTab);
     return list.sort((a, b) => {
       const hA = a.holes_played || 0, hB = b.holes_played || 0;
       if (hA === 0 && hB === 0) return (a.name || '').localeCompare(b.name || '');
       if (hA > 0 && hB === 0)   return -1;
       if (hA === 0 && hB > 0)   return 1;
-      const diff = a.score_to_par - b.score_to_par;
+      const diff = isNetTab ? netOf(a) - netOf(b) : a.score_to_par - b.score_to_par;
       return diff !== 0 ? diff : hB - hA;
     });
   };
@@ -133,16 +147,15 @@ function TrainingLeaderboard() {
   const gridCols = '36px 1fr 44px 50px 58px';
 
   const styles = {
-    container: { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', Roboto, sans-serif", maxWidth: '600px', margin: '0 auto' },
+    container: { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, maxWidth: '600px', margin: '0 auto' },
     topBar:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-    btnBack:   { backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
+    btnBack:   { backgroundColor: 'transparent', color: theme.textMuted, border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' },
     tabs:      { display: 'flex', gap: '6px', marginBottom: '20px' },
     tabBtn: (active) => ({
       flex: 1, padding: '11px 6px', borderRadius: '10px', border: 'none', fontSize: '12px',
       fontWeight: 'bold', cursor: 'pointer',
       backgroundColor: active ? accent     : theme.card,
       color:           active ? '#000'     : theme.textMuted,
-      boxShadow:       active ? `0 4px 12px -2px ${accent}44` : 'none',
     }),
     tableCard: { backgroundColor: theme.card, borderRadius: '14px', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.4)', marginBottom: '30px' },
     headerRow: {
@@ -182,17 +195,22 @@ function TrainingLeaderboard() {
             }
           }}
           style={styles.btnBack}
-        >⬅ VOLTAR</button>
-        <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span className="live-dot" /> AO VIVO
-        </div>
+        ><LuArrowLeft size={15} /> VOLTAR</button>
+        {isLiveDay && (
+          <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span className="live-dot" /> AO VIVO
+          </div>
+        )}
       </div>
 
-      <h2 style={{ color: theme.gold, margin: '0 0 20px', fontSize: '20px' }}>🏆 Ranking do Dia</h2>
+      <h2 style={{ color: theme.gold, margin: '0 0 20px', fontSize: '20px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <LuTrophy size={18} />
+        Ranking do Dia
+      </h2>
 
-      <div style={styles.tabs}>
-        {TABS.map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} style={styles.tabBtn(activeTab === tab)}>
+      <div style={{ ...styles.tabs, overflowX: 'auto', paddingBottom: '4px' }}>
+        {tabs.map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{ ...styles.tabBtn(activeTab === tab), flex: 'none', padding: '11px 16px', whiteSpace: 'nowrap' }}>
             {tab}
           </button>
         ))}
@@ -205,18 +223,20 @@ function TrainingLeaderboard() {
           <div>ATLETA</div>
           <div style={{ textAlign: 'center' }}>HB</div>
           <div style={{ textAlign: 'center' }}>TOT</div>
-          <div style={{ textAlign: 'center' }}>PAR</div>
+          <div style={{ textAlign: 'center' }}>{isNetTab ? 'NET' : 'PAR'}</div>
         </div>
 
         {displayed.length === 0 && (
           <div style={{ padding: '40px', textAlign: 'center', color: theme.textMuted, fontSize: '14px' }}>
-            Nenhum treino registrado hoje.
+            {data.ranking.length === 0 ? 'Nenhum treino registrado hoje.' : 'Nenhum jogador nesta categoria.'}
           </div>
         )}
 
         {displayed.map((player, idx) => {
           const rowKey     = `${player.id}_${player.group_id}`;
-          const diff       = parseInt(player.score_to_par || 0);
+          // Aba de categoria mostra NET (par - handicap); ABSOLUTO mostra gross
+          const rawDiff    = isNetTab ? netOf(player) : parseInt(player.score_to_par || 0);
+          const diff       = Math.round(rawDiff * 10) / 10;
           const isExpanded = expandedKey === rowKey;
           const hasPlayed  = (player.holes_played || 0) > 0;
           const isFirst    = idx === 0;

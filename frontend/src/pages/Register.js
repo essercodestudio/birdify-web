@@ -59,7 +59,7 @@ function Register() {
       minHeight: "100vh",
       backgroundColor: theme.bg,
       color: theme.textMain,
-      fontFamily: "'Inter', sans-serif",
+      
       padding: "20px",
     },
     formBox: {
@@ -141,7 +141,6 @@ function Register() {
       fontWeight: "800",
       fontSize: "16px",
       marginTop: "10px",
-      boxShadow: acceptedTerms ? `0 10px 15px -3px ${theme.accent}4D` : "none",
       transition: "all 0.3s ease",
     },
     footer: {

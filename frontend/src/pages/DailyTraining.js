@@ -1,12 +1,14 @@
 import React, { useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { getUser } from '../services/authStorage';
 import { ThemeContext } from '../App';
+import { LuArrowLeft, LuTrophy, LuClock, LuCrown, LuPlay } from 'react-icons/lu';
 
 function DailyTraining() {
   const navigate   = useNavigate();
   const clubTheme  = useContext(ThemeContext);
-  const loggedUser = JSON.parse(localStorage.getItem('user') || 'null');
+  const loggedUser = getUser();
 
   const accent = clubTheme?.primary_color || '#22c55e';
   const theme  = {
@@ -177,10 +179,10 @@ function DailyTraining() {
   };
 
   const s = {
-    container:    { padding: '20px 16px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', Roboto, sans-serif" },
+    container:    { padding: '20px 16px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain },
     inner:        { maxWidth: '480px', margin: '0 auto' },
     header:       { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', paddingBottom: '16px', borderBottom: `1px solid ${theme.cardLight}` },
-    btnBack:      { backgroundColor: 'transparent', color: theme.gold, border: `1px solid ${theme.gold}`, padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
+    btnBack:      { backgroundColor: 'transparent', color: theme.textMuted, border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' },
     pageTitle:    { fontSize: '15px', fontWeight: 'bold', color: theme.textMain },
     sectionLabel: { color: theme.textMuted, fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1.5px', marginBottom: '12px', marginTop: '24px' },
     btn:          { width: '100%', padding: '14px', borderRadius: '10px', border: 'none', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer', marginBottom: '10px' },
@@ -197,7 +199,7 @@ function DailyTraining() {
       <div style={s.container}>
         <div style={s.inner}>
           <div style={s.header}>
-            <button style={s.btnBack} onClick={() => { setMode(null); setCreateError(''); }}>⬅ VOLTAR</button>
+            <button style={s.btnBack} onClick={() => { setMode(null); setCreateError(''); }}><LuArrowLeft size={15} /> VOLTAR</button>
             <span style={s.pageTitle}>Novo Grupo de Treino</span>
           </div>
           <div style={s.card}>
@@ -210,6 +212,24 @@ function DailyTraining() {
             <select style={s.select} value={courseId} onChange={e => setCourseId(e.target.value)}>
               {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            {courseId && (
+              <a
+                href={`/campo/${courseId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-block',
+                  marginTop: 6,
+                  marginBottom: 6,
+                  color: '#38bdf8',
+                  fontSize: 13,
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                }}
+              >
+                Ver campo →
+              </a>
+            )}
 
             <label style={s.label}>Buraco de Saída</label>
             <select style={s.select} value={startingHole} onChange={e => setStartingHole(e.target.value)}>
@@ -235,16 +255,17 @@ function DailyTraining() {
 
         {/* Header com botão Voltar */}
         <div style={s.header}>
-          <button style={s.btnBack} onClick={() => navigate('/', { replace: true })}>⬅ VOLTAR</button>
+          <button style={s.btnBack} onClick={() => navigate('/', { replace: true })}><LuArrowLeft size={15} /> VOLTAR</button>
           <span style={s.pageTitle}>Treino do Dia</span>
         </div>
 
         {/* Ranking CTA */}
         <button
-          style={{ ...s.btn, backgroundColor: theme.gold, color: '#000', fontWeight: '900', borderRadius: '12px', boxShadow: `0 6px 20px -4px ${theme.gold}55` }}
+          style={{ ...s.btn, backgroundColor: theme.gold, color: '#000', fontWeight: '900', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
           onClick={() => navigate('/training-leaderboard')}
         >
-          🏆 VER RANKING DO DIA
+          <LuTrophy size={16} />
+          VER RANKING DO DIA
         </button>
 
         {/* Verificando sessão — substitui "Criar" enquanto o banco confirma o estado */}
@@ -257,20 +278,22 @@ function DailyTraining() {
         {/* Recovery: partida ativa */}
         {currentGroup?.status === 'ativo' && (
           <button
-            style={{ ...s.btn, backgroundColor: theme.accent, color: '#000', borderRadius: '12px', fontWeight: '900', boxShadow: `0 6px 20px -4px ${theme.accent}55` }}
+            style={{ ...s.btn, backgroundColor: theme.accent, color: '#000', borderRadius: '8px', fontWeight: '900', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             onClick={() => navigate(`/training-scorecard/${currentGroup.group_id}`)}
           >
-            ▶ Continuar Partida em Andamento
+            <LuPlay size={16} />
+            Continuar Partida em Andamento
           </button>
         )}
 
         {/* Recovery: sala de espera */}
         {currentGroup?.status === 'aguardando' && (
           <button
-            style={{ ...s.btn, backgroundColor: '#78350f', color: theme.gold, borderRadius: '12px', fontWeight: '900', border: `1px solid ${theme.gold}55` }}
+            style={{ ...s.btn, backgroundColor: '#78350f', color: theme.gold, borderRadius: '8px', fontWeight: '900', border: `1px solid ${theme.gold}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             onClick={() => navigate(`/training-scorecard/${currentGroup.group_id}`)}
           >
-            ⏳ Acessar minha Sala de Espera
+            <LuClock size={16} />
+            Acessar minha Sala de Espera
           </button>
         )}
 
@@ -338,7 +361,7 @@ function DailyTraining() {
                       padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600',
                       backgroundColor: theme.bg, color: theme.textMuted, border: `1px solid ${theme.cardLight}`,
                     }}>
-                      {p.name}{lobby.creator_id === p.id ? ' ★' : ''}
+                      {p.name}{lobby.creator_id === p.id ? <LuCrown size={11} style={{ marginLeft: 4, verticalAlign: 'text-top', color: theme.gold }} /> : null}
                     </span>
                   ))}
                 </div>

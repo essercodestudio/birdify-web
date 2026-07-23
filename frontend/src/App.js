@@ -3,29 +3,39 @@ import React, { useState, useEffect, createContext } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import api from "./services/api";
 import syncService from "./services/syncService";
+import { getToken, getUser } from "./services/authStorage";
 
 // Importação das Páginas
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import TournamentManager from "./pages/TournamentManager";
-import JoinGame from "./pages/JoinGame";
+import PlayerHome from "./pages/PlayerHome";
 import Scorecard from "./pages/Scorecard";
 import Leaderboard from "./pages/Leaderboard";
 import CourseManager from "./pages/CourseManager";
-import PlayerDashboard from "./pages/PlayerDashboard";
 import DailyTraining from "./pages/DailyTraining";
 import TrainingScorecard from './pages/TrainingScorecard';
 import TrainingLeaderboard from './pages/TrainingLeaderboard';
 import PlayerHistory from './pages/PlayerHistory';
 import CircuitManagement from './pages/CircuitManagement';
 import CircuitRankingPublic from './pages/CircuitRankingPublic';
+import AdminKPIs from './pages/AdminKPIs';
+import ClubSettings from './pages/ClubSettings';
+import AdminTeeSettings from './pages/AdminTeeSettings';
+import AdminTeeBookings from './pages/AdminTeeBookings';
+import TeeTimes from './pages/TeeTimes';
+import MyBookings from './pages/MyBookings';
+import AdminCourseTees from './pages/AdminCourseTees';
+import Handicap from './pages/Handicap';
+import CoursePreview from './pages/CoursePreview';
 
 // Importação da LGPD e Recuperação de Senha
 import LGPDBanner from "./pages/LGPDBanner";
 import Privacidade from "./pages/Privacidade";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import NotFound from "./pages/NotFound";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const MEDIA_BASE = process.env.REACT_APP_MEDIA_URL
@@ -39,15 +49,29 @@ const mediaUrl = (url) => {
 export const ThemeContext = createContext();
 
 const ProtectedRoute = ({ children }) => {
-  const token = localStorage.getItem("token");
-  return token ? children : <Navigate to="/login" replace />;
+  const token = getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  // Valida também o objeto user — token órfão (ex: logout que só removeu "user",
+  // ou storage corrompido) não pode readmitir alguém nem quebrar telas que leem user.name.
+  const user = getUser();
+  if (!user || !user.id) return <Navigate to="/login" replace />;
+  return children;
+};
+
+const AdminRoute = ({ children }) => {
+  const token = getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  const user = getUser();
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== "ADMIN") return <Navigate to="/" replace />;
+  return children;
 };
 
 function App() {
   const [clubTheme, setClubTheme] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [globalSponsors, setGlobalSponsors] = useState([]);
-  const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem("token"));
+  const [isLoggedIn, setIsLoggedIn] = useState(() => !!getToken());
 
   // --- 2. O DESPERTAR DO CAMALEÃO ---
   useEffect(() => {
@@ -101,7 +125,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const sync = () => setIsLoggedIn(!!localStorage.getItem("token"));
+    const sync = () => setIsLoggedIn(!!getToken());
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
   }, []);
@@ -129,7 +153,7 @@ function App() {
 
         <div style={{ paddingBottom: showSponsorBar ? "65px" : 0 }}>
           <Routes>
-            <Route path="/" element={<JoinGame />} />
+            <Route path="/" element={<ProtectedRoute><PlayerHome /></ProtectedRoute>} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -140,7 +164,8 @@ function App() {
             <Route path="/scorecard/:groupId" element={<ProtectedRoute><Scorecard /></ProtectedRoute>} />
             <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
             <Route path="/courses" element={<ProtectedRoute><CourseManager /></ProtectedRoute>} />
-            <Route path="/player" element={<ProtectedRoute><PlayerDashboard /></ProtectedRoute>} />
+            {/* Rota legada: PlayerDashboard foi unificado com JoinGame em PlayerHome ("/") */}
+            <Route path="/player" element={<Navigate to="/" replace />} />
 
             {/* ROTAS DE TREINO */}
             <Route path="/daily-training" element={<ProtectedRoute><DailyTraining /></ProtectedRoute>} />
@@ -149,8 +174,20 @@ function App() {
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
             <Route path="/circuits" element={<ProtectedRoute><CircuitManagement /></ProtectedRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
+            <Route path="/admin/kpis" element={<AdminRoute><AdminKPIs /></AdminRoute>} />
+            <Route path="/admin/clube" element={<AdminRoute><ClubSettings /></AdminRoute>} />
+            <Route path="/admin/tee-settings" element={<AdminRoute><AdminTeeSettings /></AdminRoute>} />
+            <Route path="/admin/tee-bookings" element={<AdminRoute><AdminTeeBookings /></AdminRoute>} />
+            <Route path="/tee-times" element={<ProtectedRoute><TeeTimes /></ProtectedRoute>} />
+            <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
+            <Route path="/admin/course-tees/:courseId" element={<AdminRoute><AdminCourseTees /></AdminRoute>} />
+            <Route path="/handicap" element={<ProtectedRoute><Handicap /></ProtectedRoute>} />
+            <Route path="/campo/:courseId" element={<CoursePreview />} />
 
             <Route path="/privacidade" element={<Privacidade />} />
+
+            {/* Catch-all: qualquer rota desconhecida cai numa 404 amigável, não em tela branca */}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </div>
 

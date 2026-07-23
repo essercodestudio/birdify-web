@@ -1,7 +1,10 @@
 // frontend/src/pages/CourseManager.js
 import React, { useState, useEffect } from "react";
 import api from "../services/api"; // Ajuste o caminho se necessário
+import { mediaUrl } from "../services/media";
 import { useNavigate } from "react-router-dom";
+import AdminNavMenu from "../components/AdminNavMenu";
+import { LuFlag, LuTarget, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX } from "react-icons/lu";
 
 function CourseManager() {
   const navigate = useNavigate();
@@ -98,7 +101,7 @@ function CourseManager() {
         city: editCourseCity,
         state: editCourseState,
       });
-      alert("✅ Dados do campo atualizados com sucesso!");
+      alert("Dados do campo atualizados com sucesso!");
       loadCourses(); // Recarrega a lista lateral para mostrar o novo nome
     } catch (error) {
       alert("Erro ao atualizar informações do campo.");
@@ -151,9 +154,47 @@ function CourseManager() {
       await api.post("/courses/update-holes", {
         holes,
       });
-      alert("✅ Configuração de buracos salva com sucesso!");
+      alert("Configuração de buracos salva com sucesso!");
     } catch (error) {
       alert("Erro ao salvar buracos");
+    }
+  };
+
+  const handleHoleImageUpload = async (holeIndex, file) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert("A imagem deve ter no máximo 2 MB.");
+      return;
+    }
+    const hole = holes[holeIndex];
+    const form = new FormData();
+    form.append("image", file);
+    try {
+      const res = await api.post(
+        `/courses/${selectedCourseId}/holes/${hole.hole_number}/image`,
+        form,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      const updated = [...holes];
+      // cache-bust — o filename é determinístico, então o navegador segurava a imagem antiga
+      updated[holeIndex] = { ...hole, image_path: `${res.data.image_path}?t=${Date.now()}` };
+      setHoles(updated);
+    } catch (err) {
+      alert(err.response?.data?.error || "Erro ao enviar imagem.");
+    }
+  };
+
+  const handleHoleImageRemove = async (holeIndex) => {
+    const hole = holes[holeIndex];
+    if (!hole.image_path) return;
+    if (!window.confirm(`Remover a foto do buraco ${hole.hole_number}?`)) return;
+    try {
+      await api.delete(`/courses/${selectedCourseId}/holes/${hole.hole_number}/image`);
+      const updated = [...holes];
+      updated[holeIndex] = { ...hole, image_path: null };
+      setHoles(updated);
+    } catch (err) {
+      alert(err.response?.data?.error || "Erro ao remover imagem.");
     }
   };
 
@@ -163,7 +204,7 @@ function CourseManager() {
       backgroundColor: theme.bg,
       minHeight: "100vh",
       color: theme.textMain,
-      fontFamily: "'Inter', sans-serif",
+      
     },
     headerSection: {
       display: "flex",
@@ -201,13 +242,6 @@ function CourseManager() {
       cursor: "pointer",
       fontWeight: "bold",
       transition: "all 0.2s",
-    },
-    backBtn: {
-      backgroundColor: "transparent",
-      color: theme.textMuted,
-      border: `1px solid ${theme.cardLight}`,
-      marginBottom: "0",
-      width: "auto",
     },
     courseBtn: {
       flex: 1,
@@ -279,14 +313,12 @@ function CourseManager() {
 
   return (
     <div style={styles.container}>
+      <AdminNavMenu />
       <div style={styles.headerSection}>
-        <h1 style={{ margin: 0, fontSize: "24px" }}>⛳ Gestão de Campos</h1>
-        <button
-          onClick={() => navigate("/dashboard")}
-          style={{ ...styles.button, ...styles.backBtn }}
-        >
-          ⬅ Dashboard
-        </button>
+        <h1 style={{ margin: 0, fontSize: "24px", display: "flex", alignItems: "center", gap: 10 }}>
+          <LuFlag size={22} color={theme.accent} />
+          Gestão de Campos
+        </h1>
       </div>
 
       <div style={styles.columns}>
@@ -380,17 +412,33 @@ function CourseManager() {
                   onClick={() => handleSelectCourse(c.id)}
                   style={{
                     ...styles.courseBtn,
+                    borderRadius: "8px 0 0 8px",
                     ...(selectedCourseId === c.id ? styles.activeBtn : {}),
                   }}
                 >
                   {c.name} {c.city ? `(${c.city})` : ""}
                 </button>
                 <button
+                  onClick={() => navigate(`/admin/course-tees/${c.id}`)}
+                  style={{
+                    backgroundColor: theme.info,
+                    color: "#000",
+                    border: "none",
+                    padding: "0 12px",
+                    cursor: "pointer",
+                    fontWeight: "bold",
+                    fontSize: "12px",
+                  }}
+                  title="Course Rating / Slope (WHS)"
+                >
+                  <LuTarget size={14} />
+                </button>
+                <button
                   onClick={() => handleDeleteCourse(c.id, c.name)}
                   style={styles.deleteBtn}
                   title="Excluir Campo"
                 >
-                  🗑️
+                  <LuTrash2 size={14} />
                 </button>
               </div>
             ))}
@@ -494,7 +542,8 @@ function CourseManager() {
                     onClick={handleSave}
                     style={{ ...styles.button, backgroundColor: theme.accent }}
                   >
-                    💾 SALVAR BURACOS
+                    <LuSave size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+                    SALVAR BURACOS
                   </button>
                 </div>
 
@@ -504,12 +553,13 @@ function CourseManager() {
       <tr>
         <th style={styles.th}>Buraco</th>
         <th style={styles.th}>PAR</th>
-        <th style={styles.th}>⚪ Branco</th>
+        <th style={styles.th}>Branco</th>
         {/* Mudamos Amarelo para Preto */}
-        <th style={styles.th}>⚫ Preto</th> 
-        <th style={styles.th}>🔵 Azul</th>
+        <th style={styles.th}>Preto</th>
+        <th style={styles.th}>Azul</th>
         {/* Mudamos Vermelho para Verde */}
-        <th style={styles.th}>🟢 Verde</th> 
+        <th style={styles.th}>Verde</th>
+        <th style={styles.th}>Foto</th>
       </tr>
     </thead>
                     <tbody>
@@ -582,7 +632,7 @@ function CourseManager() {
                               style={styles.yardInput("#3b82f6", "#e6f2ff")}
                             />
                           </td>
-                          <td style={{ ...styles.td, ...styles.lastTd }}>
+                          <td style={styles.td}>
                             <input
                               type="number"
                               placeholder="-"
@@ -595,6 +645,14 @@ function CourseManager() {
                                 )
                               }
                               style={styles.yardInput("#ef4444", "#ffe6e6")}
+                            />
+                          </td>
+                          <td style={{ ...styles.td, ...styles.lastTd }}>
+                            <HoleImageCell
+                              hole={h}
+                              onUpload={(file) => handleHoleImageUpload(index, file)}
+                              onRemove={() => handleHoleImageRemove(index)}
+                              theme={theme}
                             />
                           </td>
                         </tr>
@@ -614,7 +672,7 @@ function CourseManager() {
                 borderStyle: "dashed",
               }}
             >
-              <div style={{ fontSize: "50px", marginBottom: "20px" }}>⬅️</div>
+              <div style={{ marginBottom: "20px" }}><LuArrowLeft size={50} /></div>
               <h2>Selecione um campo para editar</h2>
               <p>
                 Ou crie um novo campo no menu lateral para começar a configurar
@@ -625,6 +683,83 @@ function CourseManager() {
         </div>
       </div>
     </div>
+  );
+}
+
+function HoleImageCell({ hole, onUpload, onRemove, theme }) {
+  const inputId = `hole-img-${hole.id}`;
+  if (hole.image_path) {
+    return (
+      <div style={{ position: "relative", display: "inline-block" }}>
+        <img
+          src={mediaUrl(hole.image_path)}
+          alt={`Buraco ${hole.hole_number}`}
+          style={{
+            width: 48,
+            height: 48,
+            objectFit: "cover",
+            borderRadius: 6,
+            border: `1px solid ${theme.cardLight}`,
+            display: "block",
+          }}
+        />
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remover foto"
+          style={{
+            position: "absolute",
+            top: -6,
+            right: -6,
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            border: "none",
+            backgroundColor: theme.danger,
+            color: "#fff",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+          }}
+        >
+          <LuX size={12} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <label
+        htmlFor={inputId}
+        title="Adicionar foto do buraco"
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: 6,
+          border: `1px dashed ${theme.textMuted}`,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          color: theme.textMuted,
+        }}
+      >
+        <LuImagePlus size={20} />
+      </label>
+      <input
+        id={inputId}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) onUpload(f);
+        }}
+      />
+    </>
   );
 }
 

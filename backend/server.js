@@ -13,7 +13,7 @@ const db = require("./db");
 const rateLimit = require("express-rate-limit");
 const { initCronJobs } = require("./services/cronService");
 const socketService = require("./services/socketService");
-const { requireAdmin } = require("./middlewares/authMiddleware");
+const { requireAdmin, requireAuth } = require("./middlewares/authMiddleware");
 
 const authRoutes = require("./routes/authRoutes");
 const tournamentRoutes = require("./routes/tournamentRoutes");
@@ -25,6 +25,11 @@ const exportRoutes = require("./routes/exportRoutes");
 const inscriptionRoutes = require("./routes/inscriptionRoutes");
 const trainingRoutes = require("./routes/trainingRoutes");
 const circuitRoutes = require("./routes/circuitRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+const teeTimeRoutes = require("./routes/teeTimeRoutes");
+const handicapRoutes = require("./routes/handicapRoutes");
+const userRoutes = require("./routes/userRoutes");
+const { saveMyPhoto } = require("./controllers/userController");
 
 const app = express();
 const server = http.createServer(app);
@@ -69,6 +74,25 @@ fs.mkdirSync(sponsorUploadsDir, { recursive: true });
 const sponsorUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, sponsorUploadsDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (req, file, cb) =>
+    /^image\//.test(file.mimetype)
+      ? cb(null, true)
+      : cb(new Error("Apenas imagens são permitidas.")),
+});
+
+// ─── Upload de foto de perfil do jogador (mesmo padrão dos sponsors) ─────────
+const avatarUploadsDir = path.join(__dirname, "public", "uploads", "avatars");
+fs.mkdirSync(avatarUploadsDir, { recursive: true });
+
+const avatarUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, avatarUploadsDir),
     filename: (req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
       cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
@@ -156,6 +180,18 @@ app.use("/api/export", exportRoutes);
 app.use("/api/inscriptions", inscriptionRoutes);
 app.use("/api/training", trainingRoutes);
 app.use("/api/circuits", circuitRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/tee-times", teeTimeRoutes);
+app.use("/api/handicap", handicapRoutes);
+app.use("/api/users", userRoutes);
+
+// Upload da foto de perfil — requireAuth (qualquer usuário logado, só a própria foto)
+app.post(
+  "/api/users/me/photo",
+  requireAuth,
+  avatarUpload.single("photo"),
+  saveMyPhoto
+);
 
 app.post(
   "/api/sponsors/upload",

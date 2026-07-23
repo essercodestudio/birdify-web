@@ -1,15 +1,17 @@
 // frontend/src/pages/Login.js
 import React, { useState, useContext } from "react"; // 1. Adicionado useContext
 import api from "../services/api";
+import { setSession } from "../services/authStorage";
 import { useNavigate, Link } from "react-router-dom";
 import logoImg from "../assets/logo_birdify.png";
 
 // 2. Importando a Memória Global do Camaleão
-import { ThemeContext } from "../App"; 
+import { ThemeContext } from "../App";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [keepConnected, setKeepConnected] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
@@ -35,10 +37,10 @@ function Login() {
       const response = await api.post("/auth/login", {
         email: email,
         password: password,
+        keepConnected,
       });
       const { token, user } = response.data;
-      localStorage.setItem("token", token);
-      localStorage.setItem("user", JSON.stringify(user));
+      setSession({ token, user, keepConnected });
       if (user.role === "ADMIN") {
         navigate("/dashboard");
       } else {
@@ -61,13 +63,13 @@ function Login() {
       minHeight: "100vh",
       backgroundColor: theme.bg,
       color: theme.textMain,
-      fontFamily: "'Inter', sans-serif",
+      
     },
     formBox: {
       backgroundColor: theme.card,
       padding: "40px",
       borderRadius: "24px",
-      boxShadow: `0 25px 50px -12px rgba(0,0,0,0.5), 0 0 15px ${theme.accent}1A`, // Brilho sutil na cor do clube
+      boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
       width: "90%",
       maxWidth: "400px",
       textAlign: "center",
@@ -122,7 +124,6 @@ function Login() {
       fontWeight: "800",
       marginTop: "10px",
       fontSize: "16px",
-      boxShadow: `0 10px 15px -3px ${theme.accent}4D`, // Sombra dinâmica na cor do botão
     },
     error: {
       backgroundColor: "rgba(239, 68, 68, 0.1)",
@@ -185,6 +186,30 @@ function Login() {
             required
           />
 
+          <label style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "14px",
+            color: theme.textMuted,
+            marginBottom: "10px",
+            cursor: "pointer",
+            userSelect: "none",
+          }}>
+            <input
+              type="checkbox"
+              checked={keepConnected}
+              onChange={(e) => setKeepConnected(e.target.checked)}
+              style={{
+                width: "18px",
+                height: "18px",
+                accentColor: theme.accent,
+                cursor: "pointer",
+              }}
+            />
+            Manter conectado
+          </label>
+
           <button type="submit" style={styles.button}>
             ENTRAR NO SISTEMA
           </button>
@@ -207,7 +232,7 @@ function Login() {
           </button>
         </div>
 
-        {error && <div style={styles.error}>⚠️ {error}</div>}
+        {error && <div style={styles.error}>{error}</div>}
 
         <div style={styles.footer}>
           <span style={{ color: theme.textMuted, fontSize: "14px" }}>

@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api"; // Ajuste o caminho se necessário
 import { useParams, useNavigate } from "react-router-dom";
+import { downloadFile } from "../services/download";
+import { LuArrowLeft, LuClipboardList, LuFlag, LuDownload, LuTrash2, LuUser, LuX } from "react-icons/lu";
 
 function TournamentManager() {
   const { id } = useParams();
@@ -133,15 +135,19 @@ function TournamentManager() {
   };
 
   // --- NOVA FUNÇÃO BIRDIFY: EXPORTAR PARA EXCEL (Draw de Saídas) ---
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (groups.length === 0) {
       alert("Não há grupos criados para exportar.");
       return;
     }
 
     // Agora o Frontend não faz mais o trabalho pesado!
-    // Ele só pede para o Backend gerar e baixar a planilha formatada:
-    window.open(`http://localhost:3001/api/groups/export/${id}`, "_blank");
+    // Ele só pede para o Backend gerar e baixar a planilha formatada (com token):
+    try {
+      await downloadFile(`/groups/export/${id}`, `grupos_torneio_${id}.xlsx`);
+    } catch {
+      alert("Erro ao exportar. Confira se você está logado como administrador do clube.");
+    }
   };
 
   const approvedPlayers = inscriptions.filter((i) => i.status === "APPROVED");
@@ -152,7 +158,7 @@ function TournamentManager() {
       backgroundColor: theme.bg,
       minHeight: "100vh",
       color: theme.textMain,
-      fontFamily: "'Inter', sans-serif",
+      
     },
     header: {
       display: "flex",
@@ -163,11 +169,14 @@ function TournamentManager() {
     backBtn: {
       backgroundColor: "transparent",
       color: theme.textMuted,
-      border: `1px solid ${theme.cardLight}`,
-      padding: "10px 20px",
+      border: "none",
+      padding: "10px 14px",
       cursor: "pointer",
       borderRadius: "8px",
       fontWeight: "bold",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "6px",
     },
     section: {
       backgroundColor: theme.card,
@@ -280,7 +289,8 @@ function TournamentManager() {
       <div style={styles.header}>
         <h1 style={{ margin: 0, fontSize: "28px" }}>Birdify Admin</h1>
         <button onClick={() => navigate("/dashboard")} style={styles.backBtn}>
-          ⬅ Voltar ao Painel
+          <LuArrowLeft size={15} />
+          Voltar ao Painel
         </button>
       </div>
 
@@ -293,8 +303,9 @@ function TournamentManager() {
             alignItems: "center",
           }}
         >
-          <h3 style={{ marginTop: 0, color: theme.cyan, letterSpacing: "1px" }}>
-            📋 INSCRIÇÕES E ATLETAS
+          <h3 style={{ marginTop: 0, color: theme.cyan, letterSpacing: "1px", display: "flex", alignItems: "center", gap: 8 }}>
+            <LuClipboardList size={16} />
+            INSCRIÇÕES E ATLETAS
           </h3>
           <span style={{ fontSize: "12px", color: theme.textMuted }}>
             {inscriptions.length} jogadores inscritos
@@ -407,12 +418,14 @@ function TournamentManager() {
               margin: 0,
             }}
           >
-            ⛳ MONTAGEM DOS FLIGHTS
+            <LuFlag size={16} style={{ verticalAlign: "text-bottom", marginRight: 8 }} />
+            MONTAGEM DOS FLIGHTS
           </h3>
 
           {/* BOTÃO EXPORTAR EXCEL AQUI */}
           <button onClick={handleExportExcel} style={styles.btnExport}>
-            📥 Exportar Draw (Excel)
+            <LuDownload size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+            Exportar Draw (Excel)
           </button>
         </div>
 
@@ -546,7 +559,7 @@ function TournamentManager() {
                   }}
                   title="Excluir Grupo"
                 >
-                  🗑️
+                  <LuTrash2 size={15} />
                 </button>
               </div>
             </div>
@@ -562,7 +575,10 @@ function TournamentManager() {
               {group.players && group.players.length > 0 ? (
                 group.players.map((p) => (
                   <span key={p.id} style={styles.playerBadge}>
-                    <span style={{ marginRight: "10px" }}>👤 {p.name}</span>
+                    <span style={{ marginRight: "10px", display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                      <LuUser size={13} />
+                      {p.name}
+                    </span>
                     <button
                       onClick={() => handleRemovePlayer(group.id, p.id, p.name)}
                       style={{
@@ -575,7 +591,7 @@ function TournamentManager() {
                         marginLeft: "5px",
                       }}
                     >
-                      ✕
+                      <LuX size={13} />
                     </button>
                   </span>
                 ))

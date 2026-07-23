@@ -1,6 +1,8 @@
 // frontend/src/pages/PlayerDashboard.js
 import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api"; // Ajuste o caminho se necessário
+import { getUser } from "../services/authStorage";
+import { logout } from "../services/session";
 import { useNavigate } from "react-router-dom";
 
 function PlayerDashboard() {
@@ -44,13 +46,11 @@ function PlayerDashboard() {
   }, []);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (!storedUser) {
+    const parsedUser = getUser();
+    if (!parsedUser) {
       navigate("/login");
       return;
     }
-
-    const parsedUser = JSON.parse(storedUser);
     setUser(parsedUser);
 
     fetchTournaments(parsedUser.id);
@@ -171,7 +171,7 @@ function PlayerDashboard() {
       backgroundColor: theme.bg,
       minHeight: "100vh",
       color: theme.textMain,
-      fontFamily: "'Inter', sans-serif",
+      
     },
     header: {
       display: "flex",
@@ -319,10 +319,7 @@ function PlayerDashboard() {
           ← VOLTAR
         </button>
         <button
-          onClick={() => {
-            localStorage.removeItem("user");
-            navigate("/login");
-          }}
+          onClick={() => logout(navigate)}
           style={{
             padding: "10px 15px",
             backgroundColor: "transparent",
@@ -344,6 +341,23 @@ function PlayerDashboard() {
         <p style={{ color: theme.textMuted, fontSize: "14px", margin: "5px 0 0 0" }}>
           Bem-vindo ao Portal Birdify
         </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
+        {[
+          { icon: "⏰", label: "RESERVAR", path: "/tee-times" },
+          { icon: "📋", label: "MINHAS RESERVAS", path: "/my-bookings" },
+          { icon: "🏌️", label: "MEU HANDICAP", path: "/handicap" },
+        ].map((a) => (
+          <button
+            key={a.path}
+            onClick={() => navigate(a.path)}
+            style={{ padding: "14px 8px", backgroundColor: theme.card, color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 10, fontWeight: 800, fontSize: 12, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}
+          >
+            <span style={{ fontSize: 20 }}>{a.icon}</span>
+            {a.label}
+          </button>
+        ))}
       </div>
 
       <div style={styles.tabsContainer}>

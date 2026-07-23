@@ -1,7 +1,10 @@
 // frontend/src/pages/CircuitManagement.js
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
+import { getUser } from '../services/authStorage';
 import { useNavigate } from 'react-router-dom';
+import AdminNavMenu from '../components/AdminNavMenu';
+import { LuLink, LuTrash2, LuX } from 'react-icons/lu';
 
 const theme = {
   bg:        '#0f172a',
@@ -17,7 +20,7 @@ const theme = {
 };
 
 const s = {
-  container:    { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain, fontFamily: "'Segoe UI', sans-serif" },
+  container:    { padding: '20px', backgroundColor: theme.bg, minHeight: '100vh', color: theme.textMain },
   header:       { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', borderBottom: `1px solid ${theme.cardLight}`, paddingBottom: '15px', flexWrap: 'wrap', gap: '10px' },
   card:         { backgroundColor: theme.card, padding: '25px', borderRadius: '15px', marginBottom: '25px' },
   sectionTitle: { fontSize: '14px', color: theme.accent, fontWeight: 'bold', marginBottom: '15px', borderLeft: `4px solid ${theme.accent}`, paddingLeft: '10px', letterSpacing: '1px' },
@@ -114,9 +117,8 @@ export default function CircuitManagement() {
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem('user');
-    if (!stored) { navigate('/login'); return; }
-    const user = JSON.parse(stored);
+    const user = getUser();
+    if (!user) { navigate('/login'); return; }
     if (user.role !== 'ADMIN') { navigate('/'); return; }
     loadCircuits();
     loadTournaments();
@@ -172,7 +174,7 @@ export default function CircuitManagement() {
     const url = `${window.location.origin}/ranking/${circuitId}`;
     try {
       await navigator.clipboard.writeText(url);
-      setToastMsg('Link do Ranking copiado! ⛳');
+      setToastMsg('Link do Ranking copiado!');
     } catch {
       setToastMsg('Erro ao copiar. Tente manualmente.');
     }
@@ -348,6 +350,8 @@ export default function CircuitManagement() {
   return (
     <div style={s.container}>
 
+      <AdminNavMenu />
+
       {/* HEADER */}
       <div style={s.header}>
         <div>
@@ -355,14 +359,6 @@ export default function CircuitManagement() {
           <p style={{ margin: '4px 0 0', fontSize: '13px', color: theme.textMuted }}>
             Gerencie os circuitos anuais e vincule torneios como etapas.
           </p>
-        </div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/dashboard')} style={{ ...s.btn, backgroundColor: theme.cardLight, color: theme.textMain }}>
-            ← PAINEL
-          </button>
-          <button onClick={() => { localStorage.removeItem('user'); navigate('/login'); }} style={{ ...s.btn, backgroundColor: theme.cardLight, color: theme.textMuted }}>
-            SAIR
-          </button>
         </div>
       </div>
 
@@ -466,13 +462,13 @@ export default function CircuitManagement() {
                 lineHeight: 1,
               }}
             >
-              🔗
+              <LuLink size={15} />
             </button>
             <button onClick={() => handleEditCircuit(c)} style={{ ...s.btn, backgroundColor: theme.info, color: '#000' }}>
               EDITAR
             </button>
             <button onClick={() => handleDeleteCircuit(c.id, c.name)} style={{ ...s.btn, backgroundColor: theme.danger, color: '#fff' }}>
-              🗑️
+              <LuTrash2 size={15} />
             </button>
           </div>
         </div>
@@ -518,7 +514,7 @@ export default function CircuitManagement() {
                 <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: theme.textMuted, fontSize: '12px' }}>pts</span>
               </div>
               <button type="button" onClick={() => removeRuleRow(idx)} style={{ ...s.btn, backgroundColor: theme.danger, color: '#fff', padding: '8px' }}>
-                ✕
+                <LuX size={14} />
               </button>
             </div>
           ))}
@@ -553,7 +549,7 @@ export default function CircuitManagement() {
                     <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{st.tournament_name}</div>
                     {tourn && (
                       <div style={{ fontSize: '11px', color: theme.textMuted, marginTop: '2px' }}>
-                        {tourn.course_name ? `📍 ${tourn.course_name}` : ''} · {new Date(tourn.start_date).toLocaleDateString('pt-BR')}
+                        {tourn.course_name ? `${tourn.course_name} · ` : ''}{new Date(tourn.start_date).toLocaleDateString('pt-BR')}
                       </div>
                     )}
                   </div>
@@ -744,7 +740,7 @@ export default function CircuitManagement() {
                   onClick={() => handleDeleteSponsor(sp.id, sp.name)}
                   style={{ ...s.btn, backgroundColor: theme.danger, color: '#fff', padding: '8px 10px' }}
                 >
-                  🗑️
+                  <LuTrash2 size={14} />
                 </button>
               </div>
             );

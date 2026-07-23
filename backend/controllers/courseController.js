@@ -1,5 +1,24 @@
 // backend/controllers/courseController.js
 const db = require("../db");
+const fs = require("fs");
+const path = require("path");
+
+const HOLE_IMAGES_ROOT = path.join(__dirname, "..", "public", "uploads", "holes");
+
+function relativeHoleImagePath(clubId, courseId, holeNumber, ext) {
+  return `/uploads/holes/${clubId}/${courseId}-${holeNumber}${ext}`;
+}
+
+async function assertHoleBelongsToClub(courseId, holeNumber, clubId) {
+  const [rows] = await db.execute(
+    `SELECT h.id, h.image_path
+       FROM holes h
+       JOIN courses c ON c.id = h.course_id
+      WHERE h.course_id = ? AND h.hole_number = ? AND c.club_id = ?`,
+    [courseId, holeNumber, clubId],
+  );
+  return rows[0] || null;
+}
 
 // 1. Listar todos os campos
 exports.listCourses = async (req, res) => {
@@ -218,6 +237,105 @@ exports.deleteCourse = async (req, res) => {
     res.status(500).json({
       error: "Erro interno no servidor.",
     });
+  }
+};
+
+// 5b. UPLOAD DE IMAGEM DE UM BURACO
+exports.uploadHoleImage = async (req, res) => {
+  try {
+    const courseId = Number(req.params.courseId);
+    const holeNumber = Number(req.params.holeNumber);
+    if (!courseId || !holeNumber || holeNumber < 1 || holeNumber > 18) {
+      return res.status(400).json({ error: "Parâmetros inválidos." });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Nenhum arquivo enviado." });
+    }
+
+    const hole = await assertHoleBelongsToClub(courseId, holeNumber, req.club.id);
+    if (!hole) {
+      // arquivo já foi salvo pelo multer — remove pra não deixar lixo
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(404).json({ error: "Buraco não encontrado." });
+    }
+
+    // Remove imagem antiga (se existir e o arquivo novo tiver extensão diferente,
+    // o disco fica com dois arquivos senão) e a linha do banco anterior.
+    if (hole.image_path) {
+      const oldAbs = path.join(__dirname, "..", "public", hole.image_path.replace(/^\/+/, ""));
+      if (oldAbs !== req.file.path) {
+        try { fs.unlinkSync(oldAbs); } catch {}
+      }
+    }
+
+    const ext = path.extname(req.file.filename).toLowerCase();
+    const imagePath = relativeHoleImagePath(req.club.id, courseId, holeNumber, ext);
+
+    await db.execute(
+      "UPDATE holes SET image_path = ? WHERE course_id = ? AND hole_number = ?",
+      [imagePath, courseId, holeNumber],
+    );
+
+    res.json({ image_path: imagePath });
+  } catch (err) {
+    console.error("Erro no upload de imagem do buraco:", err);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
+// 5c. REMOVER IMAGEM DE UM BURACO
+exports.deleteHoleImage = async (req, res) => {
+  try {
+    const courseId = Number(req.params.courseId);
+    const holeNumber = Number(req.params.holeNumber);
+    if (!courseId || !holeNumber) {
+      return res.status(400).json({ error: "Parâmetros inválidos." });
+    }
+
+    const hole = await assertHoleBelongsToClub(courseId, holeNumber, req.club.id);
+    if (!hole) return res.status(404).json({ error: "Buraco não encontrado." });
+
+    if (hole.image_path) {
+      const abs = path.join(__dirname, "..", "public", hole.image_path.replace(/^\/+/, ""));
+      try { fs.unlinkSync(abs); } catch {}
+    }
+
+    await db.execute(
+      "UPDATE holes SET image_path = NULL WHERE course_id = ? AND hole_number = ?",
+      [courseId, holeNumber],
+    );
+
+    res.json({ image_path: null });
+  } catch (err) {
+    console.error("Erro ao remover imagem do buraco:", err);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
+exports.HOLE_IMAGES_ROOT = HOLE_IMAGES_ROOT;
+
+// 5d. VISUALIZAR CAMPO (público dentro do tenant, sem requireAuth)
+exports.getCoursePreview = async (req, res) => {
+  try {
+    const courseId = Number(req.params.courseId);
+    if (!courseId) return res.status(400).json({ error: "ID inválido." });
+
+    const [courses] = await db.execute(
+      "SELECT id, name, city, state FROM courses WHERE id = ? AND club_id = ?",
+      [courseId, req.club.id],
+    );
+    if (courses.length === 0) return res.status(404).json({ error: "Campo não encontrado." });
+
+    const [holes] = await db.execute(
+      `SELECT hole_number, par, yards_white, yards_yellow, yards_blue, yards_red, image_path
+         FROM holes WHERE course_id = ? ORDER BY hole_number ASC`,
+      [courseId],
+    );
+
+    res.json({ course: courses[0], holes });
+  } catch (err) {
+    console.error("Erro ao buscar preview do campo:", err);
+    res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 

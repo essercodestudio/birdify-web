@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { getUser } from "../services/authStorage";
 import { ThemeContext } from "../App";
+import { LuArrowLeft, LuChartBar } from "react-icons/lu";
 
 const TABS = ["Treinos", "Torneios"];
 
@@ -134,7 +136,7 @@ function ScorecardAccordion({ holes }) {
 function PlayerHistory() {
   const navigate = useNavigate();
   const clubTheme = useContext(ThemeContext);
-  const loggedUser = JSON.parse(localStorage.getItem("user") || "null");
+  const loggedUser = getUser();
 
   const accent = clubTheme?.primary_color || "#22c55e";
   const theme = {
@@ -225,7 +227,7 @@ function PlayerHistory() {
       backgroundColor: theme.bg,
       minHeight: "100vh",
       color: theme.textMain,
-      fontFamily: "'Segoe UI', Roboto, sans-serif",
+      
     },
     inner: { maxWidth: "480px", margin: "0 auto" },
     header: {
@@ -238,13 +240,16 @@ function PlayerHistory() {
     },
     btnBack: {
       backgroundColor: "transparent",
-      color: theme.gold,
-      border: `1px solid ${theme.gold}`,
-      padding: "8px 16px",
+      color: theme.textMuted,
+      border: "none",
+      padding: "8px 12px",
       borderRadius: "8px",
       fontWeight: "bold",
       cursor: "pointer",
       fontSize: "13px",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "6px",
     },
     tabs: { display: "flex", gap: "8px", marginBottom: "20px" },
     tabBtn: (active) => ({
@@ -257,7 +262,6 @@ function PlayerHistory() {
       cursor: "pointer",
       backgroundColor: active ? accent : theme.card,
       color: active ? "#000" : theme.textMuted,
-      boxShadow: active ? `0 4px 12px -2px ${accent}44` : "none",
     }),
     card: {
       backgroundColor: theme.card,
@@ -308,16 +312,20 @@ function PlayerHistory() {
             style={st.btnBack}
             onClick={() => navigate("/", { replace: true })}
           >
-            ⬅ VOLTAR
+            <LuArrowLeft size={15} /> VOLTAR
           </button>
           <span
             style={{
               fontSize: "15px",
               fontWeight: "bold",
               color: theme.textMain,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            📊 Meu Histórico
+            <LuChartBar size={15} />
+            Meu Histórico
           </span>
         </div>
 

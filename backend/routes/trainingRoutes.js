@@ -11,6 +11,7 @@ router.post('/delete',        requireAuth, ctrl.deleteGroup);
 router.get('/group/:groupId', ctrl.getTableDetails);
 router.post('/score',         requireAuth, ctrl.saveScore);
 router.get('/scores/:groupId',ctrl.getScores);
+router.post('/save-handicaps', requireAuth, ctrl.saveHandicaps);
 router.post('/start',         requireAuth, ctrl.startTraining);
 router.post('/finish',        requireAuth, ctrl.finishTraining);
 router.get('/current',        ctrl.getCurrentGroup);
