@@ -609,12 +609,9 @@ function Scorecard() {
             <span style={styles.parInfo}>PAR {currentHoleData.par}</span>
             <HoleDistanceBadge hole={currentHoleData} />
           </div>
-          <div style={styles.details}>
-            {currentHoleData.yards_blue > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#0077b6", color: "white" }}>{currentHoleData.yards_blue} yds</span>}
-            {currentHoleData.yards_white > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#ffffff", color: "black" }}>{currentHoleData.yards_white} yds</span>}
-            {currentHoleData.yards_yellow > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#000000", color: "white" }}>{currentHoleData.yards_yellow} yds</span>}
-            {currentHoleData.yards_red > 0 && <span style={{ ...styles.yardBadge, backgroundColor: "#22c55e", color: "white" }}>{currentHoleData.yards_red} yds</span>}
-          </div>
+          {/* Pills de yards por tee agora vêm dentro do HoleDistanceBadge acima —
+              evita duplicação. Cores yellow/red antigas estavam trocadas (yellow→preto,
+              red→verde); o componente novo tem as cores corretas do padrão de golfe. */}
         </div>
         <button style={styles.navBtn} onClick={() => changeHole(1)} disabled={isSaving}>▶</button>
       </div>

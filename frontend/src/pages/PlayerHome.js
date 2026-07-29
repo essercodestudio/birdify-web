@@ -311,12 +311,9 @@ function PlayerHome() {
         updateUser(updatedUser);
         setUser(updatedUser);
       }
-      setProfileMsg("Perfil salvo!");
-      // Fecha o modal automaticamente depois de 1.2s (tempo pra ler a msg).
-      setTimeout(() => {
-        setProfileMsg("");
-        setProfileOpen(false);
-      }, 1200);
+      // Fecha o modal imediatamente após salvar — sem delay/mensagem intermediária.
+      setProfileMsg("");
+      setProfileOpen(false);
     } catch (e) {
       setProfileMsg(e.response?.data?.error || "Erro ao salvar perfil.");
     } finally {
@@ -515,12 +512,14 @@ function PlayerHome() {
       left: 0,
       right: 0,
       bottom: 0,
+      // 10001 pra ficar acima da GlobalSponsorsBar (App.js — zIndex 9999).
+      // Modal precisa cobrir o rodapé fixo enquanto aberto.
+      zIndex: 10001,
       backgroundColor: "rgba(15, 23, 42, 0.9)",
       backdropFilter: "blur(5px)",
       display: "flex",
       justifyContent: "center",
       alignItems: "center",
-      zIndex: 1000,
       padding: space[4],
     },
     modalContent: {
