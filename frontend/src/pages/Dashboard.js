@@ -37,11 +37,17 @@ const isToday = (dateStr) => {
   return d === n;
 };
 
-// Valida se o ano da data está no intervalo permitido
+// "Agora" no formato do <input type="datetime-local">, em horário de Brasília.
+// Usa TZ pra bater com o que o input mostra pro admin.
+const nowLocalInput = () =>
+  new Date().toLocaleString('sv-SE', { timeZone: TZ }).replace(' ', 'T').slice(0, 16);
+
+// Sanidade: impede ano absurdo tipo 9999 (o max do input já cobre no clique, mas
+// mensagem melhor se o admin colar/digitar).
 const validYear = (dateStr) => {
   if (!dateStr) return true;
   const y = new Date(dateStr).getFullYear();
-  return y >= 2024 && y <= 2030;
+  return y >= 2020 && y <= 2035;
 };
 
 function Dashboard() {
@@ -53,6 +59,7 @@ function Dashboard() {
   const [newTournamentName, setNewTournamentName] = useState('');
   const [newTournamentDate, setNewTournamentDate] = useState('');
   const [selectedCourseId, setSelectedCourseId] = useState('');
+  const [format, setFormat] = useState('shotgun');
   const [description, setDescription] = useState('');
   const [paymentInfo, setPaymentInfo] = useState('');
   const [fee, setFee] = useState('');
@@ -157,13 +164,29 @@ function Dashboard() {
   const handleSubmitTournament = async (e) => {
     e.preventDefault();
     if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
-    if (!validYear(newTournamentDate)) { alert('Ano inválido. Use uma data entre 2024 e 2030.'); return; }
-    if (registrationDeadline && !validYear(registrationDeadline)) { alert('Ano da data limite inválido. Use entre 2024 e 2030.'); return; }
+    if (!validYear(newTournamentDate)) { alert('Ano da data do torneio inválido.'); return; }
+    if (registrationDeadline && !validYear(registrationDeadline)) { alert('Ano da data limite inválido.'); return; }
+
+    // Não permite data no passado (só na criação — em edição de torneio antigo,
+    // a data pode legitimamente já ter passado; nesse caso só valida consistência)
+    const now = nowLocalInput();
+    if (!isEditing) {
+      if (newTournamentDate && newTournamentDate < now) {
+        alert('A data do torneio deve ser futura.'); return;
+      }
+      if (registrationDeadline && registrationDeadline < now) {
+        alert('A data limite de inscrição deve ser futura.'); return;
+      }
+    }
+    if (registrationDeadline && newTournamentDate && registrationDeadline >= newTournamentDate) {
+      alert('A data limite de inscrição deve ser anterior à data do torneio.'); return;
+    }
     
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
-      registration_deadline: registrationDeadline, categories: selectedCategories, sponsors
+      registration_deadline: registrationDeadline, categories: selectedCategories, sponsors,
+      format
     };
     
     try {
@@ -189,6 +212,7 @@ function Dashboard() {
       setSelectedCategories(t.categories || []);
       setSponsors(t.sponsors || []);
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
+      setFormat(t.format === 'tee_time' ? 'tee_time' : 'shotgun');
       setIsEditing(true);
       setEditTournamentId(t.id);
       window.scrollTo(0, 0);
@@ -199,6 +223,7 @@ function Dashboard() {
     setNewTournamentName(''); setNewTournamentDate(''); setSelectedCourseId('');
     setDescription(''); setFee(''); setPaymentInfo(''); setWhatsappContact(''); setRegistrationDeadline('');
     setSelectedCategories([]); setSponsors([]); setPixKeyType('Chave Aleatória');
+    setFormat('shotgun');
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -247,9 +272,43 @@ function Dashboard() {
             </div>
             <div style={styles.inputGroup}>
               <label style={styles.label}>DATA E HORA (Horário de Brasília)</label>
-              <input style={styles.input} type="datetime-local" value={newTournamentDate} onChange={e => setNewTournamentDate(e.target.value)} min="2024-01-01T00:00" max="2030-12-31T23:59" required />
+              <input style={styles.input} type="datetime-local" value={newTournamentDate} onChange={e => setNewTournamentDate(e.target.value)} min={isEditing ? undefined : nowLocalInput()} max="2035-12-31T23:59" required />
             </div>
           </div>
+
+          {/* Formato do torneio: define como os grupos saem do campo. Muda a UI
+              do TournamentManager (buraco escolhível vs horário editável). */}
+          <div style={{...styles.inputGroup, marginTop: '20px'}}>
+            <label style={styles.label}>FORMATO DO TORNEIO</label>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {[
+                { value: 'shotgun',  label: 'Shotgun',  hint: 'Todos ao mesmo tempo, cada grupo em um buraco diferente' },
+                { value: 'tee_time', label: 'Tee time', hint: 'Todos do buraco 1, em horários escalonados' },
+              ].map(opt => {
+                const active = format === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setFormat(opt.value)}
+                    style={{
+                      flex: 1, minWidth: 180,
+                      padding: '14px', borderRadius: 8,
+                      border: `1px solid ${active ? theme.accent : theme.cardLight}`,
+                      backgroundColor: active ? theme.accent : theme.bg,
+                      color: active ? '#000' : theme.textMuted,
+                      cursor: 'pointer', textAlign: 'left',
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  >
+                    <div style={{ fontSize: 14 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4, fontWeight: 600 }}>{opt.hint}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div style={{...styles.inputGroup, marginTop: '20px'}}>
             <label style={styles.label}>DESCRIÇÃO / REGRAS</label>
             <textarea style={styles.textarea} value={description} onChange={e => setDescription(e.target.value)} />
@@ -294,7 +353,7 @@ function Dashboard() {
             </div>
             <div style={styles.inputGroup}>
               <label style={styles.label}>DATA LIMITE INSCRIÇÃO (Horário de Brasília)</label>
-              <input style={styles.input} type="datetime-local" value={registrationDeadline} onChange={e => setRegistrationDeadline(e.target.value)} min="2024-01-01T00:00" max="2030-12-31T23:59" />
+              <input style={styles.input} type="datetime-local" value={registrationDeadline} onChange={e => setRegistrationDeadline(e.target.value)} min={isEditing ? undefined : nowLocalInput()} max={newTournamentDate || "2035-12-31T23:59"} />
             </div>
           </div>
 

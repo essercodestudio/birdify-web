@@ -217,7 +217,6 @@ function TrainingLeaderboard() {
       </div>
 
       <div style={styles.tableCard}>
-        {/* Cabeçalho — HB omitido para Footgolf */}
         <div style={styles.headerRow}>
           <div>#</div>
           <div>ATLETA</div>

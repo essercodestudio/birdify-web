@@ -142,9 +142,13 @@ exports.listAllBookings = async (req, res) => {
     const filters = ["b.club_id = ?"];
     const params = [cid];
 
-    if (req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)) {
-      filters.push("b.booking_date = ?");
-      params.push(req.query.date);
+    if (req.query.date_from && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date_from)) {
+      filters.push("b.booking_date >= ?");
+      params.push(req.query.date_from);
+    }
+    if (req.query.date_to && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date_to)) {
+      filters.push("b.booking_date <= ?");
+      params.push(req.query.date_to);
     }
     if (req.query.status && ["pending", "confirmed", "canceled", "no_show"].includes(req.query.status)) {
       filters.push("b.status = ?");

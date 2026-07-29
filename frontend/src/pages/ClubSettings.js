@@ -36,7 +36,6 @@ function ClubSettings() {
     primary_color: "#22c55e",
     background_color: "",
     logo_url: "",
-    sport_type: "golf",
     domain: "",
   });
 
@@ -49,7 +48,6 @@ function ClubSettings() {
         primary_color: res.data.primary_color || "#22c55e",
         background_color: res.data.background_color || "",
         logo_url: res.data.logo_url || "",
-        sport_type: res.data.sport_type || "golf",
         domain: res.data.domain || "",
       });
     } catch (e) {
@@ -99,7 +97,6 @@ function ClubSettings() {
         primary_color: form.primary_color,
         background_color: form.background_color,
         logo_url: form.logo_url,
-        sport_type: form.sport_type,
       };
       const res = await api.put("/admin/club", payload);
       setOk("Configurações salvas com sucesso!");
@@ -160,17 +157,6 @@ function ClubSettings() {
                 style={{ width: "100%", padding: 12, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, boxSizing: "border-box" }}
                 maxLength={100}
               />
-            </Field>
-
-            <Field theme={theme} label="Esporte">
-              <select
-                value={form.sport_type}
-                onChange={(e) => set("sport_type", e.target.value)}
-                style={{ width: "100%", padding: 12, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, boxSizing: "border-box" }}
-              >
-                <option value="golf">Golfe</option>
-                <option value="footgolf">Footgolf</option>
-              </select>
             </Field>
 
             <Field theme={theme} label="Cor primária" hint="Cor da marca — usada em botões e destaques.">
@@ -274,12 +260,9 @@ function ClubSettings() {
                 </div>
               )}
 
-              <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 800, marginBottom: 4 }}>
+              <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 800, marginBottom: 16 }}>
                 {form.name || "Nome do clube"}
               </h2>
-              <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 16 }}>
-                {form.sport_type === "footgolf" ? "Footgolf" : "Golfe"}
-              </p>
 
               <button
                 style={{

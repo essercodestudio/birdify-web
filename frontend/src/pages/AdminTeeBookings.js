@@ -12,13 +12,8 @@ const buildStatus = (theme) => ({
   pending:   { text: "Aguardando",  color: theme.gold,      bg: "#78350f" },
   confirmed: { text: "Confirmada",  color: theme.accent,    bg: "#052e16" },
   canceled:  { text: "Cancelada",   color: theme.textMuted, bg: theme.cardLight },
-  no_show:   { text: "No-show",     color: theme.danger,    bg: "#4c1d1d" },
+  no_show:   { text: "Não compareceu", color: theme.danger,  bg: "#4c1d1d" },
 });
-
-const toISODate = (d) => {
-  const tzOffset = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
-};
 
 const fmtDate = (d) => {
   if (!d) return "";
@@ -32,7 +27,8 @@ function AdminTeeBookings() {
   const theme = useBirdifyTheme();
   const isMobile = useIsMobile();
   const STATUS = buildStatus(theme);
-  const [dateFilter, setDateFilter] = useState(toISODate(new Date()));
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -42,7 +38,8 @@ function AdminTeeBookings() {
     setLoading(true);
     try {
       const params = {};
-      if (dateFilter) params.date = dateFilter;
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo)   params.date_to   = dateTo;
       if (statusFilter) params.status = statusFilter;
       const res = await api.get("/admin/tee-bookings", { params });
       setBookings(res.data);
@@ -51,7 +48,7 @@ function AdminTeeBookings() {
     } finally {
       setLoading(false);
     }
-  }, [dateFilter, statusFilter]);
+  }, [dateFrom, dateTo, statusFilter]);
 
   useEffect(() => {
     const u = getUser();
@@ -97,10 +94,28 @@ function AdminTeeBookings() {
         </div>
 
         {/* Filtros */}
-        <div style={{ backgroundColor: theme.card, padding: 16, borderRadius: 12, marginBottom: 16, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr auto", gap: 12, alignItems: "end" }}>
+        <div style={{ backgroundColor: theme.card, padding: 16, borderRadius: 12, marginBottom: 16, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr auto", gap: 12, alignItems: "end" }}>
           <div>
-            <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Data</label>
-            <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, width: "100%", boxSizing: "border-box" }} />
+            <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Período</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                max={dateTo || undefined}
+                aria-label="Data inicial"
+                style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, flex: 1, minWidth: 0, boxSizing: "border-box" }}
+              />
+              <span style={{ color: theme.textMuted, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>até</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                min={dateFrom || undefined}
+                aria-label="Data final"
+                style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, flex: 1, minWidth: 0, boxSizing: "border-box" }}
+              />
+            </div>
           </div>
           <div>
             <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Status</label>
@@ -109,10 +124,10 @@ function AdminTeeBookings() {
               <option value="pending">Aguardando</option>
               <option value="confirmed">Confirmada</option>
               <option value="canceled">Cancelada</option>
-              <option value="no_show">No-show</option>
+              <option value="no_show">Não compareceu</option>
             </select>
           </div>
-          <button onClick={() => { setDateFilter(""); setStatusFilter(""); }} style={{ padding: "10px 16px", backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer" }}>
+          <button onClick={() => { setDateFrom(""); setDateTo(""); setStatusFilter(""); }} style={{ padding: "10px 16px", backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer" }}>
             Limpar
           </button>
         </div>
@@ -170,7 +185,7 @@ function AdminTeeBookings() {
                           {b.status === "confirmed" && (
                             <>
                               <button onClick={() => updateStatus(b.id, "no_show")} disabled={updatingId === b.id} style={{ marginRight: 4, padding: "6px 10px", backgroundColor: theme.gold, color: "#000", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-                                No-show
+                                Não compareceu
                               </button>
                               <button onClick={() => updateStatus(b.id, "canceled")} disabled={updatingId === b.id} style={{ padding: "6px 10px", backgroundColor: theme.danger, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                                 Cancelar

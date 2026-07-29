@@ -61,10 +61,35 @@ exports.getTournament = async (req, res) => {
     }
 };
 
-// ─── helper de validação de ano ──────────────────────────────────────────────
+// ─── helpers de validação de data ────────────────────────────────────────────
+// Sanidade de ano (evita 9999). O frontend recebe DATETIME em BRT como string
+// "YYYY-MM-DDTHH:MM" sem sufixo de fuso — comparar como string é cronológico
+// e evita bug de timezone do servidor (que pode estar em UTC).
 function validateYear(dateStr) {
     const year = parseInt(String(dateStr || '').substring(0, 4));
-    return !isNaN(year) && year >= 2024 && year <= 2030;
+    return !isNaN(year) && year >= 2020 && year <= 2035;
+}
+
+// "Agora" no formato YYYY-MM-DDTHH:MM em BRT (Birdify é BR-only).
+function nowBRT() {
+    return new Date()
+        .toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' })
+        .replace(' ', 'T').slice(0, 16);
+}
+
+// Normaliza a string do cliente pra formato comparável.
+function normDate(d) {
+    return String(d || '').slice(0, 16);
+}
+
+function isPast(dateStr) {
+    if (!dateStr) return false;
+    return normDate(dateStr) < nowBRT();
+}
+
+function deadlineBeforeStart(deadline, start) {
+    if (!deadline || !start) return true;
+    return normDate(deadline) < normDate(start);
 }
 
 // 3. CRIAR TORNEIO
@@ -72,32 +97,43 @@ exports.createTournament = async (req, res) => {
     try {
         const {
             name, start_date, course_id, description, fee, payment_info, pix_key_type,
-            whatsapp_contact, registration_deadline, categories, sponsors
+            whatsapp_contact, registration_deadline, categories, sponsors, format
         } = req.body;
 
         if (!validateYear(start_date)) {
-            return res.status(400).json({ error: 'Data inválida. Use um ano entre 2024 e 2030.' });
+            return res.status(400).json({ error: 'Data do torneio inválida.' });
         }
         if (registration_deadline && !validateYear(registration_deadline)) {
-            return res.status(400).json({ error: 'Data limite inválida. Use um ano entre 2024 e 2030.' });
+            return res.status(400).json({ error: 'Data limite de inscrição inválida.' });
         }
+        // Criação: não permite data no passado.
+        if (isPast(start_date)) {
+            return res.status(400).json({ error: 'A data do torneio deve ser futura.' });
+        }
+        if (registration_deadline && isPast(registration_deadline)) {
+            return res.status(400).json({ error: 'A data limite de inscrição deve ser futura.' });
+        }
+        if (!deadlineBeforeStart(registration_deadline, start_date)) {
+            return res.status(400).json({ error: 'A data limite de inscrição deve ser anterior à data do torneio.' });
+        }
+        const fmt = format === 'tee_time' ? 'tee_time' : 'shotgun';
 
         // Verifica se o campo pertence ao clube
         const [courseCheck] = await db.execute(
             'SELECT id FROM courses WHERE id = ? AND club_id = ?',
             [course_id, req.club.id]
         );
-        
+
         if (courseCheck.length === 0) {
             return res.status(403).json({ error: 'Campo não encontrado ou acesso negado.' });
         }
 
         const query = `
-            INSERT INTO tournaments 
-            (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, club_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tournaments
+            (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, club_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, req.club.id];
+        const values = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, fmt, req.club.id];
 
         const [result] = await db.execute(query, values);
         
@@ -140,15 +176,21 @@ exports.updateTournament = async (req, res) => {
         const { id } = req.params;
         const {
             name, start_date, course_id, description, fee, payment_info, pix_key_type,
-            whatsapp_contact, registration_deadline, categories, sponsors
+            whatsapp_contact, registration_deadline, categories, sponsors, format
         } = req.body;
 
         if (!validateYear(start_date)) {
-            return res.status(400).json({ error: 'Data inválida. Use um ano entre 2024 e 2030.' });
+            return res.status(400).json({ error: 'Data do torneio inválida.' });
         }
         if (registration_deadline && !validateYear(registration_deadline)) {
-            return res.status(400).json({ error: 'Data limite inválida. Use um ano entre 2024 e 2030.' });
+            return res.status(400).json({ error: 'Data limite de inscrição inválida.' });
         }
+        // Edição: não valida "data no passado" (permite editar torneio antigo pra
+        // corrigir descrição, fee, etc). Só exige consistência entre as datas.
+        if (!deadlineBeforeStart(registration_deadline, start_date)) {
+            return res.status(400).json({ error: 'A data limite de inscrição deve ser anterior à data do torneio.' });
+        }
+        const fmt = format === 'tee_time' ? 'tee_time' : 'shotgun';
 
         // Verifica se o torneio pertence ao clube
         const [tournamentCheck] = await db.execute(
@@ -172,11 +214,11 @@ exports.updateTournament = async (req, res) => {
 
         // 1. Atualizar dados principais do torneio
         const updateQuery = `
-            UPDATE tournaments SET 
-            name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=? 
+            UPDATE tournaments SET
+            name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?, whatsapp_contact=?, registration_deadline=?, format=?
             WHERE id=? AND club_id=?
         `;
-        const updateValues = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, id, req.club.id];
+        const updateValues = [name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, fmt, id, req.club.id];
 
         await db.execute(updateQuery, updateValues);
 

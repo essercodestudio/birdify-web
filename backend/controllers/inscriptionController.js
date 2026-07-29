@@ -133,12 +133,11 @@ exports.getInscriptions = async (req, res) => {
 exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // Vai receber 'APPROVED' ou 'REJECTED'
+    const { status } = req.body; // 'APPROVED', 'REJECTED' ou 'PENDING' (reverter)
 
-    // Validação básica do status
-    if (!["APPROVED", "REJECTED"].includes(status)) {
+    if (!["APPROVED", "REJECTED", "PENDING"].includes(status)) {
       return res.status(400).json({
-        error: "Status inválido. Use APPROVED ou REJECTED.",
+        error: "Status inválido. Use APPROVED, REJECTED ou PENDING.",
       });
     }
 

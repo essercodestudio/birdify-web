@@ -5,18 +5,24 @@ import React from "react";
 
 const YARDS_PER_METER = 1.0936;
 
+// Piso plausível pra jarda real de buraco de golfe (par-3 mais curto do mundo
+// tem ~80y). Qualquer valor abaixo disso é lixo/erro de digitação, ignora.
+const MIN_PLAUSIBLE_YARDS = 60;
+
 function pickDistance(hole) {
   if (!hole) return { value: 0, unit: "jd" };
-  // Prioridade: primeira coluna com valor > 0 na ordem "trás pra frente"
-  const yardsCandidates = [hole.yards_black, hole.yards_blue, hole.yards_white, hole.yards_yellow, hole.yards_red, hole.yards];
+  // Prioridade: white (padrão amador BR) → yellow → blue (trás) → red → yards (legado).
+  // yards_black foi removido — não existe no schema atual e nunca teve valor.
+  const yardsCandidates = [hole.yards_white, hole.yards_yellow, hole.yards_blue, hole.yards_red, hole.yards];
   for (const v of yardsCandidates) {
     const n = Number(v);
-    if (n > 0) return { value: Math.round(n), unit: "jd" };
+    if (n >= MIN_PLAUSIBLE_YARDS) return { value: Math.round(n), unit: "jd" };
   }
   const metersCandidates = [hole.meters, hole.metros, hole.distance_meters];
   for (const v of metersCandidates) {
     const n = Number(v);
-    if (n > 0) return { value: Math.round(n * YARDS_PER_METER), unit: "jd" };
+    // Piso em metros: 55m ≈ 60y
+    if (n >= 55) return { value: Math.round(n * YARDS_PER_METER), unit: "jd" };
   }
   return { value: 0, unit: "jd" };
 }

@@ -799,10 +799,13 @@ export default function CircuitManagement() {
         </div>
       )}
 
-      {/* TOAST */}
+      {/* TOAST — bottom 85px + zIndex 10000 pra ficar acima da GlobalSponsorsBar
+          (bottom:0, altura 65px, z-index 9999 em App.js). Se a barra não existir,
+          fica um pouco alto mas ainda legível. */}
       {toastMsg && (
         <div style={{
-          position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+          position: 'fixed', bottom: '85px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 10000,
           backgroundColor: theme.accent, color: '#000',
           padding: '12px 24px', borderRadius: '10px',
           fontSize: '14px', fontWeight: '700',

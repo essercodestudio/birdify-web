@@ -12,6 +12,7 @@ import { logout } from "../services/session";
 import {
   LuChartBar,
   LuSettings,
+  LuMegaphone,
   LuTrophy,
   LuCalendarClock,
   LuLink,
@@ -27,6 +28,7 @@ const GROUPS = [
     items: [
       { icon: LuChartBar, label: "Painel do Gestor", path: "/admin/kpis" },
       { icon: LuSettings, label: "Configurações do Clube", path: "/admin/clube" },
+      { icon: LuMegaphone, label: "Patrocinadores", path: "/admin/patrocinadores" },
     ],
   },
   {

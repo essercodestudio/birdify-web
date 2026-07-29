@@ -162,7 +162,7 @@ exports.getClub = async (req, res) => {
     if (!cid) return res.status(400).json({ error: "Clube não identificado." });
 
     const [rows] = await db.execute(
-      `SELECT id, name, domain, primary_color, background_color, logo_url, sport_type
+      `SELECT id, name, domain, primary_color, background_color, logo_url
          FROM clubs WHERE id = ?`,
       [cid]
     );
@@ -174,13 +174,13 @@ exports.getClub = async (req, res) => {
   }
 };
 
-// PUT /api/admin/club — atualiza identidade visual + esporte do clube atual
+// PUT /api/admin/club — atualiza identidade visual do clube atual
 exports.updateClub = async (req, res) => {
   try {
     const cid = req.club?.id;
     if (!cid) return res.status(400).json({ error: "Clube não identificado." });
 
-    const { name, primary_color, background_color, logo_url, sport_type } = req.body || {};
+    const { name, primary_color, background_color, logo_url } = req.body || {};
 
     if (name !== undefined && (typeof name !== "string" || name.trim().length < 2 || name.length > 100)) {
       return res.status(400).json({ error: "Nome inválido (2 a 100 caracteres)." });
@@ -194,9 +194,6 @@ exports.updateClub = async (req, res) => {
     if (logo_url !== undefined && !isSafeUrl(logo_url)) {
       return res.status(400).json({ error: "URL de logo inválida." });
     }
-    if (sport_type !== undefined && !["golf", "footgolf"].includes(sport_type)) {
-      return res.status(400).json({ error: "Esporte deve ser 'golf' ou 'footgolf'." });
-    }
 
     // Monta UPDATE dinâmico com apenas campos enviados
     const fields = [];
@@ -205,7 +202,6 @@ exports.updateClub = async (req, res) => {
     if (primary_color !== undefined)    { fields.push("primary_color = ?");    values.push(primary_color); }
     if (background_color !== undefined) { fields.push("background_color = ?"); values.push(background_color); }
     if (logo_url !== undefined)         { fields.push("logo_url = ?");         values.push(logo_url); }
-    if (sport_type !== undefined)       { fields.push("sport_type = ?");       values.push(sport_type); }
 
     if (fields.length === 0) {
       return res.status(400).json({ error: "Nenhum campo para atualizar." });
@@ -223,7 +219,7 @@ exports.updateClub = async (req, res) => {
 
     // Retorna estado atualizado
     const [rows] = await db.execute(
-      `SELECT id, name, domain, primary_color, background_color, logo_url, sport_type
+      `SELECT id, name, domain, primary_color, background_color, logo_url
          FROM clubs WHERE id = ?`,
       [cid]
     );

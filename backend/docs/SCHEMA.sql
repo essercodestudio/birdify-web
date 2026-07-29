@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS clubs (
   primary_color     VARCHAR(7)   DEFAULT '#22c55e',
   background_color  VARCHAR(7)   DEFAULT NULL,
   logo_url          VARCHAR(500) DEFAULT NULL,
-  sport_type        VARCHAR(20)  DEFAULT 'golf',
   created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_clubs_domain (domain)
 );
@@ -109,6 +108,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
   whatsapp_contact       VARCHAR(30)   DEFAULT NULL,
   registration_deadline  DATE          DEFAULT NULL,
   status                 VARCHAR(30)   NOT NULL DEFAULT 'OPEN',
+  format                 ENUM('shotgun','tee_time') NOT NULL DEFAULT 'shotgun',
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS tournament_groups (
   group_name     VARCHAR(100) DEFAULT NULL,
   access_code    VARCHAR(20)  NOT NULL,
   starting_hole  INT NOT NULL DEFAULT 1,
+  tee_time       TIME DEFAULT NULL,
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tgroup_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
   UNIQUE KEY uk_tgroup_code (access_code)

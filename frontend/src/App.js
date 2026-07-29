@@ -24,6 +24,7 @@ import AdminKPIs from './pages/AdminKPIs';
 import ClubSettings from './pages/ClubSettings';
 import AdminTeeSettings from './pages/AdminTeeSettings';
 import AdminTeeBookings from './pages/AdminTeeBookings';
+import AdminSponsors from './pages/AdminSponsors';
 import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
@@ -141,7 +142,9 @@ function App() {
     );
   }
 
-  const showSponsorBar = isLoggedIn && globalSponsors.length > 0;
+  // Barra global de patrocinadores: aparece também no /login e /register (exposição
+  // máxima do patrocinador — a rota /circuits/club-sponsors é pública).
+  const showSponsorBar = globalSponsors.length > 0;
 
   return (
     // --- 3. ABRAÇANDO O SITE COM O CONTEXTO DE CORES ---
@@ -168,7 +171,8 @@ function App() {
             {/* ROTAS DE TREINO */}
             <Route path="/daily-training" element={<ProtectedRoute><DailyTraining /></ProtectedRoute>} />
             <Route path="/training-scorecard/:groupId" element={<ProtectedRoute><TrainingScorecard /></ProtectedRoute>} />
-            <Route path="/training-leaderboard" element={<ProtectedRoute><TrainingLeaderboard /></ProtectedRoute>} />
+            {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
+            <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
             <Route path="/circuits" element={<ProtectedRoute><CircuitManagement /></ProtectedRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
@@ -176,6 +180,7 @@ function App() {
             <Route path="/admin/clube" element={<AdminRoute><ClubSettings /></AdminRoute>} />
             <Route path="/admin/tee-settings" element={<AdminRoute><AdminTeeSettings /></AdminRoute>} />
             <Route path="/admin/tee-bookings" element={<AdminRoute><AdminTeeBookings /></AdminRoute>} />
+            <Route path="/admin/patrocinadores" element={<AdminRoute><AdminSponsors /></AdminRoute>} />
             <Route path="/tee-times" element={<ProtectedRoute><TeeTimes /></ProtectedRoute>} />
             <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />

@@ -208,7 +208,6 @@ app.get("/api/theme", (req, res) => {
     domain: req.club.domain,
     primary_color: req.club.primary_color,
     logo_url: req.club.logo_url,
-    sport_type: req.club.sport_type || "golf",
   });
 });
 
