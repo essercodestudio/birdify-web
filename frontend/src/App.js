@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import api from "./services/api";
 import syncService from "./services/syncService";
 import { getToken, getUser } from "./services/authStorage";
+import { useIsMobile } from "./hooks/useIsMobile";
 
 // Importação das Páginas
 import Login from "./pages/Login";
@@ -71,6 +72,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [globalSponsors, setGlobalSponsors] = useState([]);
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getToken());
+  const isMobile = useIsMobile();
 
   // --- 2. O DESPERTAR DO CAMALEÃO ---
   useEffect(() => {
@@ -142,9 +144,10 @@ function App() {
     );
   }
 
-  // Barra global de patrocinadores: aparece também no /login e /register (exposição
-  // máxima do patrocinador — a rota /circuits/club-sponsors é pública).
-  const showSponsorBar = globalSponsors.length > 0;
+  // Barra global de patrocinadores: SÓ no mobile. Desktop tem mais espaço lateral
+  // pra sponsors aparecerem em outros lugares; o rodapé fixo era pra economizar
+  // scroll no celular. A rota /circuits/club-sponsors é pública.
+  const showSponsorBar = isMobile && globalSponsors.length > 0;
 
   return (
     // --- 3. ABRAÇANDO O SITE COM O CONTEXTO DE CORES ---

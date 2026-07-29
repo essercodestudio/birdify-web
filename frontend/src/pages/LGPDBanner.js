@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 const LGPDBanner = () => {
   const [visible, setVisible] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     // Verifica se o utilizador já aceitou anteriormente
@@ -18,22 +20,24 @@ const LGPDBanner = () => {
 
   if (!visible) return null;
 
+  // No mobile, sobe 65px pra não cobrir a barra global de patrocinadores fixa
+  // (App.js -> GlobalSponsorsBar). No desktop a barra não existe, então fica bottom:0.
   return (
     <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0,
+      position: 'fixed', bottom: isMobile ? 65 : 0, left: 0, right: 0,
       background: '#2c3e50', color: 'white',
-      padding: '20px', textAlign: 'center', zIndex: 9999,
+      padding: '20px', textAlign: 'center', zIndex: 10000,
       boxShadow: '0 -2px 10px rgba(0,0,0,0.3)'
     }}>
       <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>
-        Este site utiliza cookies para garantir a melhor experiência na marcação de scores. 
+        Este site utiliza cookies para garantir a melhor experiência na marcação de scores.
         Ao continuar, concorda com a nossa <a href="/privacidade" style={{ color: '#27ae60', fontWeight: 'bold', textDecoration: 'underline' }}>Política de Privacidade</a>.
       </p>
-      <button 
+      <button
         onClick={acceptConsent}
         style={{
           background: '#27ae60', color: 'white', border: 'none',
-          padding: '10px 30px', borderRadius: '5px', cursor: 'pointer', 
+          padding: '10px 30px', borderRadius: '5px', cursor: 'pointer',
           fontWeight: 'bold', fontSize: '14px'
         }}
       >
