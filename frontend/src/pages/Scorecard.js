@@ -605,8 +605,10 @@ function Scorecard() {
             Buraco {currentHole}
             <HolePhotoBadge imagePath={currentHoleData.image_path} holeNumber={currentHole} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ textAlign: "center" }}>
             <span style={styles.parInfo}>PAR {currentHoleData.par}</span>
+          </div>
+          <div style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
             <HoleDistanceBadge hole={currentHoleData} />
           </div>
           {/* Pills de yards por tee agora vêm dentro do HoleDistanceBadge acima —

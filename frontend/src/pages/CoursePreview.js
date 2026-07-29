@@ -122,7 +122,7 @@ export default function CoursePreview() {
               </div>
 
               <div>
-                <HoleDistanceBadge hole={h} />
+                <HoleDistanceBadge hole={h} compact={false} />
               </div>
 
               {h.image_path ? (

@@ -871,8 +871,10 @@ function TrainingScorecard() {
             Buraco {currentHole}
             <HolePhotoBadge imagePath={currentHoleData.image_path} holeNumber={currentHole} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+          <div style={{ marginTop: 6, textAlign: 'center' }}>
             <span style={{ color: theme.textMuted, fontSize: '16px' }}>PAR {currentHoleData.par}</span>
+          </div>
+          <div style={{ marginTop: 4, display: 'flex', justifyContent: 'center' }}>
             <HoleDistanceBadge hole={currentHoleData} />
           </div>
         </div>

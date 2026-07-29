@@ -38,12 +38,27 @@ function collect(hole) {
   return out;
 }
 
-export default function HoleDistanceBadge({ hole }) {
+// compact = pills menores (default). Usado no scorecard (torneio + treino) onde
+// o espaço lateral é apertado no mobile por causa dos botões ◀▶ de navegação.
+export default function HoleDistanceBadge({ hole, compact = true }) {
   const items = collect(hole);
   if (items.length === 0) return null;
 
+  const style = compact
+    ? { padding: "2px 7px",  fontSize: 10, gap: 4 }
+    : { padding: "3px 10px", fontSize: 12, gap: 6 };
+
   return (
-    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+    <span
+      style={{
+        display: "inline-flex",
+        flexWrap: "wrap",
+        gap: style.gap,
+        alignItems: "center",
+        justifyContent: "center",
+        maxWidth: "100%",
+      }}
+    >
       {items.map((t) => (
         <span
           key={t.key}
@@ -53,9 +68,9 @@ export default function HoleDistanceBadge({ hole }) {
             backgroundColor: t.bg,
             color: t.fg,
             border: `1px solid ${t.border}`,
-            padding: "3px 10px",
+            padding: style.padding,
             borderRadius: 999,
-            fontSize: 12,
+            fontSize: style.fontSize,
             fontWeight: 700,
             letterSpacing: 0.3,
             lineHeight: 1,
