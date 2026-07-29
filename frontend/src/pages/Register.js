@@ -1,7 +1,8 @@
 import React, { useState, useContext } from "react";
 import api from "../services/api";
 import { useNavigate, Link } from "react-router-dom";
-import { ThemeContext } from "../App"; 
+import { LuEye, LuEyeOff } from "react-icons/lu";
+import { ThemeContext } from "../App";
 import logoImg from "../assets/logo_birdify.png";
 
 function Register() {
@@ -16,6 +17,7 @@ function Register() {
   });
 
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const theme = {
     bg: "#0f172a",
@@ -193,15 +195,31 @@ function Register() {
           />
 
           <span style={styles.label}>Senha</span>
-          <input
-            type="password"
-            name="password"
-            placeholder="Mínimo 6 caracteres"
-            value={formData.password}
-            onChange={handleChange}
-            style={styles.input}
-            required
-          />
+          <div style={{ position: "relative", marginBottom: "15px" }}>
+            <input
+              type={showPassword ? "text" : "password"}
+              name="password"
+              placeholder="Mínimo 6 caracteres"
+              value={formData.password}
+              onChange={handleChange}
+              style={{ ...styles.input, marginBottom: 0, paddingRight: "48px" }}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+              tabIndex={-1}
+              style={{
+                position: "absolute", right: "12px", top: "50%",
+                transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+                color: theme.textMuted, padding: 4, display: "flex",
+              }}
+            >
+              {showPassword ? <LuEyeOff size={20} /> : <LuEye size={20} />}
+            </button>
+          </div>
 
           <div style={{ textAlign: "left" }}>
             <span style={styles.label}>Gênero (Categorias)</span>

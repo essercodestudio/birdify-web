@@ -3,6 +3,7 @@ import React, { useState, useContext } from "react"; // 1. Adicionado useContext
 import api from "../services/api";
 import { setSession } from "../services/authStorage";
 import { useNavigate, Link } from "react-router-dom";
+import { LuEye, LuEyeOff } from "react-icons/lu";
 import logoImg from "../assets/logo_birdify.png";
 
 // 2. Importando a Memória Global do Camaleão
@@ -11,6 +12,7 @@ import { ThemeContext } from "../App";
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [keepConnected, setKeepConnected] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
@@ -177,14 +179,30 @@ function Login() {
           />
 
           <span style={styles.label}>Senha</span>
-          <input
-            type="password"
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
-            required
-          />
+          <div style={{ position: "relative", marginBottom: "20px" }}>
+            <input
+              type={showPassword ? "text" : "password"}
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ ...styles.input, marginBottom: 0, paddingRight: "48px" }}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+              tabIndex={-1}
+              style={{
+                position: "absolute", right: "12px", top: "50%",
+                transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+                color: theme.textMuted, padding: 4, display: "flex",
+              }}
+            >
+              {showPassword ? <LuEyeOff size={20} /> : <LuEye size={20} />}
+            </button>
+          </div>
 
           <label style={{
             display: "flex",

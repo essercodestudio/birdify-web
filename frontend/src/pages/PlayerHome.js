@@ -312,7 +312,11 @@ function PlayerHome() {
         setUser(updatedUser);
       }
       setProfileMsg("Perfil salvo!");
-      setTimeout(() => setProfileMsg(""), 2500);
+      // Fecha o modal automaticamente depois de 1.2s (tempo pra ler a msg).
+      setTimeout(() => {
+        setProfileMsg("");
+        setProfileOpen(false);
+      }, 1200);
     } catch (e) {
       setProfileMsg(e.response?.data?.error || "Erro ao salvar perfil.");
     } finally {
