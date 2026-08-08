@@ -1,7 +1,58 @@
 const cron = require('node-cron');
 const db = require('../db');
+const socketService = require('./socketService');
+
+// Fecha treinos abandonados: passaram 8h desde created_at e ninguém encerrou.
+// Ativo vira 'finalizado' (marcações valem); aguardando vira 'cancelado'
+// (lobby que nunca começou não gera histórico útil).
+async function autoFinalizeStaleTrainings() {
+  try {
+    const [ativos] = await db.query(
+      `SELECT id FROM training_groups
+        WHERE status = 'ativo'
+          AND created_at < (NOW() - INTERVAL 8 HOUR)`
+    );
+    const [cancelados] = await db.query(
+      `SELECT id FROM training_groups
+        WHERE status = 'aguardando'
+          AND created_at < (NOW() - INTERVAL 8 HOUR)`
+    );
+
+    if (ativos.length > 0) {
+      await db.query(
+        `UPDATE training_groups
+            SET status = 'finalizado'
+          WHERE status = 'ativo'
+            AND created_at < (NOW() - INTERVAL 8 HOUR)`
+      );
+    }
+    if (cancelados.length > 0) {
+      await db.query(
+        `UPDATE training_groups
+            SET status = 'cancelado'
+          WHERE status = 'aguardando'
+            AND created_at < (NOW() - INTERVAL 8 HOUR)`
+      );
+    }
+
+    // Notifica salas abertas — jogador na tela do scorecard vê o treino fechar
+    // sem precisar dar F5. Ranking do dia também recalcula.
+    ativos.forEach(({ id }) => {
+      socketService.emitToRoom(`training:${id}`, 'training:finished', { group_id: id, auto: true });
+    });
+    if (ativos.length > 0 || cancelados.length > 0) {
+      socketService.emitToRoom('training:ranking', 'training:ranking_updated', { auto: true });
+      console.log(`🕗 Auto-finalize: ${ativos.length} ativos → finalizado, ${cancelados.length} aguardando → cancelado`);
+    }
+  } catch (err) {
+    console.error('❌ Auto-finalize treinos falhou:', { code: err.code, sqlMessage: err.sqlMessage, message: err.message });
+  }
+}
 
 const initCronJobs = () => {
+  // Roda no minuto 0 de cada hora. Um treino que estoura 8h fecha no máximo 1h depois.
+  cron.schedule('0 0 * * * *', autoFinalizeStaleTrainings);
+
   cron.schedule('59 59 23 * * *', async () => {
     console.log("🌙 Iniciando processamento de fecho diário...");
 
@@ -59,4 +110,4 @@ const initCronJobs = () => {
   });
 };
 
-module.exports = { initCronJobs };
+module.exports = { initCronJobs, autoFinalizeStaleTrainings };

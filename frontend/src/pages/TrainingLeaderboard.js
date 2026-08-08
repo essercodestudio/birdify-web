@@ -100,9 +100,11 @@ function TrainingLeaderboard() {
                Number(s.group_id) === Number(groupId) &&
                Number(s.hole_number) === num
         );
-        // Sempre usa holesData como fonte autoritativa do par do campo.
-        // hit.hole_par é fallback caso holesData esteja vazio.
-        const par = getParFor(num) || Number(hit?.hole_par) || 4;
+        // hit.hole_par vem correto por row do backend (COALESCE filtrado pelo course
+        // do treino específico). holesData é fallback e SÓ vale se o dia tiver 1
+        // curso — se tiver treinos em cursos diferentes, holesData vira o par do
+        // primeiro course e contamina os demais. Por isso hit.hole_par tem prioridade.
+        const par = Number(hit?.hole_par) || getParFor(num) || 4;
         const { bg, color, border } = getHoleStyle(hit?.strokes, par);
         return (
           <div key={num} style={{ backgroundColor: bg, border: `1px solid ${border}`, borderRadius: '6px', padding: '5px 2px', textAlign: 'center' }}>

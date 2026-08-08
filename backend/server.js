@@ -28,6 +28,7 @@ const circuitRoutes = require("./routes/circuitRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const teeTimeRoutes = require("./routes/teeTimeRoutes");
 const userRoutes = require("./routes/userRoutes");
+const playerRoutes = require("./routes/playerRoutes");
 const { saveMyPhoto } = require("./controllers/userController");
 
 const app = express();
@@ -182,6 +183,7 @@ app.use("/api/circuits", circuitRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/tee-times", teeTimeRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/players", playerRoutes);
 
 // Upload da foto de perfil — requireAuth (qualquer usuário logado, só a própria foto)
 app.post(

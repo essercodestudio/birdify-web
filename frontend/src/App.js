@@ -1,5 +1,5 @@
 // frontend/src/App.js
-import React, { useState, useEffect, createContext } from "react";
+import React, { useState, useEffect, createContext, Suspense, lazy } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import api from "./services/api";
 import syncService from "./services/syncService";
@@ -19,6 +19,7 @@ import DailyTraining from "./pages/DailyTraining";
 import TrainingScorecard from './pages/TrainingScorecard';
 import TrainingLeaderboard from './pages/TrainingLeaderboard';
 import PlayerHistory from './pages/PlayerHistory';
+import MyPerformance from './pages/MyPerformance';
 import CircuitManagement from './pages/CircuitManagement';
 import CircuitRankingPublic from './pages/CircuitRankingPublic';
 import AdminKPIs from './pages/AdminKPIs';
@@ -36,6 +37,13 @@ import Privacidade from "./pages/Privacidade";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+
+// Rota dev-only: /dev/scorephoto-preview.
+// process.env.NODE_ENV é substituído em build time; em produção IS_DEV vira
+// constante `false` e o Terser elimina o ramo — nenhum chunk async da preview
+// é gerado, nem a Route é montada.
+const IS_DEV = process.env.NODE_ENV !== "production";
+const ScorephotoPreview = IS_DEV ? lazy(() => import("./pages/ScorephotoPreview")) : null;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const MEDIA_BASE = process.env.REACT_APP_MEDIA_URL
@@ -177,6 +185,7 @@ function App() {
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
             <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
+            <Route path="/my-performance" element={<ProtectedRoute><MyPerformance /></ProtectedRoute>} />
             <Route path="/circuits" element={<ProtectedRoute><CircuitManagement /></ProtectedRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
             <Route path="/admin/kpis" element={<AdminRoute><AdminKPIs /></AdminRoute>} />
@@ -189,6 +198,18 @@ function App() {
             <Route path="/campo/:courseId" element={<CoursePreview />} />
 
             <Route path="/privacidade" element={<Privacidade />} />
+
+            {/* DEV-ONLY: preview do Scorephoto com dados mockados */}
+            {IS_DEV && ScorephotoPreview && (
+              <Route
+                path="/dev/scorephoto-preview"
+                element={
+                  <Suspense fallback={<div style={{ padding: 24, color: "#f8fafc" }}>Carregando preview...</div>}>
+                    <ScorephotoPreview />
+                  </Suspense>
+                }
+              />
+            )}
 
             {/* Catch-all: qualquer rota desconhecida cai numa 404 amigável, não em tela branca */}
             <Route path="*" element={<NotFound />} />

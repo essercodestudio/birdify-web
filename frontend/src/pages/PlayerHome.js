@@ -16,6 +16,7 @@ import {
   LuHistory,
   LuLandPlot,
   LuPlay,
+  LuTarget,
   LuMenu,
   LuMapPin,
   LuClock,
@@ -382,6 +383,7 @@ function PlayerHome() {
     { icon: LuCalendarDays, label: "Reservar", onClick: () => navigate("/tee-times") },
     { icon: LuClipboardList, label: "Minhas Reservas", onClick: () => navigate("/my-bookings") },
     { icon: LuHistory, label: "Histórico", onClick: () => navigate("/player-history") },
+    { icon: LuTarget, label: "Meu Desempenho", onClick: () => navigate("/my-performance") },
     { icon: LuLandPlot, label: "Treino do dia", onClick: () => navigate("/daily-training") },
     { icon: LuPlay, label: "Entrar na Partida", onClick: () => setJoinOpen(true) },
   ];
