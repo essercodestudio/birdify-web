@@ -30,6 +30,8 @@ import {
   LuMessageCircle,
   LuZoomIn,
   LuZoomOut,
+  LuArrowRight,
+  LuX,
 } from "react-icons/lu";
 
 // Mesmo resolvedor de mídia do App.js — fotos ficam em /uploads/* no backend
@@ -80,6 +82,30 @@ function PlayerHome() {
   const [handicaps, setHandicaps] = useState({});
   const [showHandicapModal, setShowHandicapModal] = useState(false);
 
+  // ── Continuar Partida: sessão de torneio em andamento ──────────────────────
+  // activeGroup é gravado no localStorage quando o jogador entra num grupo de
+  // torneio. Se o app for fechado e reaberto, precisamos oferecer retomar em
+  // vez de forçar novo código+handicap. Só mostra se o torneio ainda existe
+  // e está aberto — caso contrário, o localStorage é higienizado.
+  const [activeSession, setActiveSession] = useState(null); // { group, tournament }
+
+  // Limpa TODOS os vestígios da sessão de partida (activeGroup + snapshots por groupId
+  // + rascunhos por tournamentId). Compartilhado entre: expiração automática,
+  // "sair da partida" no banner e o próprio Scorecard ao assinar o cartão.
+  const clearMatchSession = useCallback((groupId, tournamentId) => {
+    localStorage.removeItem("activeGroup");
+    if (groupId != null) {
+      localStorage.removeItem(`scorecard_state_${groupId}`);
+      sessionStorage.removeItem(`scorecard_hole_${groupId}`);
+    }
+    if (tournamentId != null) {
+      // Padrão dos rascunhos do Scorecard: draft_scores_match_<tid>_hole_<h>
+      for (let h = 1; h <= 18; h++) {
+        localStorage.removeItem(`draft_scores_match_${tournamentId}_hole_${h}`);
+      }
+    }
+  }, []);
+
   const fetchTournaments = useCallback(async (userId) => {
     try {
       const res = await api.get(`/tournaments/list?user_id=${userId}`);
@@ -111,7 +137,44 @@ function PlayerHome() {
         });
       })
       .catch(() => {}); // perfil é opcional — falha não bloqueia a home
-  }, [navigate, fetchTournaments]);
+
+    // Continuar Partida: se há activeGroup no localStorage, valida contra o
+    // servidor. Torneio inexistente/concluído → limpa localStorage silenciosamente.
+    // Torneio aberto → guarda a sessão para renderizar o banner "Retomar".
+    (async () => {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem("activeGroup") || "null"); }
+      catch { saved = null; }
+
+      if (!saved?.id || !saved?.tournament_id) return;
+
+      // TTL de segurança: 7 dias. Cobre o caso raro do backend responder OK a um
+      // torneio antigo que ninguém encerrou; sem isso, um activeGroup órfão de
+      // meses atrás continuaria mostrando o banner até o clube fechar o torneio.
+      const savedAt = saved.savedAt || 0;
+      const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+      if (savedAt && Date.now() - savedAt > TTL_MS) {
+        clearMatchSession(saved.id, saved.tournament_id);
+        return;
+      }
+
+      try {
+        const res = await api.get(`/tournaments/${saved.tournament_id}`);
+        const tournament = res.data;
+        // Só torneio realmente aberto vale como sessão em andamento.
+        if (!tournament || tournament.status !== "OPEN") {
+          clearMatchSession(saved.id, saved.tournament_id);
+          return;
+        }
+        setActiveSession({ group: saved, tournament });
+      } catch (err) {
+        // 404 = torneio deletado → limpa. Falha de rede → mantém e tenta de novo depois.
+        if (err.response?.status === 404) {
+          clearMatchSession(saved.id, saved.tournament_id);
+        }
+      }
+    })();
+  }, [navigate, fetchTournaments, clearMatchSession]);
 
   // Carrossel de patrocinadores
   useEffect(() => {
@@ -165,7 +228,7 @@ function PlayerHome() {
         setHandicaps(initialHandicaps);
         setShowHandicapModal(true);
       } else {
-        localStorage.setItem("activeGroup", JSON.stringify(group));
+        localStorage.setItem("activeGroup", JSON.stringify({ ...group, savedAt: Date.now() }));
         navigate(`/scorecard/${group.id}`);
       }
     } catch (error) {
@@ -202,7 +265,7 @@ function PlayerHome() {
         players_data: playersData,
       });
 
-      localStorage.setItem("activeGroup", JSON.stringify(pendingGroup));
+      localStorage.setItem("activeGroup", JSON.stringify({ ...pendingGroup, savedAt: Date.now() }));
       setShowHandicapModal(false);
       navigate(`/scorecard/${pendingGroup.id}`);
     } catch (error) {
@@ -297,7 +360,26 @@ function PlayerHome() {
       .replace(",", " às");
   };
 
-  const handleLogout = () => logout(navigate);
+  const handleLogout = () => {
+    // Limpa sessão de partida antes de sair — evita que outro usuário que
+    // fizer login no mesmo dispositivo herde o activeGroup do anterior.
+    if (activeSession) {
+      clearMatchSession(activeSession.group.id, activeSession.group.tournament_id);
+    }
+    logout(navigate);
+  };
+
+  const handleResumeMatch = () => {
+    if (!activeSession) return;
+    navigate(`/scorecard/${activeSession.group.id}`);
+  };
+
+  const handleDismissSession = () => {
+    if (!activeSession) return;
+    if (!window.confirm("Sair desta partida? A pontuação já salva no servidor não será perdida, mas o app não vai mais oferecer retomar.")) return;
+    clearMatchSession(activeSession.group.id, activeSession.group.tournament_id);
+    setActiveSession(null);
+  };
 
   // ── Meu Perfil: salvar dados / foto ────────────────────────────────────────
   const handleSaveProfile = async () => {
@@ -691,6 +773,86 @@ function PlayerHome() {
           )}
         </div>
       </div>
+
+      {/* ── Banner: continuar partida em andamento ── */}
+      {activeSession && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: space[3],
+            padding: space[4],
+            marginBottom: space[4],
+            backgroundColor: theme.accentSoft || theme.card,
+            border: `1px solid ${theme.accent}`,
+            borderRadius: radius.md,
+            boxShadow: shadow.sm,
+          }}
+        >
+          <button
+            onClick={handleResumeMatch}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              gap: space[3],
+              padding: 0,
+              background: "none",
+              border: "none",
+              color: theme.textMain,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+            aria-label="Retomar partida em andamento"
+          >
+            <span
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                backgroundColor: theme.accent,
+                color: theme.accentContrast,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <LuPlay size={16} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ ...text.overline, color: theme.accent, marginBottom: 2 }}>
+                CONTINUAR PARTIDA
+              </div>
+              <div style={{ ...text.body, fontWeight: 700, color: theme.textMain, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {activeSession.group.group_name || "Meu grupo"}
+              </div>
+              <div style={{ ...text.caption, color: theme.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {activeSession.tournament.name}
+              </div>
+            </span>
+            <LuArrowRight size={18} color={theme.accent} style={{ flexShrink: 0 }} />
+          </button>
+          <button
+            onClick={handleDismissSession}
+            aria-label="Sair desta partida"
+            title="Sair desta partida"
+            style={{
+              background: "none",
+              border: `1px solid ${theme.border}`,
+              borderRadius: radius.sm,
+              color: theme.textMuted,
+              padding: space[2],
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              flexShrink: 0,
+            }}
+          >
+            <LuX size={16} />
+          </button>
+        </div>
+      )}
 
       {/* ── Grid de atalhos ── */}
       <div style={styles.grid}>

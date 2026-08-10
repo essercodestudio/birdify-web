@@ -473,6 +473,9 @@ function Scorecard() {
     }
     sessionStorage.removeItem(`scorecard_hole_${groupId}`);
     localStorage.removeItem(`scorecard_state_${groupId}`);
+    // activeGroup é a chave que o PlayerHome usa para oferecer "Continuar Partida" —
+    // remover aqui garante que, após assinar, o banner não reaparece na home.
+    localStorage.removeItem("activeGroup");
 
     alert("Cartão Assinado! Placar Oficializado.");
     navigate("/");
