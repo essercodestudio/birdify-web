@@ -101,7 +101,25 @@ export const flush = async () => {
       writeQueue(queue);
 
       try {
-        await api.post(item.endpoint, item.payload);
+        const res = await api.post(item.endpoint, item.payload);
+        // Guarda-corpo defensivo: se o backend retornar hole_number/user_id, precisa bater
+        // com o que enviamos. Se divergir, algo muito errado aconteceu (proxy inverso
+        // reordenando, backend com bug, MITM...) — logar em erro e não silenciar.
+        // Não altera o fluxo (o servidor gravou o que enviamos), mas deixa rastro
+        // para diagnosticar dessincronia como a do torneio real de 2026-08.
+        const p = item.payload || {};
+        const r = res?.data || {};
+        if (p.hole_number != null && r.hole != null && Number(r.hole) !== Number(p.hole_number)) {
+          console.error("[syncService] Resposta com hole divergente do payload!", {
+            endpoint: item.endpoint, sent: p.hole_number, received: r.hole,
+            user_id: p.user_id, tournament_id: p.tournament_id,
+          });
+        }
+        if (p.user_id != null && r.user_id != null && Number(r.user_id) !== Number(p.user_id)) {
+          console.error("[syncService] Resposta com user_id divergente do payload!", {
+            endpoint: item.endpoint, sent: p.user_id, received: r.user_id,
+          });
+        }
         queue = readQueue();
         const idx = queue.findIndex((q) => q.id === item.id);
         if (idx !== -1) {

@@ -81,6 +81,16 @@ function TrainingScorecard() {
   const groupStatusRef     = useRef('aguardando');
   // Garante que currentHole é calculado apenas na montagem inicial — não reage a fetchData subsequentes
   const holeInitializedRef = useRef(false);
+  // Lock unificado: bloqueia +/- E ◀/▶ durante qualquer transição de buraco.
+  // useRef (não useState) porque a mudança precisa ser síncrona — React batching
+  // pode deixar o setState de "isSaving" sem efeito visual entre dois cliques
+  // no mesmo tick, abrindo janela pra gravar no buraco errado.
+  const busyRef            = useRef(false);
+  // Timestamp local do último toque por "userId-holeNumber". Usado pra descartar
+  // broadcasts de socket obsoletos: se o servidor emitir um score_saved cujo
+  // savedAt é anterior ao último toque local dessa chave, o valor local é mais
+  // recente e o broadcast é ignorado (senão o valor "pisca" pra trás).
+  const lastLocalTouchAt   = useRef({});
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -234,8 +244,18 @@ function TrainingScorecard() {
       if (active) socket.emit('join:training', groupId);
     };
 
-    const onScoreSaved = ({ user_id, hole_number, strokes }) => {
-      if (active) setScores(prev => ({ ...prev, [`${user_id}-${hole_number}`]: strokes }));
+    const onScoreSaved = ({ user_id, hole_number, strokes, savedAt }) => {
+      if (!active) return;
+      const key = `${user_id}-${hole_number}`;
+      // Se o toque local nesta mesma chave é mais recente que o broadcast, o
+      // evento chegou fora de ordem (segundo POST respondeu antes do primeiro
+      // via websocket, ou eco atrasado depois de novo clique). Ignora — o
+      // próximo save vai emitir um broadcast mais novo que carrega o valor certo.
+      const localTouch = lastLocalTouchAt.current[key] || 0;
+      if (savedAt && localTouch && savedAt < localTouch) {
+        return;
+      }
+      setScores(prev => ({ ...prev, [key]: strokes }));
     };
 
     const onPlayerJoined = () => {
@@ -357,25 +377,63 @@ function TrainingScorecard() {
     h => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4 };
 
-  // Persistência atômica: cada clique → debounce 400ms → UPSERT no banco
-  const handleScoreChange = (userId, delta) => {
+  // Guard-rail comum: valida que o backend gravou no MESMO hole que enviamos.
+  // Divergência = bug de proxy/backend/MITM; loga sem interromper (o servidor
+  // já respondeu 200, o dado está gravado — só queremos rastro pra diagnóstico).
+  const validateHoleResponse = (expectedHole, expectedUser, res) => {
+    const r = res?.data || {};
+    if (r.hole != null && Number(r.hole) !== Number(expectedHole)) {
+      console.error('[TrainingScorecard] Resposta de /training/score com hole divergente!', {
+        sent: expectedHole, received: r.hole, user_id: expectedUser,
+      });
+    }
+  };
+
+  // POST com registro de timestamp local — a chave já é marcada como "tocada
+  // agora" antes do envio, de modo que qualquer broadcast subsequente com
+  // savedAt anterior seja descartado. Ao receber a resposta com savedAt do
+  // servidor, atualiza o marcador pra esse timestamp (evita descartar broadcasts
+  // realmente novos que vierem depois desta gravação).
+  const postScore = (userId, hole, strokes) => {
+    const key = `${userId}-${hole}`;
+    lastLocalTouchAt.current[key] = Date.now();
+    return api.post('/training/score', {
+      group_id:    Number(groupId),
+      user_id:     Number(userId),
+      hole_number: Number(hole),
+      strokes:     Number(strokes),
+    }).then(res => {
+      validateHoleResponse(hole, userId, res);
+      if (res?.data?.savedAt) lastLocalTouchAt.current[key] = res.data.savedAt;
+      return res;
+    });
+  };
+
+  // Persistência atômica: cada clique → debounce 400ms → UPSERT no banco.
+  // `hole` vem EXPLÍCITO do onClick — é o buraco que o usuário viu na tela no
+  // momento do toque, não o state React (que pode ter avançado). Se o state já
+  // divergiu OU o busyRef está ativo, o clique é descartado com log.
+  const handleScoreChange = (userId, delta, hole) => {
     if (!isCreator) return;
-    const key = `${userId}-${currentHole}`;
+    if (busyRef.current) return;
+    if (Number(hole) !== Number(currentHole)) {
+      console.warn('[TrainingScorecard] Clique descartado — hole visual difere do state.', {
+        holeClicked: hole, currentHole, userId, delta,
+      });
+      return;
+    }
+    const key = `${userId}-${hole}`;
     const cur = parseInt(scores[key]) || 0;
     let next  = cur + delta;
     if (cur === 0 && delta > 0) next = currentHoleData.par || 4;
     if (next < 1) { if (delta < 0) return; next = 1; }
 
+    lastLocalTouchAt.current[key] = Date.now();
     setScores(prev => ({ ...prev, [key]: next }));
 
     clearTimeout(saveTimers.current[key]);
     saveTimers.current[key] = setTimeout(() => {
-      api.post('/training/score', {
-        group_id:    Number(groupId),
-        user_id:     userId,
-        hole_number: currentHole,
-        strokes:     next,
-      }).catch(err => console.error('Falha ao salvar score:', err));
+      postScore(userId, hole, next).catch(err => console.error('Falha ao salvar score:', err));
       delete saveTimers.current[key];
     }, 400);
   };
@@ -390,12 +448,7 @@ function TrainingScorecard() {
         clearTimeout(saveTimers.current[key]);
         const s = scores[key];
         delete saveTimers.current[key];
-        return s > 0
-          ? api.post('/training/score', {
-              group_id: Number(groupId), user_id: Number(p.id),
-              hole_number: Number(hole), strokes: Number(s),
-            })
-          : Promise.resolve();
+        return s > 0 ? postScore(p.id, hole, s) : Promise.resolve();
       });
     return Promise.all(saves);
   };
@@ -408,12 +461,7 @@ function TrainingScorecard() {
       const [uid, hNum] = key.split('-');
       const s = scores[key];
       delete saveTimers.current[key];
-      return s > 0
-        ? api.post('/training/score', {
-            group_id: Number(groupId), user_id: Number(uid),
-            hole_number: Number(hNum), strokes: Number(s),
-          }).catch(() => {})
-        : Promise.resolve();
+      return s > 0 ? postScore(uid, hNum, s).catch(() => {}) : Promise.resolve();
     });
     return Promise.all(saves);
   };
@@ -421,29 +469,37 @@ function TrainingScorecard() {
   // Avança ou recua o buraco. Aguarda o backend confirmar os scores antes de avançar
   // para garantir que o buraco só muda após persistência real no banco.
   const changeHole = async (delta) => {
-    if (isSaving) return;
-    if (delta > 0) {
-      const missing = players.find(p => !(scores[`${p.id}-${currentHole}`] > 0));
-      if (missing) { alert(`Falta anotar o score de: ${missing.name}`); return; }
-      setIsSaving(true);
-      try {
-        await flushPendingForHole(currentHole);
-      } catch {
-        alert('Falha na conexão. A nota não foi salva. Tente novamente.');
-        return;
-      } finally {
-        setIsSaving(false);
+    if (busyRef.current) return;
+    busyRef.current = true;
+    // Snapshot do hole no INÍCIO — usado no flush e no cálculo do próximo/anterior,
+    // pra evitar qualquer race com setCurrentHole.
+    const holeBeforeChange = currentHole;
+    try {
+      if (delta > 0) {
+        const missing = players.find(p => !(scores[`${p.id}-${holeBeforeChange}`] > 0));
+        if (missing) { alert(`Falta anotar o score de: ${missing.name}`); return; }
+        setIsSaving(true);
+        try {
+          await flushPendingForHole(holeBeforeChange);
+        } catch {
+          alert('Falha na conexão. A nota não foi salva. Tente novamente.');
+          return;
+        } finally {
+          setIsSaving(false);
+        }
+        if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
+        let next = holeBeforeChange + 1; if (next > 18) next = 1;
+        if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
+        sessionStorage.setItem(sessionKey, next);
+        setCurrentHole(next);
+      } else if (delta < 0) {
+        let prev = holeBeforeChange - 1; if (prev < 1) prev = 18;
+        if (!playedHoles.includes(prev)) { alert('Você não pode voltar antes do tee de saída.'); return; }
+        sessionStorage.setItem(sessionKey, prev);
+        setCurrentHole(prev);
       }
-      if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
-      let next = currentHole + 1; if (next > 18) next = 1;
-      if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
-      sessionStorage.setItem(sessionKey, next);
-      setCurrentHole(next);
-    } else if (delta < 0) {
-      let prev = currentHole - 1; if (prev < 1) prev = 18;
-      if (!playedHoles.includes(prev)) { alert('Você não pode voltar antes do tee de saída.'); return; }
-      sessionStorage.setItem(sessionKey, prev);
-      setCurrentHole(prev);
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -469,19 +525,15 @@ function TrainingScorecard() {
     isFinishingRef.current = true;
     setIsFinishing(true);
     try {
-      // Drena qualquer timer pendente antes de finalizar
+      // Drena qualquer timer pendente antes de finalizar — usa postScore pra
+      // manter a validação de hole no response consistente com o resto do fluxo.
       const pending = Object.entries(saveTimers.current);
       await Promise.all(pending.map(([key]) => {
         clearTimeout(saveTimers.current[key]);
         const [uid, hNum] = key.split('-');
         const s = scores[key];
         delete saveTimers.current[key];
-        return s > 0
-          ? api.post('/training/score', {
-              group_id: Number(groupId), user_id: Number(uid),
-              hole_number: Number(hNum), strokes: s,
-            }).catch(() => {})
-          : Promise.resolve();
+        return s > 0 ? postScore(uid, hNum, s).catch(() => {}) : Promise.resolve();
       }));
 
       const loggedUser = getUser();
@@ -865,7 +917,11 @@ function TrainingScorecard() {
 
       {/* Navegação de buracos */}
       <div style={st.holeNav}>
-        <button style={st.navBtn} onClick={() => changeHole(-1)}>◀</button>
+        <button
+          style={{ ...st.navBtn, ...(isSaving && { opacity: 0.5, cursor: 'not-allowed' }) }}
+          onClick={() => changeHole(-1)}
+          disabled={isSaving}
+        >◀</button>
         <div>
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold, display: 'inline-flex', alignItems: 'center', gap: 10 }}>
             Buraco {currentHole}
@@ -902,11 +958,11 @@ function TrainingScorecard() {
 
               {isCreator ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1)}>-</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1, currentHole)} disabled={isSaving}>-</button>
                   <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>
                     {score || '0'}
                   </span>
-                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1)}>+</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1, currentHole)} disabled={isSaving}>+</button>
                 </div>
               ) : (
                 <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>

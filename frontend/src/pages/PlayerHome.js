@@ -12,7 +12,6 @@ import Cropper from "react-easy-crop";
 import {
   LuCalendarDays,
   LuClipboardList,
-  LuFlag,
   LuHistory,
   LuLandPlot,
   LuPlay,

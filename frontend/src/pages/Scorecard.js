@@ -1,5 +1,5 @@
 // frontend/src/pages/Scorecard.js
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import api from "../services/api";
 import syncService from "../services/syncService";
 import { useParams, useNavigate } from "react-router-dom";
@@ -44,6 +44,12 @@ function Scorecard() {
   const [isSaving, setIsSaving] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
+
+  // Lock unificado: bloqueia +/- E ◀/▶ durante qualquer transição de buraco.
+  // useRef (não useState) porque a mudança precisa ser síncrona — React batching
+  // pode fazer isSaving nunca "ficar true" visualmente entre setStates do mesmo
+  // tick, deixando janela pra duplo clique gravar no buraco errado.
+  const busyRef = useRef(false);
 
   const theme = {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent: '#22c55e', 
@@ -264,9 +270,21 @@ function Scorecard() {
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
 
-  // REGRA 1: handleScoreChange com anotação livre offline e bônus do PAR
-  const handleScoreChange = (userId, delta) => {
-    const key = `${userId}-${currentHole}`;
+  // REGRA 1: handleScoreChange com anotação livre offline e bônus do PAR.
+  // `hole` vem EXPLÍCITO do onClick — é o buraco que o usuário viu na tela no
+  // momento do clique. Se o state React já avançou (busyRef ativo ou hole
+  // divergente do currentHole atual), o clique é descartado e logado. Sem
+  // isso, um toque durante a transição de buraco gravava no hole errado —
+  // raiz do bug do torneio real de 2026-08.
+  const handleScoreChange = (userId, delta, hole) => {
+    if (busyRef.current) return;
+    if (Number(hole) !== Number(currentHole)) {
+      console.warn("[Scorecard] Clique descartado — hole visual difere do state.", {
+        holeClicked: hole, currentHole, userId, delta,
+      });
+      return;
+    }
+    const key = `${userId}-${hole}`;
     const currentScore = parseInt(scores[key]) || 0;
     let newScore = currentScore + delta;
 
@@ -279,47 +297,47 @@ function Scorecard() {
       if (delta < 0) return; // Não deixa ficar negativo
       newScore = 1;
     }
-    
+
     const updatedScores = { ...scores, [key]: newScore };
     setScores(updatedScores); // Atualiza state imediatamente, mesmo offline
-    
+
     if (group?.tournament_id) {
       const currentHoleScores = {};
       players.forEach(p => {
-        const scoreKey = `${p.id}-${currentHole}`;
+        const scoreKey = `${p.id}-${hole}`;
         if (updatedScores[scoreKey]) {
           currentHoleScores[scoreKey] = updatedScores[scoreKey];
         }
       });
-      saveDraftToLocalStorage(group.tournament_id, currentHole, currentHoleScores);
+      saveDraftToLocalStorage(group.tournament_id, hole, currentHoleScores);
     }
   };
 
-  // Enfileira as tacadas do buraco atual. Online → envia imediatamente.
-  // Offline → permanece pendente e é reenviado pelo syncService quando voltar.
-  // Em ambos os casos avança o buraco sem bloquear o usuário.
-  const saveCurrentHoleScores = async () => {
+  // Enfileira as tacadas do `hole` explícito (não do state currentHole — a
+  // função pode rodar em transição). Online → envia imediatamente. Offline
+  // → permanece pendente e é reenviado pelo syncService quando voltar.
+  const saveCurrentHoleScores = async (hole) => {
     if (!group?.tournament_id) return true;
     setIsSaving(true);
     try {
       players.forEach((p) => {
-        const score = scores[`${p.id}-${currentHole}`];
+        const score = scores[`${p.id}-${hole}`];
         if (score && score > 0) {
           syncService.enqueue({
             endpoint: "/scores/save",
             payload: {
               tournament_id: group.tournament_id,
               user_id: p.id,
-              hole_number: currentHole,
+              hole_number: hole,
               strokes: score,
             },
-            dedupKey: `score:${group.tournament_id}:${p.id}:${currentHole}`,
+            dedupKey: `score:${group.tournament_id}:${p.id}:${hole}`,
           });
         }
       });
       // Rascunho do buraco pode ser limpo: o syncService já é o source-of-truth
       // dos envios pendentes e o snapshot consolidado mantém os scores na tela.
-      clearDraftFromLocalStorage(group.tournament_id, currentHole);
+      clearDraftFromLocalStorage(group.tournament_id, hole);
       return true;
     } finally {
       setIsSaving(false);
@@ -327,73 +345,83 @@ function Scorecard() {
   };
 
   const changeHole = async (delta) => {
-    if (delta > 0) {
-      const missingPlayer = players.find((p) => {
-        const score = scores[`${p.id}-${currentHole}`];
-        return !score || score === 0;
-      });
+    if (busyRef.current) return;
+    busyRef.current = true;
+    try {
+      // Snapshot do hole no INÍCIO da transição — evita que qualquer setCurrentHole
+      // concorrente (impossível hoje, defensivo pra futuro) corrompa o payload.
+      const holeBeforeChange = currentHole;
 
-      if (missingPlayer) {
-        alert(`Falta anotar o score de: ${missingPlayer.name}`);
-        return;
-      }
-    }
+      if (delta > 0) {
+        const missingPlayer = players.find((p) => {
+          const score = scores[`${p.id}-${holeBeforeChange}`];
+          return !score || score === 0;
+        });
 
-    if (delta !== 0) {
-      const hasScoresToSave = players.some(p => {
-        const score = scores[`${p.id}-${currentHole}`];
-        return score && score > 0;
-      });
-      
-      if (hasScoresToSave) {
-        const saveSuccess = await saveCurrentHoleScores();
-        if (!saveSuccess) {
+        if (missingPlayer) {
+          alert(`Falta anotar o score de: ${missingPlayer.name}`);
           return;
         }
       }
-    }
 
-    if (delta > 0) {
-      if (!isReviewMode && playedHoles.length >= 18) {
-        setShowSummary(true);
-        return;
-      }
-      
-      let nextHole = currentHole + 1;
-      if (nextHole > 18) nextHole = 1;
-      
-      if (!playedHoles.includes(nextHole)) {
-          setPlayedHoles([...playedHoles, nextHole]);
-      }
-      setCurrentHole(nextHole);
-      sessionStorage.setItem(`scorecard_hole_${groupId}`, nextHole);
+      if (delta !== 0) {
+        const hasScoresToSave = players.some(p => {
+          const score = scores[`${p.id}-${holeBeforeChange}`];
+          return score && score > 0;
+        });
 
-      // Carregar rascunho do próximo buraco se existir
-      if (group?.tournament_id) {
-        const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
-        if (draftData) {
-          setScores(prev => ({ ...prev, ...draftData }));
+        if (hasScoresToSave) {
+          const saveSuccess = await saveCurrentHoleScores(holeBeforeChange);
+          if (!saveSuccess) {
+            return;
+          }
         }
       }
 
-    } else if (delta < 0) {
-      let prevHole = currentHole - 1;
-      if (prevHole < 1) prevHole = 18;
+      if (delta > 0) {
+        if (!isReviewMode && playedHoles.length >= 18) {
+          setShowSummary(true);
+          return;
+        }
 
-      if (!playedHoles.includes(prevHole)) {
-        alert("Você não pode voltar para um buraco antes do seu tee de saída.");
-        return;
-      }
-      setCurrentHole(prevHole);
-      sessionStorage.setItem(`scorecard_hole_${groupId}`, prevHole);
+        let nextHole = holeBeforeChange + 1;
+        if (nextHole > 18) nextHole = 1;
 
-      // Carregar rascunho do buraco anterior se existir
-      if (group?.tournament_id) {
-        const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
-        if (draftData) {
-          setScores(prev => ({ ...prev, ...draftData }));
+        if (!playedHoles.includes(nextHole)) {
+            setPlayedHoles([...playedHoles, nextHole]);
+        }
+        setCurrentHole(nextHole);
+        sessionStorage.setItem(`scorecard_hole_${groupId}`, nextHole);
+
+        // Carregar rascunho do próximo buraco se existir
+        if (group?.tournament_id) {
+          const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
+          if (draftData) {
+            setScores(prev => ({ ...prev, ...draftData }));
+          }
+        }
+
+      } else if (delta < 0) {
+        let prevHole = holeBeforeChange - 1;
+        if (prevHole < 1) prevHole = 18;
+
+        if (!playedHoles.includes(prevHole)) {
+          alert("Você não pode voltar para um buraco antes do seu tee de saída.");
+          return;
+        }
+        setCurrentHole(prevHole);
+        sessionStorage.setItem(`scorecard_hole_${groupId}`, prevHole);
+
+        // Carregar rascunho do buraco anterior se existir
+        if (group?.tournament_id) {
+          const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
+          if (draftData) {
+            setScores(prev => ({ ...prev, ...draftData }));
+          }
         }
       }
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -641,11 +669,11 @@ function Scorecard() {
               </div>
 
               <div style={styles.scoreControl}>
-                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1)} disabled={isSaving}>-</button>
+                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1, currentHole)} disabled={isSaving}>-</button>
                 <span style={{ ...styles.scoreValue, color: score ? (score < currentHoleData.par ? theme.accent : score > currentHoleData.par ? theme.danger : "white") : theme.cardLight }}>
                   {score ? score : "0"}
                 </span>
-                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1)} disabled={isSaving}>+</button>
+                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1, currentHole)} disabled={isSaving}>+</button>
               </div>
             </div>
           );

@@ -230,13 +230,18 @@ exports.saveScore = async (req, res) => {
       [group_id, user_id, hole_number, strokes],
     );
 
-    // Broadcast para todos no grupo e para o ranking em tempo real
+    // savedAt permite ao cliente descartar broadcasts fora de ordem — quando
+    // o usuário marca dois scores rápidos no mesmo (user, hole), o segundo
+    // POST pode responder antes do primeiro chegar via socket e reverter o
+    // valor. Comparando savedAt com o timestamp local do último clique, a UI
+    // ignora o broadcast obsoleto.
+    const savedAt = Date.now();
     socketService.emitToRoom(`training:${group_id}`, "training:score_saved", {
-      group_id, user_id, hole_number, strokes,
+      group_id, user_id, hole_number, strokes, savedAt,
     });
     socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
 
-    res.json({ ok: true, strokes, hole: hole_number });
+    res.json({ ok: true, strokes, hole: hole_number, savedAt });
   } catch (error) {
     console.error("[saveScore] ERRO:", error.message, { group_id, user_id, hole_number, strokes });
     res.status(500).json({ error: "Erro interno no servidor." });
