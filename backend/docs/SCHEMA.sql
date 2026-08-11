@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS training_scores (
   updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_ts_group FOREIGN KEY (group_id) REFERENCES training_groups(id) ON DELETE CASCADE,
   CONSTRAINT fk_ts_user  FOREIGN KEY (user_id)  REFERENCES users(id)           ON DELETE CASCADE,
-  UNIQUE KEY uk_ts (group_id, user_id, hole_number)
+  UNIQUE KEY uq_training_score (group_id, user_id, hole_number)
 );
 
 -- ═════════════════════════════════════════════════════════════════════
