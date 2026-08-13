@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
+import syncService from '../services/syncService';
 import { getUser } from '../services/authStorage';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
@@ -69,7 +70,7 @@ function TrainingScorecard() {
   const [showHcModal, setShowHcModal] = useState(false);
   const [hcValues, setHcValues] = useState({});
   const [hcSaving, setHcSaving] = useState(false);
-  const [isSaving, setIsSaving]       = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
 
   // Timers de debounce por chave "userId-holeNumber"
   const saveTimers         = useRef({});
@@ -81,10 +82,10 @@ function TrainingScorecard() {
   const groupStatusRef     = useRef('aguardando');
   // Garante que currentHole é calculado apenas na montagem inicial — não reage a fetchData subsequentes
   const holeInitializedRef = useRef(false);
-  // Lock unificado: bloqueia +/- E ◀/▶ durante qualquer transição de buraco.
-  // useRef (não useState) porque a mudança precisa ser síncrona — React batching
-  // pode deixar o setState de "isSaving" sem efeito visual entre dois cliques
-  // no mesmo tick, abrindo janela pra gravar no buraco errado.
+  // Lock unificado: bloqueia +/- E ◀/▶ durante a transição de buraco (mesmo que
+  // seja sync agora, cobre eventual re-entrada). useRef (não useState) porque a
+  // mudança precisa ser síncrona — batching poderia deixar dois cliques do mesmo
+  // tick passarem, abrindo janela pra gravar no buraco errado.
   const busyRef            = useRef(false);
   // Timestamp local do último toque por "userId-holeNumber". Usado pra descartar
   // broadcasts de socket obsoletos: se o servidor emitir um score_saved cujo
@@ -115,7 +116,21 @@ function TrainingScorecard() {
 
     const scoresMap = {};
     scoresRaw.forEach(s => { scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes; });
-    setScores(scoresMap);
+    // Overlay offline-first: itens da fila do syncService ainda não confirmados pelo
+    // servidor (pending/syncing/failed) sobrepõem o que veio do GET. Sem isso, um
+    // refetch (socket, F5, join de outro atleta) apagava scores marcados offline —
+    // era o cerne do bug de perda de dados relatado em uso real.
+    const pendingOverlay = {};
+    syncService.getPendingItems(item =>
+      item.endpoint === '/training/score'
+      && Number(item.payload?.group_id) === Number(savedGroup.id)
+    ).forEach(item => {
+      const p = item.payload;
+      pendingOverlay[`${p.user_id}-${p.hole_number}`] = p.strokes;
+    });
+    // prev vem por último pra preservar cliques ainda no debounce (só criador marca,
+    // então prev == versão local mais fresca; nunca há dado stale de outro autor).
+    setScores(prev => ({ ...scoresMap, ...pendingOverlay, ...prev }));
 
     // Guard: currentHole e playedHoles só são definidos uma vez por montagem
     if (holeInitializedRef.current) return;
@@ -296,10 +311,24 @@ function TrainingScorecard() {
       socket.off('training:finished',      onFinished);
       socket.emit('leave:training', groupId);
       // ⚠️ NÃO desconectar: socket é singleton — disconnect aqui cancela o handshake WSS
-      Object.values(saveTimers.current).forEach(clearTimeout);
+      // Ao sair do scorecard, dispara os timers pendentes → enqueue (a fila do
+      // syncService persiste em localStorage e é drenada ao voltar/reconectar).
+      Object.entries(saveTimers.current).forEach(([key, timerId]) => {
+        clearTimeout(timerId);
+        const [uid, hNum] = key.split('-');
+        const s = scores[key];
+        if (s > 0) enqueueScore(uid, hNum, s);
+      });
       saveTimers.current = {};
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
+
+  // Inscreve no syncService pra alimentar o pill "Aguardando Conexão"
+  useEffect(() => {
+    syncService.bootstrap();
+    return syncService.subscribe(setSyncStatus);
+  }, []);
 
   // ── Ações do Lobby ──
   // Passo 1: INICIAR TREINO abre o modal de handicaps com os atletas da sala
@@ -377,39 +406,23 @@ function TrainingScorecard() {
     h => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4 };
 
-  // Guard-rail comum: valida que o backend gravou no MESMO hole que enviamos.
-  // Divergência = bug de proxy/backend/MITM; loga sem interromper (o servidor
-  // já respondeu 200, o dado está gravado — só queremos rastro pra diagnóstico).
-  const validateHoleResponse = (expectedHole, expectedUser, res) => {
-    const r = res?.data || {};
-    if (r.hole != null && Number(r.hole) !== Number(expectedHole)) {
-      console.error('[TrainingScorecard] Resposta de /training/score com hole divergente!', {
-        sent: expectedHole, received: r.hole, user_id: expectedUser,
-      });
-    }
-  };
-
-  // POST com registro de timestamp local — a chave já é marcada como "tocada
-  // agora" antes do envio, de modo que qualquer broadcast subsequente com
-  // savedAt anterior seja descartado. Ao receber a resposta com savedAt do
-  // servidor, atualiza o marcador pra esse timestamp (evita descartar broadcasts
-  // realmente novos que vierem depois desta gravação).
-  const postScore = (userId, hole, strokes) => {
-    const key = `${userId}-${hole}`;
-    lastLocalTouchAt.current[key] = Date.now();
-    return api.post('/training/score', {
-      group_id:    Number(groupId),
-      user_id:     Number(userId),
-      hole_number: Number(hole),
-      strokes:     Number(strokes),
-    }).then(res => {
-      validateHoleResponse(hole, userId, res);
-      if (res?.data?.savedAt) lastLocalTouchAt.current[key] = res.data.savedAt;
-      return res;
+  // Enfileira o score no syncService — fila persistente em localStorage. Se offline,
+  // fica em PENDING e é reenviado ao voltar. `dedupKey` garante que múltiplos cliques
+  // no mesmo (group, user, hole) substituam pendências em vez de empilhar duplicatas.
+  const enqueueScore = (userId, hole, strokes) => {
+    syncService.enqueue({
+      endpoint: '/training/score',
+      payload: {
+        group_id:    Number(groupId),
+        user_id:     Number(userId),
+        hole_number: Number(hole),
+        strokes:     Number(strokes),
+      },
+      dedupKey: `training:${groupId}:${userId}:${hole}`,
     });
   };
 
-  // Persistência atômica: cada clique → debounce 400ms → UPSERT no banco.
+  // Persistência atômica: cada clique → debounce 400ms → enqueue offline-first.
   // `hole` vem EXPLÍCITO do onClick — é o buraco que o usuário viu na tela no
   // momento do toque, não o state React (que pode ter avançado). Se o state já
   // divergiu OU o busyRef está ativo, o clique é descartado com log.
@@ -433,60 +446,48 @@ function TrainingScorecard() {
 
     clearTimeout(saveTimers.current[key]);
     saveTimers.current[key] = setTimeout(() => {
-      postScore(userId, hole, next).catch(err => console.error('Falha ao salvar score:', err));
+      enqueueScore(userId, hole, next);
       delete saveTimers.current[key];
     }, 400);
   };
 
-  // Drena timers pendentes do buraco e aguarda confirmação do backend.
-  // Retorna Promise para que changeHole possa fazer await antes de avançar.
-  const flushPendingForHole = (hole) => {
-    const saves = players
-      .filter(p => saveTimers.current[`${p.id}-${hole}`])
-      .map(p => {
-        const key = `${p.id}-${hole}`;
+  // Drena timers pendentes de debounce imediatamente pro syncService (sync, não bloqueia).
+  // Usado ao trocar de buraco ou navegar pra fora — garante que cliques ainda no debounce
+  // virem enqueues antes de perder o timer. Depois disso a fila cuida da entrega.
+  const flushPendingTimersForHole = (hole) => {
+    players.forEach(p => {
+      const key = `${p.id}-${hole}`;
+      if (saveTimers.current[key]) {
         clearTimeout(saveTimers.current[key]);
         const s = scores[key];
         delete saveTimers.current[key];
-        return s > 0 ? postScore(p.id, hole, s) : Promise.resolve();
-      });
-    return Promise.all(saves);
+        if (s > 0) enqueueScore(p.id, hole, s);
+      }
+    });
   };
 
-  // Drena todos os timers de debounce pendentes (qualquer buraco) antes de navegar para fora
-  // do scorecard. Evita que scores não salvos sejam cancelados pelo cleanup do useEffect.
-  const flushAllPending = () => {
-    const saves = Object.entries(saveTimers.current).map(([key, timerId]) => {
+  const flushAllPendingTimers = () => {
+    Object.entries(saveTimers.current).forEach(([key, timerId]) => {
       clearTimeout(timerId);
       const [uid, hNum] = key.split('-');
       const s = scores[key];
       delete saveTimers.current[key];
-      return s > 0 ? postScore(uid, hNum, s).catch(() => {}) : Promise.resolve();
+      if (s > 0) enqueueScore(uid, hNum, s);
     });
-    return Promise.all(saves);
   };
 
-  // Avança ou recua o buraco. Aguarda o backend confirmar os scores antes de avançar
-  // para garantir que o buraco só muda após persistência real no banco.
-  const changeHole = async (delta) => {
+  // Avança ou recua o buraco. Como o syncService cuida da entrega offline-first,
+  // não bloqueamos por espera de servidor — só drenamos timers de debounce pra
+  // que cliques pendentes virem enqueues antes da transição.
+  const changeHole = (delta) => {
     if (busyRef.current) return;
     busyRef.current = true;
-    // Snapshot do hole no INÍCIO — usado no flush e no cálculo do próximo/anterior,
-    // pra evitar qualquer race com setCurrentHole.
     const holeBeforeChange = currentHole;
     try {
       if (delta > 0) {
         const missing = players.find(p => !(scores[`${p.id}-${holeBeforeChange}`] > 0));
         if (missing) { alert(`Falta anotar o score de: ${missing.name}`); return; }
-        setIsSaving(true);
-        try {
-          await flushPendingForHole(holeBeforeChange);
-        } catch {
-          alert('Falha na conexão. A nota não foi salva. Tente novamente.');
-          return;
-        } finally {
-          setIsSaving(false);
-        }
+        flushPendingTimersForHole(holeBeforeChange);
         if (!isReviewMode && playedHoles.length >= 18) { setShowSummary(true); return; }
         let next = holeBeforeChange + 1; if (next > 18) next = 1;
         if (!playedHoles.includes(next)) setPlayedHoles(prev => [...prev, next]);
@@ -525,16 +526,16 @@ function TrainingScorecard() {
     isFinishingRef.current = true;
     setIsFinishing(true);
     try {
-      // Drena qualquer timer pendente antes de finalizar — usa postScore pra
-      // manter a validação de hole no response consistente com o resto do fluxo.
-      const pending = Object.entries(saveTimers.current);
-      await Promise.all(pending.map(([key]) => {
-        clearTimeout(saveTimers.current[key]);
-        const [uid, hNum] = key.split('-');
-        const s = scores[key];
-        delete saveTimers.current[key];
-        return s > 0 ? postScore(uid, hNum, s).catch(() => {}) : Promise.resolve();
-      }));
+      // Drena timers de debounce → enqueue. Depois força um flush e reverifica: se
+      // ainda sobrou pendência (rede caiu no meio), aborta pra não finalizar sem
+      // ter certeza que todos os scores chegaram ao servidor.
+      flushAllPendingTimers();
+      await syncService.flush();
+      const finalStatus = syncService.getStatus();
+      if (finalStatus.pending > 0 || finalStatus.syncing) {
+        alert(`Ainda há ${finalStatus.pending || 1} tacada(s) sincronizando. Aguarde o indicador zerar antes de finalizar.`);
+        return;
+      }
 
       const loggedUser = getUser();
       await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
@@ -842,6 +843,7 @@ function TrainingScorecard() {
   // ══════════════════════════════════════════════════
   return (
     <div style={st.page}>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
 
       {/* Modal de Conferência */}
       {showSummary && (
@@ -866,20 +868,33 @@ function TrainingScorecard() {
               );
             })}
 
-            {isCreator && (
-              <button
-                disabled={isFinishing}
-                style={{ width: '100%', padding: '16px', backgroundColor: isFinishing ? theme.cardLight : accent, color: isFinishing ? theme.textMuted : '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '8px', cursor: isFinishing ? 'not-allowed' : 'pointer', marginTop: '24px', transition: 'all 0.2s' }}
-                onClick={handleFinish}
-              >
-                {isFinishing ? 'Finalizando...' : (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <LuCheck size={16} />
-                    Confirmar e Encerrar Partida
-                  </span>
-                )}
-              </button>
-            )}
+            {isCreator && (() => {
+              const hasPending = syncStatus.pending > 0 || syncStatus.syncing;
+              const blocked = isFinishing || hasPending;
+              return (
+                <>
+                  {hasPending && (
+                    <div style={{ marginTop: '18px', padding: '10px 12px', backgroundColor: 'rgba(234,179,8,0.10)', border: `1px solid ${theme.gold}55`, borderRadius: '8px', fontSize: '12px', color: theme.gold, textAlign: 'center' }}>
+                      {syncStatus.online
+                        ? `Sincronizando ${syncStatus.pending} tacada(s) — aguarde o indicador zerar.`
+                        : `${syncStatus.pending} tacada(s) sem envio — aguarde a conexão voltar.`}
+                    </div>
+                  )}
+                  <button
+                    disabled={blocked}
+                    style={{ width: '100%', padding: '16px', backgroundColor: blocked ? theme.cardLight : accent, color: blocked ? theme.textMuted : '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '8px', cursor: blocked ? 'not-allowed' : 'pointer', marginTop: '12px', transition: 'all 0.2s' }}
+                    onClick={handleFinish}
+                  >
+                    {isFinishing ? 'Finalizando...' : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <LuCheck size={16} />
+                        Confirmar e Encerrar Partida
+                      </span>
+                    )}
+                  </button>
+                </>
+              );
+            })()}
             <button
               style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, fontSize: '14px', fontWeight: 'bold', borderRadius: '10px', cursor: 'pointer', marginTop: '10px' }}
               onClick={() => { setShowSummary(false); setIsReviewMode(true); }}
@@ -894,7 +909,7 @@ function TrainingScorecard() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '10px', borderBottom: `1px solid ${theme.cardLight}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button style={st.btnBack} onClick={async () => { await flushAllPending(); navigate('/daily-training'); }} aria-label="Voltar"><LuArrowLeft size={16} /></button>
+          <button style={st.btnBack} onClick={() => { flushAllPendingTimers(); navigate('/daily-training'); }} aria-label="Voltar"><LuArrowLeft size={16} /></button>
           <div style={{ textAlign: 'left' }}>
             <small style={{ color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '1px', fontSize: '10px' }}>TREINO DO DIA</small>
             <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '15px', marginTop: '2px' }}>{group.group_name || 'Treino'}</div>
@@ -904,10 +919,32 @@ function TrainingScorecard() {
                 Modo Visualização
               </small>
             )}
+            {isCreator && (!syncStatus.online || syncStatus.pending > 0) && (
+              <div
+                title={syncStatus.online ? 'Sincronizando tacadas pendentes...' : 'Sem conexão — tacadas serão enviadas ao reconectar'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  marginTop: '4px', padding: '3px 8px', borderRadius: '12px',
+                  fontSize: '11px', fontWeight: 'bold',
+                  backgroundColor: syncStatus.online ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)',
+                  color: syncStatus.online ? theme.gold : theme.danger,
+                  border: `1px solid ${syncStatus.online ? theme.gold : theme.danger}55`,
+                }}
+              >
+                <span style={{
+                  width: '6px', height: '6px', borderRadius: '50%',
+                  backgroundColor: syncStatus.online ? theme.gold : theme.danger,
+                  animation: 'pulse 1.5s infinite',
+                }} />
+                {syncStatus.online
+                  ? `Sincronizando${syncStatus.pending > 0 ? ` (${syncStatus.pending})` : ''}`
+                  : `Aguardando Conexão${syncStatus.pending > 0 ? ` (${syncStatus.pending})` : ''}`}
+              </div>
+            )}
           </div>
         </div>
         <button
-          onClick={async () => { await flushAllPending(); navigate('/training-leaderboard', { state: { returnHole: currentHole, groupId } }); }}
+          onClick={() => { flushAllPendingTimers(); navigate('/training-leaderboard', { state: { returnHole: currentHole, groupId } }); }}
           style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
         >
           <LuTrophy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
@@ -918,9 +955,8 @@ function TrainingScorecard() {
       {/* Navegação de buracos */}
       <div style={st.holeNav}>
         <button
-          style={{ ...st.navBtn, ...(isSaving && { opacity: 0.5, cursor: 'not-allowed' }) }}
+          style={st.navBtn}
           onClick={() => changeHole(-1)}
-          disabled={isSaving}
         >◀</button>
         <div>
           <div style={{ fontSize: '28px', fontWeight: 'bold', color: theme.gold, display: 'inline-flex', alignItems: 'center', gap: 10 }}>
@@ -935,12 +971,9 @@ function TrainingScorecard() {
           </div>
         </div>
         <button
-          style={{ ...st.navBtn, ...(isSaving && { opacity: 0.5, cursor: 'not-allowed' }) }}
+          style={st.navBtn}
           onClick={() => changeHole(1)}
-          disabled={isSaving}
-        >
-          {isSaving ? 'Salvando...' : '▶'}
-        </button>
+        >▶</button>
       </div>
 
       {/* Cards dos atletas */}
@@ -958,11 +991,11 @@ function TrainingScorecard() {
 
               {isCreator ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1, currentHole)} disabled={isSaving}>-</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: theme.danger, color: '#fff' }} onClick={() => handleScoreChange(p.id, -1, currentHole)}>-</button>
                   <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>
                     {score || '0'}
                   </span>
-                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1, currentHole)} disabled={isSaving}>+</button>
+                  <button style={{ ...st.scoreBtn, backgroundColor: accent, color: '#fff' }} onClick={() => handleScoreChange(p.id, 1, currentHole)}>+</button>
                 </div>
               ) : (
                 <span style={{ fontSize: '26px', fontWeight: 'bold', minWidth: '35px', textAlign: 'center', color: scoreColor }}>

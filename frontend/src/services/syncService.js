@@ -51,6 +51,18 @@ export const subscribe = (cb) => {
   return () => listeners.delete(cb);
 };
 
+// Retorna todos os itens ainda não confirmados pelo servidor (PENDING, SYNCING, FAILED),
+// opcionalmente filtrados. Usado pelas telas de scorecard pra reconstruir um "overlay"
+// dos scores locais em cima do que veio do servidor no fetchData — evita que um refresh
+// ou refetch (ex: socket dispara reload) apague tacadas marcadas offline.
+export const getPendingItems = (filter) => {
+  const queue = readQueue();
+  const pending = queue.filter((i) =>
+    i.status === STATUS.PENDING || i.status === STATUS.SYNCING || i.status === STATUS.FAILED
+  );
+  return filter ? pending.filter(filter) : pending;
+};
+
 // Enfileira um envio. `dedupKey` (ex: "score:tournament:user:hole") garante que
 // múltiplos cliques no mesmo input substituam a última versão pendente em vez
 // de empilhar duplicatas.
@@ -179,5 +191,6 @@ export default {
   flush,
   subscribe,
   getStatus,
+  getPendingItems,
   bootstrap,
 };
