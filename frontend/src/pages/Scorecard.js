@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import api from "../services/api";
 import syncService from "../services/syncService";
+import { getIncompleteEntries, formatIncompleteSummary } from "../utils/scoreCompleteness";
 import { useParams, useNavigate } from "react-router-dom";
 import { LuClipboardList, LuCheck, LuPencil, LuTrophy } from "react-icons/lu";
 import HolePhotoBadge from "../components/HolePhotoBadge";
@@ -488,11 +489,25 @@ function Scorecard() {
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
-  // Assinar cartão exige conexão real E fila zerada — o placar oficial precisa
-  // de confirmação do servidor pra cada tacada antes de limpar o estado local.
+  // Bug B — 2026-08-13: validação de completude antes de assinar.
+  // expectedHoles derivado de holesData.length (não hardcoded 18). Fallback 18
+  // se holesData ainda não carregou.
+  const expectedHoles = holesData.length > 0 ? holesData.length : 18;
+  const incompleteEntries = getIncompleteEntries(players, scores, expectedHoles);
+
+  // Assinar cartão exige conexão real, fila zerada, cartão completo E confirmação
+  // server-side via POST /scores/sign-card. O endpoint valida completude no banco
+  // (defense-in-depth) e grava assinatura em tournament_scorecard_signatures com
+  // timestamp — cartão oficial de verdade, não mais só ação de UI.
   const handleConfirmGame = async () => {
     if (!navigator.onLine) {
       alert("Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
+      return;
+    }
+
+    // Validação client-side de completude — feedback imediato
+    if (incompleteEntries.length > 0) {
+      alert(`Cartão incompleto — não pode ser assinado.\n\n${formatIncompleteSummary(incompleteEntries)}`);
       return;
     }
 
@@ -506,6 +521,22 @@ function Scorecard() {
     const finalStatus = syncService.getStatus();
     if (finalStatus.pending > 0 || finalStatus.syncing) {
       alert(`Ainda há ${finalStatus.pending || 1} tacada(s) sincronizando. Aguarde o indicador zerar antes de assinar.`);
+      return;
+    }
+
+    // Grava assinatura oficial no backend (endpoint novo do Bloco 3).
+    try {
+      await api.post("/scores/sign-card", {
+        tournament_id: group.tournament_id,
+        group_id: Number(groupId),
+      });
+    } catch (err) {
+      const data = err.response?.data;
+      if (err.response?.status === 400 && Array.isArray(data?.missing) && data.missing.length > 0) {
+        alert(`Cartão incompleto (checado no servidor):\n\n${formatIncompleteSummary(data.missing)}`);
+        return;
+      }
+      alert("Falha ao registrar assinatura. Verifique a conexão e tente novamente.");
       return;
     }
 
@@ -594,21 +625,38 @@ function Scorecard() {
             );
           })}
         </div>
-        {(syncStatus.pending > 0 || syncStatus.syncing) && (
+        {incompleteEntries.length > 0 && (
+          <div style={{ marginTop: "18px", padding: "12px 14px", backgroundColor: "rgba(239,68,68,0.10)", border: `1px solid ${theme.danger}55`, borderRadius: "8px", fontSize: "12px", color: theme.danger, textAlign: "left" }}>
+            <div style={{ fontWeight: "bold", marginBottom: "6px", textAlign: "center" }}>
+              Cartão incompleto — faltam scores:
+            </div>
+            {incompleteEntries.map(m => (
+              <div key={m.user_id} style={{ marginTop: "3px" }}>
+                <strong>{m.name}:</strong> {m.missing_holes.length === 1 ? 'buraco' : 'buracos'} {m.missing_holes.join(', ')}
+              </div>
+            ))}
+          </div>
+        )}
+        {(syncStatus.pending > 0 || syncStatus.syncing) && incompleteEntries.length === 0 && (
           <div style={{ marginTop: "18px", padding: "10px 12px", backgroundColor: "rgba(234,179,8,0.10)", border: `1px solid ${theme.gold}55`, borderRadius: "8px", fontSize: "12px", color: theme.gold, textAlign: "center" }}>
             {syncStatus.online
               ? `Sincronizando ${syncStatus.pending} tacada(s) — aguarde o indicador zerar antes de assinar.`
               : `${syncStatus.pending} tacada(s) sem envio — aguarde a conexão voltar.`}
           </div>
         )}
-        <button
-          style={{ ...styles.confirmBtn, ...((syncStatus.pending > 0 || syncStatus.syncing) && { backgroundColor: theme.cardLight, color: theme.textMuted, cursor: "not-allowed" }) }}
-          onClick={handleConfirmGame}
-          disabled={syncStatus.pending > 0 || syncStatus.syncing}
-        >
-          <LuCheck size={16} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
-          Assinar Cartão
-        </button>
+        {(() => {
+          const blocked = syncStatus.pending > 0 || syncStatus.syncing || incompleteEntries.length > 0;
+          return (
+            <button
+              style={{ ...styles.confirmBtn, ...(blocked && { backgroundColor: theme.cardLight, color: theme.textMuted, cursor: "not-allowed" }) }}
+              onClick={handleConfirmGame}
+              disabled={blocked}
+            >
+              <LuCheck size={16} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+              Assinar Cartão
+            </button>
+          );
+        })()}
         <button style={styles.editBtn} onClick={handleEditMode}>
           <LuPencil size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
           Voltar e Editar

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import syncService from '../services/syncService';
+import { getIncompleteEntries, formatIncompleteSummary } from '../utils/scoreCompleteness';
 import { getUser } from '../services/authStorage';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
@@ -519,9 +520,21 @@ function TrainingScorecard() {
     return { gross, vsPar: diff === 0 ? 'E' : diff > 0 ? `+${diff}` : `${diff}` };
   };
 
+  // Bug B — 2026-08-13: validação de completude antes de finalizar.
+  // Deriva expectedHoles de holesData.length (não hardcoded 18) — suporta
+  // treino/torneio de 9 buracos quando existirem.
+  const expectedHoles = holesData.length > 0 ? holesData.length : 18;
+  const incompleteEntries = getIncompleteEntries(players, scores, expectedHoles);
+
   const handleFinish = async () => {
     if (!isCreator || isFinishingRef.current) return;
     if (!navigator.onLine) { alert('Aguarde a conexão voltar para finalizar o treino.'); return; }
+
+    // Validação client-side de completude — feedback imediato sem hit backend
+    if (incompleteEntries.length > 0) {
+      alert(`Cartão incompleto — não pode ser finalizado.\n\n${formatIncompleteSummary(incompleteEntries)}`);
+      return;
+    }
 
     isFinishingRef.current = true;
     setIsFinishing(true);
@@ -538,7 +551,17 @@ function TrainingScorecard() {
       }
 
       const loggedUser = getUser();
-      await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
+      try {
+        await api.post('/training/finish', { group_id: Number(groupId), creator_id: loggedUser?.id });
+      } catch (err) {
+        // Backend detectou incompletude (defense-in-depth): mostra o que faltou
+        const data = err.response?.data;
+        if (err.response?.status === 400 && Array.isArray(data?.missing) && data.missing.length > 0) {
+          alert(`Cartão incompleto (checado no servidor):\n\n${formatIncompleteSummary(data.missing)}`);
+          return;
+        }
+        throw err;
+      }
 
       // Limpa localStorage e sessionStorage APÓS o backend confirmar o encerramento
       localStorage.removeItem('activeTrainingGroup');
@@ -870,10 +893,23 @@ function TrainingScorecard() {
 
             {isCreator && (() => {
               const hasPending = syncStatus.pending > 0 || syncStatus.syncing;
-              const blocked = isFinishing || hasPending;
+              const hasIncomplete = incompleteEntries.length > 0;
+              const blocked = isFinishing || hasPending || hasIncomplete;
               return (
                 <>
-                  {hasPending && (
+                  {hasIncomplete && (
+                    <div style={{ marginTop: '18px', padding: '12px 14px', backgroundColor: 'rgba(239,68,68,0.10)', border: `1px solid ${theme.danger}55`, borderRadius: '8px', fontSize: '12px', color: theme.danger, textAlign: 'left' }}>
+                      <div style={{ fontWeight: 'bold', marginBottom: '6px', textAlign: 'center' }}>
+                        Cartão incompleto — faltam scores:
+                      </div>
+                      {incompleteEntries.map(m => (
+                        <div key={m.user_id} style={{ marginTop: '3px' }}>
+                          <strong>{m.name}:</strong> {m.missing_holes.length === 1 ? 'buraco' : 'buracos'} {m.missing_holes.join(', ')}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {hasPending && !hasIncomplete && (
                     <div style={{ marginTop: '18px', padding: '10px 12px', backgroundColor: 'rgba(234,179,8,0.10)', border: `1px solid ${theme.gold}55`, borderRadius: '8px', fontSize: '12px', color: theme.gold, textAlign: 'center' }}>
                       {syncStatus.online
                         ? `Sincronizando ${syncStatus.pending} tacada(s) — aguarde o indicador zerar.`
