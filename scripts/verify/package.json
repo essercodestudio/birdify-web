@@ -1,0 +1,15 @@
+{
+  "name": "birdify-verify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runtime verification scripts (Playwright + CDP) — regressão para bugs de perda de dado e completude.",
+  "scripts": {
+    "bug-a-treino": "node bug_a_treino.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.3.1",
+    "mysql2": "^3.11.0",
+    "playwright-core": "^1.48.0"
+  }
+}
