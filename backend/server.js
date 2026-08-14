@@ -1,3 +1,5 @@
+process.env.TZ = "America/Sao_Paulo";
+
 require("dotenv").config();
 const http   = require("http");
 const path   = require("path");

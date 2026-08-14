@@ -12,10 +12,16 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 20,
   queueLimit: 50,
+  timezone: "-03:00",
 });
 
-// Mensagem de log para confirmar a inicialização
-console.log("✅ Pool de conexões MySQL configurado com variáveis de ambiente!");
+// VPS roda em UTC; sem isso, CURDATE()/NOW() do MySQL viram o dia às 21h BRT
+// e o "Treino do Dia" quebra: some do ranking, do lobby e do bloqueio de duplicidade.
+pool.on("connection", (connection) => {
+  connection.query("SET time_zone = '-03:00'");
+});
+
+console.log("✅ Pool de conexões MySQL configurado (fuso BRT)");
 
 // Exporta como promise para usar async/await
 module.exports = pool.promise();

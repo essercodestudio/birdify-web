@@ -2,36 +2,31 @@ const cron = require('node-cron');
 const db = require('../db');
 const socketService = require('./socketService');
 
-// Fecha treinos abandonados: passaram 8h desde created_at e ninguém encerrou.
-// Ativo vira 'finalizado' (marcações valem); aguardando vira 'cancelado'
-// (lobby que nunca começou não gera histórico útil).
+// Fecha treinos abandonados por qualquer um dos dois critérios (o que vier primeiro):
+//   1) passaram 8h desde created_at, ou
+//   2) o treino é de um dia anterior a hoje (BRT) — treino do dia não atravessa a virada.
+// Ativo vira 'finalizado' (marcações valem); aguardando vira 'cancelado'.
 async function autoFinalizeStaleTrainings() {
   try {
+    const stale = `(created_at < (NOW() - INTERVAL 8 HOUR) OR DATE(created_at) < CURDATE())`;
+
     const [ativos] = await db.query(
-      `SELECT id FROM training_groups
-        WHERE status = 'ativo'
-          AND created_at < (NOW() - INTERVAL 8 HOUR)`
+      `SELECT id FROM training_groups WHERE status = 'ativo' AND ${stale}`
     );
     const [cancelados] = await db.query(
-      `SELECT id FROM training_groups
-        WHERE status = 'aguardando'
-          AND created_at < (NOW() - INTERVAL 8 HOUR)`
+      `SELECT id FROM training_groups WHERE status = 'aguardando' AND ${stale}`
     );
 
     if (ativos.length > 0) {
       await db.query(
-        `UPDATE training_groups
-            SET status = 'finalizado'
-          WHERE status = 'ativo'
-            AND created_at < (NOW() - INTERVAL 8 HOUR)`
+        `UPDATE training_groups SET status = 'finalizado'
+          WHERE status = 'ativo' AND ${stale}`
       );
     }
     if (cancelados.length > 0) {
       await db.query(
-        `UPDATE training_groups
-            SET status = 'cancelado'
-          WHERE status = 'aguardando'
-            AND created_at < (NOW() - INTERVAL 8 HOUR)`
+        `UPDATE training_groups SET status = 'cancelado'
+          WHERE status = 'aguardando' AND ${stale}`
       );
     }
 
