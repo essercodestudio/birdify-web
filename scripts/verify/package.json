@@ -4,7 +4,8 @@
   "private": true,
   "description": "Runtime verification scripts (Playwright + CDP) — regressão para bugs de perda de dado e completude.",
   "scripts": {
-    "bug-a-treino": "node bug_a_treino.js"
+    "bug-a-treino": "node bug_a_treino.js",
+    "bug-a-torneio": "node bug_a_torneio.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

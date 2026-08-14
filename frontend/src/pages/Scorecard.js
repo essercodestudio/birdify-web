@@ -41,15 +41,17 @@ function Scorecard() {
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
 
   // Lock unificado: bloqueia +/- E ◀/▶ durante qualquer transição de buraco.
-  // useRef (não useState) porque a mudança precisa ser síncrona — React batching
-  // pode fazer isSaving nunca "ficar true" visualmente entre setStates do mesmo
-  // tick, deixando janela pra duplo clique gravar no buraco errado.
+  // useRef (não useState) porque a mudança precisa ser síncrona — batching
+  // poderia deixar dois cliques do mesmo tick passarem, abrindo janela pra
+  // gravar no buraco errado.
   const busyRef = useRef(false);
+  // Timers de debounce por chave "userId-holeNumber": cada toque no +/- reseta o
+  // timer; ao estourar 400ms sem novo toque, enfileira via syncService.
+  const saveTimers = useRef({});
 
   const theme = {
     bg: '#0f172a', card: '#1e293b', cardLight: '#334155', accent: '#22c55e', 
@@ -168,9 +170,19 @@ function Scorecard() {
       scoresRes.data.forEach((s) => {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
       });
-      // Merge: scores locais (offline/pendentes) têm prioridade sobre o servidor
-      // para o caso do usuário ter marcado tacadas sem conexão.
-      setScores((prev) => ({ ...scoresMap, ...prev }));
+      // Overlay offline-first: itens na fila do syncService ainda não confirmados
+      // pelo servidor (pending/syncing/failed) sobrepõem o que veio do GET. Sem
+      // isso, um refetch (F5, socket) apagaria scores marcados offline.
+      const pendingOverlay = {};
+      syncService.getPendingItems((item) =>
+        item.endpoint === "/scores/save"
+        && Number(item.payload?.tournament_id) === Number(savedGroup.tournament_id)
+      ).forEach((item) => {
+        const p = item.payload;
+        pendingOverlay[`${p.user_id}-${p.hole_number}`] = p.strokes;
+      });
+      // prev vem por último pra preservar cliques ainda no debounce.
+      setScores((prev) => ({ ...scoresMap, ...pendingOverlay, ...prev }));
       
       // Encontrar o primeiro buraco sem pontuação
       let finalCurrentHole = savedGroup.starting_hole;
@@ -266,9 +278,43 @@ function Scorecard() {
     return syncService.subscribe(setSyncStatus);
   }, []);
 
+  // Cleanup: se o usuário sair do scorecard sem clicar em ▶, dispara os timers
+  // pendentes de debounce → enqueue. A fila persiste em localStorage e é
+  // drenada ao reabrir/reconectar.
+  useEffect(() => {
+    return () => {
+      Object.entries(saveTimers.current).forEach(([key, timerId]) => {
+        clearTimeout(timerId);
+        const [uid, hNum] = key.split("-");
+        const s = scores[key];
+        if (s > 0) enqueueScore(uid, hNum, s);
+      });
+      saveTimers.current = {};
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const currentHoleData = holesData.find(
     (h) => Number(h.hole_number) === Number(currentHole) || Number(h.hole) === Number(currentHole)
   ) || { par: 4, yards_blue: 0, yards_white: 0, yards_yellow: 0, yards_red: 0 };
+
+  // Enfileira a tacada no syncService. Fila persistente em localStorage; se
+  // offline, fica em PENDING e reenvia ao voltar. `dedupKey` garante que
+  // cliques em sequência no mesmo (tournament, user, hole) substituam a
+  // pendência anterior em vez de empilhar duplicatas.
+  const enqueueScore = (userId, hole, strokes) => {
+    if (!group?.tournament_id) return;
+    syncService.enqueue({
+      endpoint: "/scores/save",
+      payload: {
+        tournament_id: group.tournament_id,
+        user_id: Number(userId),
+        hole_number: Number(hole),
+        strokes: Number(strokes),
+      },
+      dedupKey: `score:${group.tournament_id}:${userId}:${hole}`,
+    });
+  };
 
   // REGRA 1: handleScoreChange com anotação livre offline e bônus do PAR.
   // `hole` vem EXPLÍCITO do onClick — é o buraco que o usuário viu na tela no
@@ -276,6 +322,12 @@ function Scorecard() {
   // divergente do currentHole atual), o clique é descartado e logado. Sem
   // isso, um toque durante a transição de buraco gravava no hole errado —
   // raiz do bug do torneio real de 2026-08.
+  //
+  // Fluxo pós-Bug A: cada toque agenda um enqueue no syncService com debounce
+  // de 400ms. Antes o enqueue só rodava em saveCurrentHoleScores (ao avançar
+  // buraco), então o buraco atual ficava fora da fila até o usuário clicar ▶.
+  // Se caísse a conexão e ele fechasse a aba, o dado sobrevivia apenas no
+  // draft/snapshot local — agora entra também na fila persistente.
   const handleScoreChange = (userId, delta, hole) => {
     if (busyRef.current) return;
     if (Number(hole) !== Number(currentHole)) {
@@ -311,40 +363,34 @@ function Scorecard() {
       });
       saveDraftToLocalStorage(group.tournament_id, hole, currentHoleScores);
     }
+
+    // Debounce 400ms → enqueue offline-first
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => {
+      enqueueScore(userId, hole, newScore);
+      delete saveTimers.current[key];
+    }, 400);
   };
 
-  // Enfileira as tacadas do `hole` explícito (não do state currentHole — a
-  // função pode rodar em transição). Online → envia imediatamente. Offline
-  // → permanece pendente e é reenviado pelo syncService quando voltar.
-  const saveCurrentHoleScores = async (hole) => {
-    if (!group?.tournament_id) return true;
-    setIsSaving(true);
-    try {
-      players.forEach((p) => {
-        const score = scores[`${p.id}-${hole}`];
-        if (score && score > 0) {
-          syncService.enqueue({
-            endpoint: "/scores/save",
-            payload: {
-              tournament_id: group.tournament_id,
-              user_id: p.id,
-              hole_number: hole,
-              strokes: score,
-            },
-            dedupKey: `score:${group.tournament_id}:${p.id}:${hole}`,
-          });
-        }
-      });
-      // Rascunho do buraco pode ser limpo: o syncService já é o source-of-truth
-      // dos envios pendentes e o snapshot consolidado mantém os scores na tela.
-      clearDraftFromLocalStorage(group.tournament_id, hole);
-      return true;
-    } finally {
-      setIsSaving(false);
-    }
+  // Drena timers de debounce imediatamente pro syncService (sync, não bloqueia).
+  // Usado ao trocar de buraco: garante que cliques ainda no debounce virem
+  // enqueues antes da transição — depois disso a fila cuida da entrega.
+  const flushPendingTimersForHole = (hole) => {
+    players.forEach((p) => {
+      const key = `${p.id}-${hole}`;
+      if (saveTimers.current[key]) {
+        clearTimeout(saveTimers.current[key]);
+        const s = scores[key];
+        delete saveTimers.current[key];
+        if (s > 0) enqueueScore(p.id, hole, s);
+      }
+    });
+    // Rascunho do buraco pode ser limpo: syncService é o source-of-truth
+    // dos envios pendentes; o snapshot consolidado mantém os scores na tela.
+    if (group?.tournament_id) clearDraftFromLocalStorage(group.tournament_id, hole);
   };
 
-  const changeHole = async (delta) => {
+  const changeHole = (delta) => {
     if (busyRef.current) return;
     busyRef.current = true;
     try {
@@ -364,19 +410,9 @@ function Scorecard() {
         }
       }
 
-      if (delta !== 0) {
-        const hasScoresToSave = players.some(p => {
-          const score = scores[`${p.id}-${holeBeforeChange}`];
-          return score && score > 0;
-        });
-
-        if (hasScoresToSave) {
-          const saveSuccess = await saveCurrentHoleScores(holeBeforeChange);
-          if (!saveSuccess) {
-            return;
-          }
-        }
-      }
+      // Drena timers de debounce do buraco atual (sync, não aguarda servidor).
+      // A fila do syncService cuida da entrega em background.
+      if (delta !== 0) flushPendingTimersForHole(holeBeforeChange);
 
       if (delta > 0) {
         if (!isReviewMode && playedHoles.length >= 18) {
@@ -452,49 +488,26 @@ function Scorecard() {
     return { gross: totalGross, netVsPar: formattedNet };
   };
 
-  // Assinar cartão exige conexão real — o placar oficial precisa de
-  // confirmação do servidor antes de limpar o estado local.
+  // Assinar cartão exige conexão real E fila zerada — o placar oficial precisa
+  // de confirmação do servidor pra cada tacada antes de limpar o estado local.
   const handleConfirmGame = async () => {
     if (!navigator.onLine) {
       alert("Aguarde a conexão voltar para assinar o cartão. Seus pontos estão salvos localmente.");
       return;
     }
 
-    const holesToSave = [...new Set(playedHoles)];
-    for (const hole of holesToSave) {
-      const hasScoresForHole = players.some(p => {
-        const score = scores[`${p.id}-${hole}`];
-        return score && score > 0;
-      });
+    // Drena qualquer timer de debounce dos buracos jogados → enqueue imediato.
+    [...new Set(playedHoles)].forEach((h) => flushPendingTimersForHole(h));
 
-      if (hasScoresForHole) {
-        try {
-          const savePromises = players.map(p => {
-            const score = scores[`${p.id}-${hole}`];
-            if (score && score > 0) {
-              return api.post("/scores/save", {
-                tournament_id: group.tournament_id,
-                user_id: p.id,
-                hole_number: hole,
-                strokes: score,
-              });
-            }
-            return Promise.resolve();
-          });
-          await Promise.all(savePromises);
-
-          if (group?.tournament_id) {
-            clearDraftFromLocalStorage(group.tournament_id, hole);
-          }
-        } catch (error) {
-          alert(`Erro ao salvar pontuação do buraco ${hole}. Verifique sua conexão.`);
-          return;
-        }
-      }
-    }
-
-    // Drena qualquer pendência da fila antes de finalizar
+    // Força um flush da fila e reverifica: se algo ficou pendente/falhou, aborta
+    // — não assina cartão oficial sem confirmação de que todas as tacadas
+    // chegaram ao servidor.
     await syncService.flush();
+    const finalStatus = syncService.getStatus();
+    if (finalStatus.pending > 0 || finalStatus.syncing) {
+      alert(`Ainda há ${finalStatus.pending || 1} tacada(s) sincronizando. Aguarde o indicador zerar antes de assinar.`);
+      return;
+    }
 
     if (group?.tournament_id) {
       clearAllDraftsForMatch(group.tournament_id);
@@ -524,7 +537,7 @@ function Scorecard() {
     headerInfo: { textAlign: "left" },
     leaderboardBtn: { backgroundColor: theme.gold, color: "black", border: "none", padding: "8px 12px", borderRadius: "8px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "5px" },
     holeNav: { display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.card, padding: "15px", borderRadius: "10px", marginBottom: "20px", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" },
-    navBtn: { backgroundColor: theme.cardLight, color: "white", border: "none", padding: "10px 20px", borderRadius: "5px", fontSize: "20px", cursor: "pointer", opacity: isSaving ? 0.5 : 1, pointerEvents: isSaving ? "none" : "auto" },
+    navBtn: { backgroundColor: theme.cardLight, color: "white", border: "none", padding: "10px 20px", borderRadius: "5px", fontSize: "20px", cursor: "pointer" },
     holeTitle: { fontSize: "28px", fontWeight: "bold", color: theme.gold },
     parInfo: { color: theme.textMuted, fontSize: "16px", marginTop: "5px" },
     details: { fontSize: "14px", color: "#888", marginTop: "8px", display: "flex", justifyContent: "center", gap: "8px", flexWrap: "wrap" },
@@ -581,7 +594,18 @@ function Scorecard() {
             );
           })}
         </div>
-        <button style={styles.confirmBtn} onClick={handleConfirmGame}>
+        {(syncStatus.pending > 0 || syncStatus.syncing) && (
+          <div style={{ marginTop: "18px", padding: "10px 12px", backgroundColor: "rgba(234,179,8,0.10)", border: `1px solid ${theme.gold}55`, borderRadius: "8px", fontSize: "12px", color: theme.gold, textAlign: "center" }}>
+            {syncStatus.online
+              ? `Sincronizando ${syncStatus.pending} tacada(s) — aguarde o indicador zerar antes de assinar.`
+              : `${syncStatus.pending} tacada(s) sem envio — aguarde a conexão voltar.`}
+          </div>
+        )}
+        <button
+          style={{ ...styles.confirmBtn, ...((syncStatus.pending > 0 || syncStatus.syncing) && { backgroundColor: theme.cardLight, color: theme.textMuted, cursor: "not-allowed" }) }}
+          onClick={handleConfirmGame}
+          disabled={syncStatus.pending > 0 || syncStatus.syncing}
+        >
           <LuCheck size={16} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
           Assinar Cartão
         </button>
@@ -630,7 +654,7 @@ function Scorecard() {
       <style>{`@keyframes birdifyPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
 
       <div style={styles.holeNav}>
-        <button style={styles.navBtn} onClick={() => changeHole(-1)} disabled={isSaving}>◀</button>
+        <button style={styles.navBtn} onClick={() => changeHole(-1)}>◀</button>
         <div>
           <div style={{ ...styles.holeTitle, display: "inline-flex", alignItems: "center", gap: 10 }}>
             Buraco {currentHole}
@@ -646,7 +670,7 @@ function Scorecard() {
               evita duplicação. Cores yellow/red antigas estavam trocadas (yellow→preto,
               red→verde); o componente novo tem as cores corretas do padrão de golfe. */}
         </div>
-        <button style={styles.navBtn} onClick={() => changeHole(1)} disabled={isSaving}>▶</button>
+        <button style={styles.navBtn} onClick={() => changeHole(1)}>▶</button>
       </div>
 
       <div>
@@ -669,11 +693,11 @@ function Scorecard() {
               </div>
 
               <div style={styles.scoreControl}>
-                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1, currentHole)} disabled={isSaving}>-</button>
+                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1, currentHole)}>-</button>
                 <span style={{ ...styles.scoreValue, color: score ? (score < currentHoleData.par ? theme.accent : score > currentHoleData.par ? theme.danger : "white") : theme.cardLight }}>
                   {score ? score : "0"}
                 </span>
-                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1, currentHole)} disabled={isSaving}>+</button>
+                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1, currentHole)}>+</button>
               </div>
             </div>
           );
