@@ -337,6 +337,61 @@ exports.finishTraining = async (req, res) => {
   try {
     if (!group_id) return res.status(400).json({ error: "group_id ausente." });
 
+    // Bug B — 2026-08-13: validação server-side de completude. Antes o backend
+    // só marcava status='finalizado' sem checar se todos os atletas tinham
+    // marcado todos os buracos. Se algum passasse pela validação client-side
+    // (skip por bug/manipulação), gravava treino incompleto no ranking.
+    const [[group]] = await db.execute(
+      "SELECT course_id FROM training_groups WHERE id = ? AND club_id = ? AND creator_id = ?",
+      [group_id, cid, creator_id],
+    );
+    if (!group) {
+      return res.status(403).json({ message: "Acesso negado ou treino não encontrado." });
+    }
+
+    const [[{ hole_count }]] = await db.execute(
+      "SELECT COUNT(*) AS hole_count FROM holes WHERE course_id = ?",
+      [group.course_id],
+    );
+    const expected = hole_count > 0 ? hole_count : 18;
+
+    const [participants] = await db.execute(
+      `SELECT tp.user_id, u.name,
+              COUNT(ts.hole_number) AS holes_played
+         FROM training_participants tp
+         JOIN users u ON u.id = tp.user_id
+         LEFT JOIN training_scores ts
+                ON ts.group_id  = tp.group_id
+               AND ts.user_id   = tp.user_id
+               AND ts.hole_number BETWEEN 1 AND ?
+        WHERE tp.group_id = ?
+        GROUP BY tp.user_id, u.name`,
+      [expected, group_id],
+    );
+
+    const missing = [];
+    for (const p of participants) {
+      if (Number(p.holes_played) < expected) {
+        const [rows] = await db.execute(
+          `SELECT hole_number FROM training_scores
+            WHERE group_id = ? AND user_id = ? AND hole_number BETWEEN 1 AND ?`,
+          [group_id, p.user_id, expected],
+        );
+        const have = new Set(rows.map(r => Number(r.hole_number)));
+        const holes = [];
+        for (let h = 1; h <= expected; h++) if (!have.has(h)) holes.push(h);
+        missing.push({ user_id: p.user_id, name: p.name, missing_holes: holes });
+      }
+    }
+
+    if (missing.length > 0) {
+      return res.status(400).json({
+        error: "Treino incompleto — não pode ser finalizado.",
+        expected_holes: expected,
+        missing,
+      });
+    }
+
     const [result] = await db.execute(
       `UPDATE training_groups SET status = 'finalizado'
        WHERE id = ? AND club_id = ? AND creator_id = ?`,

@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS group_players (
   CONSTRAINT fk_gp_user  FOREIGN KEY (user_id)  REFERENCES users(id)             ON DELETE CASCADE
 );
 
+-- ─── 11b. tournament_scorecard_signatures (cartão oficial assinado) ──
+-- Grava a assinatura do cartão do torneio: quem assinou, quando. Antes o "Assinar
+-- Cartão" era só UI (limpava localStorage). Migration 2026_08_13.
+CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  tournament_id  INT NOT NULL,
+  group_id       INT NOT NULL,
+  user_id        INT NOT NULL,
+  signed_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sig (tournament_id, group_id, user_id),
+  CONSTRAINT fk_sig_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id)       ON DELETE CASCADE,
+  CONSTRAINT fk_sig_group FOREIGN KEY (group_id)      REFERENCES tournament_groups(id) ON DELETE CASCADE,
+  CONSTRAINT fk_sig_user  FOREIGN KEY (user_id)       REFERENCES users(id)             ON DELETE CASCADE
+);
+
 -- ─── 12. tournament_sponsors ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tournament_sponsors (
   id             INT AUTO_INCREMENT PRIMARY KEY,
