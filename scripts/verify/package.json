@@ -6,7 +6,8 @@
   "scripts": {
     "bug-a-treino": "node bug_a_treino.js",
     "bug-a-torneio": "node bug_a_torneio.js",
-    "bug-b-completude": "node bug_b_completude.js"
+    "bug-b-completude": "node bug_b_completude.js",
+    "admin-score-editor": "node admin_score_editor.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

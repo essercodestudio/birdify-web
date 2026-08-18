@@ -152,16 +152,49 @@ CREATE TABLE IF NOT EXISTS group_players (
 -- ─── 11b. tournament_scorecard_signatures (cartão oficial assinado) ──
 -- Grava a assinatura do cartão do torneio: quem assinou, quando. Antes o "Assinar
 -- Cartão" era só UI (limpava localStorage). Migration 2026_08_13.
+-- invalidated_at/invalidated_reason: adicionados em 2026_08_17 pra marcar quando
+-- o admin ajusta score depois da assinatura — a linha NÃO é apagada, mantém o
+-- histórico "foi assinado uma vez com esses valores" + evidência da invalidação.
 CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
-  id             INT AUTO_INCREMENT PRIMARY KEY,
-  tournament_id  INT NOT NULL,
-  group_id       INT NOT NULL,
-  user_id        INT NOT NULL,
-  signed_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  id                  INT AUTO_INCREMENT PRIMARY KEY,
+  tournament_id       INT NOT NULL,
+  group_id            INT NOT NULL,
+  user_id             INT NOT NULL,
+  signed_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  invalidated_at      TIMESTAMP    NULL,
+  invalidated_reason  VARCHAR(500) NULL,
   UNIQUE KEY uk_sig (tournament_id, group_id, user_id),
   CONSTRAINT fk_sig_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id)       ON DELETE CASCADE,
   CONSTRAINT fk_sig_group FOREIGN KEY (group_id)      REFERENCES tournament_groups(id) ON DELETE CASCADE,
   CONSTRAINT fk_sig_user  FOREIGN KEY (user_id)       REFERENCES users(id)             ON DELETE CASCADE
+);
+
+-- ─── 11c. admin_score_audit (rastro de correção manual do admin) ─────
+-- Cada PUT em /admin/scores/{tournament|training} grava aqui, dentro de uma
+-- transação com o próprio upsert do score. Reason é obrigatório (5-255 chars)
+-- e serve pra prestação de contas no comitê de regras/CBG. Migration 2026_08_17.
+CREATE TABLE IF NOT EXISTS admin_score_audit (
+  id                 INT AUTO_INCREMENT PRIMARY KEY,
+  club_id            INT NOT NULL,
+  admin_user_id      INT NOT NULL,
+  context            ENUM('tournament','training') NOT NULL,
+  tournament_id      INT DEFAULT NULL,
+  training_group_id  INT DEFAULT NULL,
+  target_user_id     INT NOT NULL,
+  hole_number        INT NOT NULL,
+  previous_strokes   INT DEFAULT NULL,
+  new_strokes        INT DEFAULT NULL,
+  action             ENUM('insert','update','delete') NOT NULL,
+  reason             VARCHAR(255) NOT NULL,
+  created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_asa_club   FOREIGN KEY (club_id)           REFERENCES clubs(id)             ON DELETE CASCADE,
+  CONSTRAINT fk_asa_admin  FOREIGN KEY (admin_user_id)     REFERENCES users(id)             ON DELETE CASCADE,
+  CONSTRAINT fk_asa_target FOREIGN KEY (target_user_id)    REFERENCES users(id)             ON DELETE CASCADE,
+  CONSTRAINT fk_asa_tourn  FOREIGN KEY (tournament_id)     REFERENCES tournaments(id)       ON DELETE CASCADE,
+  CONSTRAINT fk_asa_tgroup FOREIGN KEY (training_group_id) REFERENCES training_groups(id)   ON DELETE CASCADE,
+  INDEX idx_asa_club_created (club_id, created_at),
+  INDEX idx_asa_tournament   (tournament_id, created_at),
+  INDEX idx_asa_training     (training_group_id, created_at)
 );
 
 -- ─── 12. tournament_sponsors ─────────────────────────────────────────

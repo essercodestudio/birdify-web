@@ -180,7 +180,8 @@ exports.getSignature = async (req, res) => {
   try {
     const groupId = Number(req.params.groupId);
     const [rows] = await db.execute(
-      `SELECT s.signed_at, s.user_id, u.name AS signed_by_name
+      `SELECT s.signed_at, s.user_id, u.name AS signed_by_name,
+              s.invalidated_at, s.invalidated_reason
          FROM tournament_scorecard_signatures s
          JOIN users u ON u.id = s.user_id
          JOIN tournament_groups tg ON tg.id = s.group_id

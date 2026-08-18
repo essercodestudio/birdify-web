@@ -4,7 +4,7 @@ const db = require("../db");
 const ExcelJS = require('exceljs');
 
 // Função auxiliar para gerar código
-function generateAccessCode(length = 5) {
+function generateAccessCode(length = 4) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
   for (let i = 0; i < length; i++) {
@@ -37,14 +37,30 @@ exports.createGroup = async (req, res) => {
       return res.status(400).json({ error: 'Horário do grupo é obrigatório no formato tee time.' });
     }
 
-    const access_code = generateAccessCode();
-
-    const query = "INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time) VALUES (?, ?, ?, ?, ?)";
-    const [result] = await db.execute(query, [tournament_id, group_name, access_code, hole, time]);
+    // Retry contra colisão do UNIQUE access_code (36^4 = 1.6M combos, mas o UNIQUE é global)
+    let access_code = null, insertId = null, attempts = 0;
+    while (attempts < 20) {
+      const candidate = generateAccessCode();
+      try {
+        const [result] = await db.execute(
+          "INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time) VALUES (?, ?, ?, ?, ?)",
+          [tournament_id, group_name, candidate, hole, time]
+        );
+        access_code = candidate;
+        insertId = result.insertId;
+        break;
+      } catch (e) {
+        if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+        throw e;
+      }
+    }
+    if (!insertId) {
+      return res.status(503).json({ error: "Não foi possível gerar código único. Tente novamente." });
+    }
 
     res.status(201).json({
       message: "Grupo criado!",
-      groupId: result.insertId,
+      groupId: insertId,
       access_code
     });
   } catch (error) {
@@ -343,17 +359,26 @@ exports.generateCode = async (req, res) => {
       return res.status(404).json({ error: 'Grupo não encontrado ou acesso negado.' });
     }
     
-    const code = generateAccessCode(4).toUpperCase();
-
-    const [result] = await db.execute(
-      "UPDATE tournament_groups SET access_code = ? WHERE id = ?", 
-      [code, group_id]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Grupo não encontrado.' });
+    let code = null, attempts = 0;
+    while (attempts < 20) {
+      const candidate = generateAccessCode().toUpperCase();
+      try {
+        const [result] = await db.execute(
+          "UPDATE tournament_groups SET access_code = ? WHERE id = ?",
+          [candidate, group_id]
+        );
+        if (result.affectedRows === 0) {
+          return res.status(404).json({ error: 'Grupo não encontrado.' });
+        }
+        code = candidate;
+        break;
+      } catch (e) {
+        if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+        throw e;
+      }
     }
-    
+    if (!code) return res.status(503).json({ error: "Não foi possível gerar código único. Tente novamente." });
+
     res.json({ access_code: code });
     
   } catch (error) {
@@ -540,8 +565,6 @@ exports.autoGenerateGroups = async (req, res) => {
 
     // 7. Criar grupos + escalar jogadores
     for (let i = 0; i < flights.length; i++) {
-      const access_code = generateAccessCode();
-
       // Shotgun: distribui buracos 1..N (wrap com módulo se >18, evita conflito de FK)
       // Tee time: buraco 1 fixo, hora avança em cascata
       let hole = 1;
@@ -555,12 +578,26 @@ exports.autoGenerateGroups = async (req, res) => {
         hole = ((i) % 18) + 1;
       }
 
-      const [ins] = await db.execute(
-        `INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time)
-         VALUES (?, ?, ?, ?, ?)`,
-        [tournament_id, `Flight ${i + 1}`, access_code, hole, teeTime]
-      );
-      const groupId = ins.insertId;
+      // Retry contra colisão do UNIQUE access_code
+      let groupId = null, attempts = 0;
+      while (attempts < 20) {
+        const candidate = generateAccessCode();
+        try {
+          const [ins] = await db.execute(
+            `INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time)
+             VALUES (?, ?, ?, ?, ?)`,
+            [tournament_id, `Flight ${i + 1}`, candidate, hole, teeTime]
+          );
+          groupId = ins.insertId;
+          break;
+        } catch (e) {
+          if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+          throw e;
+        }
+      }
+      if (!groupId) {
+        return res.status(503).json({ error: "Não foi possível gerar códigos únicos pra todos os flights. Tente novamente." });
+      }
 
       if (flights[i].length > 0) {
         const placeholders = flights[i].map(() => "(?, ?)").join(", ");

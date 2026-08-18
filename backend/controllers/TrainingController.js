@@ -6,7 +6,7 @@ const crypto        = require("crypto");
 const db            = require("../db");
 const socketService = require("../services/socketService");
 
-function generateCode(len = 5) {
+function generateCode(len = 3) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
   for (let i = 0; i < len; i++)
@@ -44,16 +44,28 @@ exports.createTable = async (req, res) => {
     const dd   = String(now.getDate()).padStart(2, "0");
     const mm   = String(now.getMonth() + 1).padStart(2, "0");
     const yyyy = now.getFullYear();
-    const group_name  = `Treino ${courseName} - ${dd}/${mm}/${yyyy}`;
-    const access_code = generateCode();
+    const group_name = `Treino ${courseName} - ${dd}/${mm}/${yyyy}`;
 
-    const [result] = await db.execute(
-      `INSERT INTO training_groups (club_id, creator_id, course_id, group_name, access_code, starting_hole, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'aguardando')`,
-      [cid, creator_id, course_id, group_name, access_code, starting_hole || 1],
-    );
+    // Retry contra colisão do UNIQUE (access_code global, 36^3 = 46k combos).
+    let access_code = null, groupId = null, attempts = 0;
+    while (attempts < 20) {
+      const candidate = generateCode();
+      try {
+        const [result] = await db.execute(
+          `INSERT INTO training_groups (club_id, creator_id, course_id, group_name, access_code, starting_hole, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'aguardando')`,
+          [cid, creator_id, course_id, group_name, candidate, starting_hole || 1],
+        );
+        access_code = candidate;
+        groupId = result.insertId;
+        break;
+      } catch (e) {
+        if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+        throw e;
+      }
+    }
+    if (!groupId) return res.status(503).json({ error: "Não foi possível gerar código único. Tente novamente." });
 
-    const groupId = result.insertId;
     await db.execute(
       "INSERT INTO training_participants (group_id, user_id) VALUES (?, ?)",
       [groupId, creator_id],
