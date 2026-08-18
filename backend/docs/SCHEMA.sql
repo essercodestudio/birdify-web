@@ -173,14 +173,18 @@ CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
 -- Cada PUT em /admin/scores/{tournament|training} grava aqui, dentro de uma
 -- transação com o próprio upsert do score. Reason é obrigatório (5-255 chars)
 -- e serve pra prestação de contas no comitê de regras/CBG. Migration 2026_08_17.
+-- FKs pra users/tournaments/training_groups usam SET NULL: a auditoria
+-- sobrevive à deleção do alvo (é prova histórica, não pode desaparecer
+-- junto com o dado que auditou). Só club_id CASCADE — off-boarding
+-- do clube inteiro leva os audits dele.
 CREATE TABLE IF NOT EXISTS admin_score_audit (
   id                 INT AUTO_INCREMENT PRIMARY KEY,
   club_id            INT NOT NULL,
-  admin_user_id      INT NOT NULL,
+  admin_user_id      INT DEFAULT NULL,
   context            ENUM('tournament','training') NOT NULL,
   tournament_id      INT DEFAULT NULL,
   training_group_id  INT DEFAULT NULL,
-  target_user_id     INT NOT NULL,
+  target_user_id     INT DEFAULT NULL,
   hole_number        INT NOT NULL,
   previous_strokes   INT DEFAULT NULL,
   new_strokes        INT DEFAULT NULL,
@@ -188,10 +192,10 @@ CREATE TABLE IF NOT EXISTS admin_score_audit (
   reason             VARCHAR(255) NOT NULL,
   created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_asa_club   FOREIGN KEY (club_id)           REFERENCES clubs(id)             ON DELETE CASCADE,
-  CONSTRAINT fk_asa_admin  FOREIGN KEY (admin_user_id)     REFERENCES users(id)             ON DELETE CASCADE,
-  CONSTRAINT fk_asa_target FOREIGN KEY (target_user_id)    REFERENCES users(id)             ON DELETE CASCADE,
-  CONSTRAINT fk_asa_tourn  FOREIGN KEY (tournament_id)     REFERENCES tournaments(id)       ON DELETE CASCADE,
-  CONSTRAINT fk_asa_tgroup FOREIGN KEY (training_group_id) REFERENCES training_groups(id)   ON DELETE CASCADE,
+  CONSTRAINT fk_asa_admin  FOREIGN KEY (admin_user_id)     REFERENCES users(id)             ON DELETE SET NULL,
+  CONSTRAINT fk_asa_target FOREIGN KEY (target_user_id)    REFERENCES users(id)             ON DELETE SET NULL,
+  CONSTRAINT fk_asa_tourn  FOREIGN KEY (tournament_id)     REFERENCES tournaments(id)       ON DELETE SET NULL,
+  CONSTRAINT fk_asa_tgroup FOREIGN KEY (training_group_id) REFERENCES training_groups(id)   ON DELETE SET NULL,
   INDEX idx_asa_club_created (club_id, created_at),
   INDEX idx_asa_tournament   (tournament_id, created_at),
   INDEX idx_asa_training     (training_group_id, created_at)
