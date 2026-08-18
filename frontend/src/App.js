@@ -27,6 +27,7 @@ import ClubSettings from './pages/ClubSettings';
 import AdminTeeSettings from './pages/AdminTeeSettings';
 import AdminTeeBookings from './pages/AdminTeeBookings';
 import AdminSponsors from './pages/AdminSponsors';
+import AdminScoreEditor from './pages/AdminScoreEditor';
 import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
@@ -193,6 +194,7 @@ function App() {
             <Route path="/admin/tee-settings" element={<AdminRoute><AdminTeeSettings /></AdminRoute>} />
             <Route path="/admin/tee-bookings" element={<AdminRoute><AdminTeeBookings /></AdminRoute>} />
             <Route path="/admin/patrocinadores" element={<AdminRoute><AdminSponsors /></AdminRoute>} />
+            <Route path="/admin/ajustar-scores" element={<AdminRoute><AdminScoreEditor /></AdminRoute>} />
             <Route path="/tee-times" element={<ProtectedRoute><TeeTimes /></ProtectedRoute>} />
             <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />

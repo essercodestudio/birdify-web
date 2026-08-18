@@ -44,6 +44,9 @@ function Scorecard() {
   const [isReviewMode, setIsReviewMode] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
+  // Assinatura do cartão. null = nunca assinado. Objeto com invalidated_at != null
+  // significa que admin ajustou score depois da assinatura → banner de alerta.
+  const [signature, setSignature] = useState(null);
 
   // Lock unificado: bloqueia +/- E ◀/▶ durante qualquer transição de buraco.
   // useRef (não useState) porque a mudança precisa ser síncrona — batching
@@ -260,6 +263,17 @@ function Scorecard() {
   }, [groupId, navigate, loadDraftFromLocalStorage, loadPersistedState]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Busca a assinatura atual do grupo. Se existe e invalidated_at != null,
+  // a UI mostra banner vermelho: admin ajustou score depois da assinatura.
+  useEffect(() => {
+    let cancelled = false;
+    if (!groupId) return;
+    api.get(`/scores/signature/${groupId}`)
+      .then((r) => { if (!cancelled) setSignature(r.data || null); })
+      .catch(() => { /* silencioso — grupo pode não ter sido assinado ainda */ });
+    return () => { cancelled = true; };
+  }, [groupId]);
 
   // Persistência reativa: a cada mudança no estado relevante, salva o snapshot.
   // Não persiste durante o loading inicial para evitar gravar estado vazio.
@@ -700,6 +714,41 @@ function Scorecard() {
         </button>
       </div>
       <style>{`@keyframes birdifyPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
+
+      {signature && signature.invalidated_at && (
+        <div style={{
+          marginBottom: 14, padding: "12px 14px",
+          backgroundColor: "rgba(239,68,68,0.12)",
+          border: `1px solid ${theme.danger}`,
+          borderRadius: 10, textAlign: "left",
+        }}>
+          <div style={{ fontWeight: "bold", color: theme.danger, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+            ⚠ Cartão invalidado após ajuste do administrador
+          </div>
+          <div style={{ fontSize: 12, color: theme.textMain, marginBottom: 4 }}>
+            Assinado em {new Date(signature.signed_at).toLocaleString("pt-BR")} por {signature.signed_by_name}.
+            Invalidado em {new Date(signature.invalidated_at).toLocaleString("pt-BR")}.
+          </div>
+          {signature.invalidated_reason && (
+            <div style={{ fontSize: 11, color: theme.textMuted, fontStyle: "italic" }}>
+              {signature.invalidated_reason}
+            </div>
+          )}
+        </div>
+      )}
+      {signature && !signature.invalidated_at && (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px",
+          backgroundColor: "rgba(34,197,94,0.10)",
+          border: `1px solid ${theme.accent}55`,
+          borderRadius: 10, textAlign: "left", fontSize: 12,
+        }}>
+          <span style={{ color: theme.accent, fontWeight: "bold" }}>Cartão assinado</span>
+          <span style={{ color: theme.textMuted }}>
+            {" "}em {new Date(signature.signed_at).toLocaleString("pt-BR")} por {signature.signed_by_name}.
+          </span>
+        </div>
+      )}
 
       <div style={styles.holeNav}>
         <button style={styles.navBtn} onClick={() => changeHole(-1)}>◀</button>

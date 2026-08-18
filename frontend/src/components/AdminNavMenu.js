@@ -20,6 +20,7 @@ import {
   LuMenu,
   LuX,
   LuLogOut,
+  LuPencilLine,
 } from "react-icons/lu";
 
 const GROUPS = [
@@ -38,6 +39,7 @@ const GROUPS = [
       { icon: LuCalendarClock, label: "Tee Times", path: "/admin/tee-bookings", match: ["/admin/tee-bookings", "/admin/tee-settings"] },
       { icon: LuLink, label: "Circuitos / Ligas", path: "/circuits" },
       { icon: LuFlag, label: "Gerenciar Campos", path: "/courses" },
+      { icon: LuPencilLine, label: "Ajustar Tacadas", path: "/admin/ajustar-scores" },
     ],
   },
 ];
