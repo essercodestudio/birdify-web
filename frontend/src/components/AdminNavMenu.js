@@ -21,6 +21,7 @@ import {
   LuX,
   LuLogOut,
   LuPencilLine,
+  LuHistory,
 } from "react-icons/lu";
 
 const GROUPS = [
@@ -40,6 +41,7 @@ const GROUPS = [
       { icon: LuLink, label: "Circuitos / Ligas", path: "/circuits" },
       { icon: LuFlag, label: "Gerenciar Campos", path: "/courses" },
       { icon: LuPencilLine, label: "Ajustar Tacadas", path: "/admin/ajustar-scores" },
+      { icon: LuHistory, label: "Histórico de Ajustes", path: "/admin/scores-auditoria" },
     ],
   },
 ];
