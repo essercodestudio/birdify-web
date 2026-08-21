@@ -9,6 +9,7 @@ import { useClub } from '../context/ClubContext';
 import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList } from 'react-icons/lu';
 import HolePhotoBadge from '../components/HolePhotoBadge';
 import HoleDistanceBadge from '../components/HoleDistanceBadge';
+import TeeSuggestionChip from '../components/TeeSuggestionChip';
 
 const getScoreColor = (strokes, par, cardLight, gold, danger) => {
   const s = Number(strokes), p = Number(par) || 4;
@@ -71,6 +72,7 @@ function TrainingScorecard() {
   const [showHcModal, setShowHcModal] = useState(false);
   const [hcValues, setHcValues] = useState({});
   const [hcSaving, setHcSaving] = useState(false);
+  const [teeRules, setTeeRules] = useState([]);
   const [syncStatus, setSyncStatus] = useState({ online: true, pending: 0, syncing: false });
 
   // Timers de debounce por chave "userId-holeNumber"
@@ -247,6 +249,23 @@ function TrainingScorecard() {
 
   // Carga inicial
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Regras de tee do campo (alimentam o chip de sugestão no modal de handicaps).
+  // Falha silenciosa NA UI (sem regras = feature simplesmente não aparece), mas
+  // console.warn pra rastrear erro real de rede/500 se algo quebrar em prod.
+  useEffect(() => {
+    const courseId = group?.course_id;
+    if (!courseId) return;
+    let cancelled = false;
+    api.get(`/courses/${courseId}/tee-rules`)
+      .then(res => { if (!cancelled) setTeeRules(res.data?.rules || []); })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('[tee-rules] falha ao carregar regras do campo:', err?.response?.status, err?.message);
+        setTeeRules([]);
+      });
+    return () => { cancelled = true; };
+  }, [group?.course_id]);
 
   // ── Socket.io: tempo real ──
   useEffect(() => {
@@ -714,11 +733,16 @@ function TrainingScorecard() {
 
               {players.map(p => (
                 <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: `1px solid ${theme.cardLight}` }}>
-                  <div style={{ textAlign: 'left' }}>
+                  <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: '15px', fontWeight: 'bold', color: theme.textMain }}>{p.name}</div>
                     <div style={{ fontSize: '12px', color: theme.textMuted }}>
                       {p.gender === 'M' || p.gender === 'Masculino' ? 'Masculino' : 'Feminino'}
                     </div>
+                    <TeeSuggestionChip
+                      handicap={hcValues[p.id]}
+                      gender={p.gender}
+                      rules={teeRules}
+                    />
                   </div>
                   <input
                     type="number"

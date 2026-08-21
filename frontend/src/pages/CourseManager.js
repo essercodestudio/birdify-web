@@ -4,7 +4,69 @@ import api from "../services/api"; // Ajuste o caminho se necessário
 import { mediaUrl } from "../services/media";
 import { useNavigate } from "react-router-dom";
 import AdminNavMenu from "../components/AdminNavMenu";
-import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX } from "react-icons/lu";
+import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX, LuTarget, LuTriangleAlert } from "react-icons/lu";
+
+// Cores de tee: chave do banco → label PT-BR + cores visuais (batem com o card
+// de buracos, onde yellow é rotulado "Preto" e red é rotulado "Verde").
+const TEE_COLORS = [
+  { key: "white",  label: "Branco", border: "#ddd",     bg: "#fff"    },
+  { key: "yellow", label: "Preto",  border: "#ffd700",  bg: "#fffacd" },
+  { key: "blue",   label: "Azul",   border: "#3b82f6",  bg: "#e6f2ff" },
+  { key: "red",    label: "Verde",  border: "#22c55e",  bg: "#e8fbe8" },
+];
+
+const GENDER_LABEL = { ALL: "Todos", M: "Masculino", F: "Feminino" };
+
+// Grid vazio: mode + linha por (gender, color) sem valores.
+function emptyTeeRulesEditor() {
+  const blankRow = () => ({ min: "", max: "" });
+  const blankGender = () => ({
+    white: blankRow(), yellow: blankRow(), blue: blankRow(), red: blankRow(),
+  });
+  return {
+    mode: "single", // 'single' = ALL; 'gender' = M+F
+    rows: { ALL: blankGender(), M: blankGender(), F: blankGender() },
+  };
+}
+
+// Backend rules[] → editor grid. Detecta modo pelo primeiro registro.
+function rulesToEditor(rules) {
+  const editor = emptyTeeRulesEditor();
+  if (!rules || rules.length === 0) return editor;
+  editor.mode = rules.some((r) => r.gender !== "ALL") ? "gender" : "single";
+  for (const r of rules) {
+    if (!editor.rows[r.gender] || !editor.rows[r.gender][r.tee_color]) continue;
+    editor.rows[r.gender][r.tee_color] = {
+      min: String(r.handicap_min),
+      max: String(r.handicap_max),
+    };
+  }
+  return editor;
+}
+
+// Editor → payload do backend. Só envia gêneros do modo atual e linhas
+// com min E max preenchidos. display_order = ordem visual das cores.
+function editorToPayload(editor) {
+  const genders = editor.mode === "single" ? ["ALL"] : ["M", "F"];
+  const out = [];
+  for (const gender of genders) {
+    TEE_COLORS.forEach(({ key: color }, idx) => {
+      const row = editor.rows[gender]?.[color];
+      if (!row) return;
+      const min = row.min?.toString().trim();
+      const max = row.max?.toString().trim();
+      if (min === "" || max === "") return;
+      out.push({
+        gender,
+        tee_color: color,
+        handicap_min: Number(min),
+        handicap_max: Number(max),
+        display_order: idx,
+      });
+    });
+  }
+  return out;
+}
 
 function CourseManager() {
   const navigate = useNavigate();
@@ -20,6 +82,11 @@ function CourseManager() {
   const [editCourseName, setEditCourseName] = useState("");
   const [editCourseCity, setEditCourseCity] = useState("");
   const [editCourseState, setEditCourseState] = useState("");
+
+  // Regras de tee por handicap (Bloco 2/3). Editor local + warnings do backend.
+  const [teeEditor, setTeeEditor] = useState(emptyTeeRulesEditor());
+  const [teeWarnings, setTeeWarnings] = useState([]);
+  const [savingTeeRules, setSavingTeeRules] = useState(false);
 
   // TEMA PADRONIZADO BIRDIFY
   const theme = {
@@ -82,10 +149,60 @@ function CourseManager() {
     }
 
     try {
-      const res = await api.get(`/courses/${id}/holes`);
-      setHoles(res.data);
+      const [holesRes, rulesRes] = await Promise.all([
+        api.get(`/courses/${id}/holes`),
+        api.get(`/courses/${id}/tee-rules`),
+      ]);
+      setHoles(holesRes.data);
+      setTeeEditor(rulesToEditor(rulesRes.data?.rules || []));
+      setTeeWarnings(rulesRes.data?.warnings || []);
     } catch (error) {
-      alert("Erro ao carregar buracos");
+      alert("Erro ao carregar dados do campo.");
+    }
+  };
+
+  const handleTeeCellChange = (gender, color, field, value) => {
+    // Só aceita dígitos e um ponto/vírgula (permite digitar "8,5" ou vazio).
+    const cleaned = value.replace(",", ".").replace(/[^0-9.]/g, "");
+    setTeeEditor((prev) => ({
+      ...prev,
+      rows: {
+        ...prev.rows,
+        [gender]: {
+          ...prev.rows[gender],
+          [color]: { ...prev.rows[gender][color], [field]: cleaned },
+        },
+      },
+    }));
+  };
+
+  const handleTeeModeChange = (nextMode) => {
+    // Preserva o que o admin já digitou nos dois modelos — só troca qual é
+    // enviado ao salvar. Assim se ele cutuca o toggle sem querer, não perde.
+    setTeeEditor((prev) => ({ ...prev, mode: nextMode }));
+  };
+
+  const handleSaveTeeRules = async () => {
+    if (!selectedCourseId) return;
+    const payload = editorToPayload(teeEditor);
+    if (payload.length === 0) {
+      const ok = window.confirm(
+        "Nenhuma faixa preenchida no modo atual. Salvar assim vai APAGAR todas as regras de tee desse campo. Continuar?",
+      );
+      if (!ok) return;
+    }
+    setSavingTeeRules(true);
+    try {
+      const res = await api.put(`/courses/${selectedCourseId}/tee-rules`, {
+        rules: payload,
+      });
+      setTeeEditor(rulesToEditor(res.data?.rules || []));
+      setTeeWarnings(res.data?.warnings || []);
+      alert(res.data?.message || "Regras de tee salvas.");
+    } catch (err) {
+      alert(err.response?.data?.error || "Erro ao salvar regras de tee.");
+    } finally {
+      setSavingTeeRules(false);
     }
   };
 
@@ -645,6 +762,173 @@ function CourseManager() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* CARD DE REGRAS DE TEE POR HANDICAP (Bloco 3) */}
+              <div style={{ ...styles.card, borderTop: `4px solid ${theme.accent}` }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "12px",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <h3 style={{ margin: 0, color: theme.accent, display: "flex", alignItems: "center", gap: 8 }}>
+                    <LuTarget size={18} /> Regras de Tee por Handicap
+                  </h3>
+                  <button
+                    onClick={handleSaveTeeRules}
+                    disabled={savingTeeRules}
+                    style={{
+                      ...styles.button,
+                      backgroundColor: theme.accent,
+                      opacity: savingTeeRules ? 0.6 : 1,
+                    }}
+                  >
+                    <LuSave size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+                    {savingTeeRules ? "SALVANDO..." : "SALVAR REGRAS"}
+                  </button>
+                </div>
+
+                <p style={{ margin: "0 0 16px", color: theme.textMuted, fontSize: 13 }}>
+                  Define de qual tee o jogador deve sair, por faixa de handicap.
+                  A sugestão aparece no lobby do torneio e do treino, na hora que
+                  o jogador declara o handicap. Deixe uma cor em branco (min/max
+                  vazios) pra não usar aquele tee.
+                </p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 20,
+                    marginBottom: 16,
+                    flexWrap: "wrap",
+                    fontSize: 14,
+                  }}
+                >
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      checked={teeEditor.mode === "single"}
+                      onChange={() => handleTeeModeChange("single")}
+                    />
+                    Mesma regra pra todos os jogadores
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      checked={teeEditor.mode === "gender"}
+                      onChange={() => handleTeeModeChange("gender")}
+                    />
+                    Regras separadas por gênero (M / F)
+                  </label>
+                </div>
+
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  {(teeEditor.mode === "single" ? ["ALL"] : ["M", "F"]).map((gender) => (
+                    <div key={gender} style={{ flex: 1, minWidth: 260 }}>
+                      <div
+                        style={{
+                          color: theme.textMuted,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          letterSpacing: 1,
+                          textTransform: "uppercase",
+                          marginBottom: 8,
+                        }}
+                      >
+                        {GENDER_LABEL[gender]}
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 6px" }}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...styles.th, textAlign: "left", padding: "4px 8px" }}>Tee</th>
+                            <th style={{ ...styles.th, padding: "4px 8px" }}>HC mín</th>
+                            <th style={{ ...styles.th, padding: "4px 8px" }}>HC máx</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {TEE_COLORS.map(({ key, label, border, bg }) => {
+                            const row = teeEditor.rows[gender][key];
+                            return (
+                              <tr key={`${gender}-${key}`}>
+                                <td style={{ ...styles.td, ...styles.firstTd, textAlign: "left" }}>
+                                  <span
+                                    style={{
+                                      display: "inline-block",
+                                      width: 14,
+                                      height: 14,
+                                      borderRadius: "50%",
+                                      backgroundColor: bg,
+                                      border: `2px solid ${border}`,
+                                      verticalAlign: "middle",
+                                      marginRight: 8,
+                                    }}
+                                  />
+                                  {label}
+                                </td>
+                                <td style={styles.td}>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="-"
+                                    value={row.min}
+                                    onChange={(e) => handleTeeCellChange(gender, key, "min", e.target.value)}
+                                    style={styles.yardInput(border, bg)}
+                                  />
+                                </td>
+                                <td style={{ ...styles.td, ...styles.lastTd }}>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="-"
+                                    value={row.max}
+                                    onChange={(e) => handleTeeCellChange(gender, key, "max", e.target.value)}
+                                    style={styles.yardInput(border, bg)}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+
+                {teeWarnings.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: "12px 14px",
+                      backgroundColor: "rgba(234,179,8,0.08)",
+                      border: `1px solid ${theme.gold}`,
+                      borderRadius: 8,
+                      color: theme.gold,
+                      fontSize: 13,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, marginBottom: 6 }}>
+                      <LuTriangleAlert size={16} /> Aviso: faixas com buracos
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 20 }}>
+                      {teeWarnings.map((w, i) => {
+                        const label = GENDER_LABEL[w.gender] || w.gender;
+                        const prefix =
+                          w.type === "gap_at_start"
+                            ? `Nenhum tee para handicap ${w.uncovered_min} a ${w.uncovered_max}`
+                            : `Handicap ${w.uncovered_min} a ${w.uncovered_max} sem tee configurado`;
+                        return <li key={i}>{prefix} ({label}).</li>;
+                      })}
+                    </ul>
+                    <div style={{ marginTop: 6, color: theme.textMuted, fontSize: 12 }}>
+                      Jogadores nessas faixas verão "confirme com o starter" no lobby, sem bloqueio.
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           ) : (

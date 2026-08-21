@@ -94,6 +94,27 @@ CREATE TABLE IF NOT EXISTS course_holes (
   UNIQUE KEY uk_choles_course_number (course_id, hole_number)
 );
 
+-- ─── 7. course_tee_rules (regra "faixa de handicap → cor de tee") ───
+-- Configurado por campo pelo admin do clube. Alimenta a sugestão de tee
+-- no lobby (torneio + treino) e potencialmente a inscrição em torneio.
+-- Multi-tenant: FK cascata via courses. Sem club_id direto — filtro
+-- sempre via JOIN em courses. Regras (validadas no controller, não no
+-- schema): overlap dentro do mesmo (course, gender) é bloqueio; gap
+-- entre faixas é warning; 'ALL' não pode coexistir com 'M'/'F' no
+-- mesmo campo. Migration 2026_08_21.
+CREATE TABLE IF NOT EXISTS course_tee_rules (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  course_id      INT NOT NULL,
+  gender         ENUM('M','F','ALL')                          NOT NULL DEFAULT 'ALL',
+  tee_color      ENUM('white','yellow','blue','red')          NOT NULL,
+  handicap_min   DECIMAL(4,1) NOT NULL,
+  handicap_max   DECIMAL(4,1) NOT NULL,
+  display_order  INT NOT NULL DEFAULT 0,
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ctr_course FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+  INDEX idx_ctr_course_gender (course_id, gender)
+);
+
 -- ─── 8. tournaments ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tournaments (
   id                     INT AUTO_INCREMENT PRIMARY KEY,
@@ -398,6 +419,6 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- =====================================================================
 -- FIM DO SCHEMA
 -- =====================================================================
--- Total: 23 tabelas (17 antigas + 2 tee times + 2 handicap + 5 circuits/sponsors)
+-- Total: 24 tabelas (17 antigas + 2 tee times + 2 handicap + 5 circuits/sponsors + 1 tee rules)
 -- Legado não incluído: training_tables, training_kicks (não usadas no código atual)
 -- =====================================================================

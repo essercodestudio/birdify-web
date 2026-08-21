@@ -4,6 +4,7 @@ const fs = require('fs');
 const multer = require('multer');
 const router = express.Router();
 const courseController = require('../controllers/courseController');
+const courseTeeRulesController = require('../controllers/courseTeeRulesController');
 const { requireAuth, requireAdmin } = require('../middlewares/authMiddleware');
 
 // Upload de imagem por buraco — arquivo vai pra public/uploads/holes/{clubId}/
@@ -41,6 +42,12 @@ router.post('/create', requireAdmin, courseController.createCourse);
 router.post('/update-holes', requireAdmin, courseController.updateHoles);
 router.delete('/delete/:id', requireAdmin, courseController.deleteCourse);
 router.put('/update/:id', requireAdmin, courseController.updateCourse);
+
+// Regras de "faixa de handicap → cor de tee" por campo.
+// GET aberto pra qualquer jogador logado (usado no lobby pra sugerir tee);
+// PUT é bulk replace só do admin.
+router.get('/:id/tee-rules', requireAuth, courseTeeRulesController.getTeeRules);
+router.put('/:id/tee-rules', requireAdmin, courseTeeRulesController.replaceTeeRules);
 
 // Imagem por buraco (Feature 2)
 router.post(

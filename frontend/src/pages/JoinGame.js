@@ -4,8 +4,9 @@ import api from '../services/api';
 import { getUser } from '../services/authStorage';
 import { logout } from '../services/session'; 
 import { useNavigate } from 'react-router-dom';
-import logoImg from '../assets/logo_birdify.png'; 
+import logoImg from '../assets/logo_birdify.png';
 import { ThemeContext } from '../App';
+import TeeSuggestionChip from '../components/TeeSuggestionChip';
 
 function JoinGame() {
   const [accessCode, setAccessCode] = useState('');
@@ -16,6 +17,7 @@ function JoinGame() {
   const [pendingGroup, setPendingGroup] = useState(null);
   const [groupPlayers, setGroupPlayers] = useState([]);
   const [handicaps, setHandicaps] = useState({});
+  const [teeRules, setTeeRules] = useState([]);
 
   const clubTheme = useContext(ThemeContext) || {};
 
@@ -61,14 +63,26 @@ function JoinGame() {
       if (myGroup.players && myGroup.players.length > 0) {
         setPendingGroup(group);
         setGroupPlayers(myGroup.players);
-        
+
         const initialHandicaps = {};
-        myGroup.players.forEach(p => { 
-            initialHandicaps[p.id] = (p.handicap !== null && p.handicap !== undefined) ? p.handicap : ''; 
+        myGroup.players.forEach(p => {
+            initialHandicaps[p.id] = (p.handicap !== null && p.handicap !== undefined) ? p.handicap : '';
         });
-        
+
         setHandicaps(initialHandicaps);
-        setShowModal(true); 
+        setShowModal(true);
+
+        // Carrega regras de tee do campo. Falha silenciosa NA UI (chip só não
+        // aparece), mas log em console pra rastrear erro real (rede, 500, etc.)
+        // sem obrigar o jogador a ver mensagem que ele não sabe agir.
+        if (group.course_id) {
+          api.get(`/courses/${group.course_id}/tee-rules`)
+            .then(res => setTeeRules(res.data?.rules || []))
+            .catch(err => {
+              console.warn('[tee-rules] falha ao carregar regras do campo:', err?.response?.status, err?.message);
+              setTeeRules([]);
+            });
+        }
       } else {
         localStorage.setItem('activeGroup', JSON.stringify(group));
         navigate(`/scorecard/${group.id}`);
@@ -188,13 +202,18 @@ function JoinGame() {
 
             {groupPlayers.map(p => (
               <div key={p.id} style={styles.playerRow}>
-                <div style={{ textAlign: 'left' }}>
+                <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{p.name}</div>
                   <div style={{ fontSize: '12px', color: theme.textMuted }}>{p.gender === 'M' || p.gender === 'Masculino' ? 'Masculino' : 'Feminino'}</div>
+                  <TeeSuggestionChip
+                    handicap={handicaps[p.id]}
+                    gender={p.gender}
+                    rules={teeRules}
+                  />
                 </div>
-                <input 
-                  type="number" 
-                  step="0.1" 
+                <input
+                  type="number"
+                  step="0.1"
                   placeholder="0.0"
                   value={handicaps[p.id] || ''}
                   onChange={e => handleHandicapChange(p.id, e.target.value)}

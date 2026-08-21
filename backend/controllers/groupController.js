@@ -403,7 +403,7 @@ exports.joinGroup = async (req, res) => {
     // NOTA: joinGroup NÃO recebe req.club.id porque o jogador está acessando via código público
     // Esta rota é pública por natureza (jogadores entrando com código)
     const groupQuery = `
-      SELECT g.*, t.name as tournament_name, c.name as course_name
+      SELECT g.*, t.name as tournament_name, c.name as course_name, c.id as course_id
       FROM tournament_groups g
       JOIN tournaments t ON g.tournament_id = t.id
       JOIN courses c ON t.course_id = c.id
