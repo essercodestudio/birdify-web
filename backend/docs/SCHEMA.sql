@@ -94,24 +94,56 @@ CREATE TABLE IF NOT EXISTS course_holes (
   UNIQUE KEY uk_choles_course_number (course_id, hole_number)
 );
 
--- ─── 7. course_tee_rules (regra "faixa de handicap → cor de tee") ───
+-- ─── 7a. course_tees (tees dinâmicos por campo — Conceito B) ─────────
+-- Cadastro livre pelo admin: nome + cor hex. Substitui as 4 cores
+-- fixas (white/yellow/blue/red) ANTES usadas em course_tee_rules.
+-- NÃO substitui holes.yards_white/_yellow/_blue/_red (Conceito A —
+-- jardas visuais no scorecard), que continuam legado — dois modelos
+-- convivem por decisão de escopo. Migration 2026_08_21_course_tees.
+CREATE TABLE IF NOT EXISTS course_tees (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  course_id      INT NOT NULL,
+  tee_name       VARCHAR(60) NOT NULL,
+  color_hex      CHAR(7)     NOT NULL,
+  display_order  INT NOT NULL DEFAULT 0,
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ct_course FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_ct_course_name (course_id, tee_name),
+  INDEX idx_ct_course_order (course_id, display_order)
+);
+
+-- ─── 7b. course_tee_rules (regra "faixa de handicap → tee") ──────────
 -- Configurado por campo pelo admin do clube. Alimenta a sugestão de tee
 -- no lobby (torneio + treino) e potencialmente a inscrição em torneio.
 -- Multi-tenant: FK cascata via courses. Sem club_id direto — filtro
 -- sempre via JOIN em courses. Regras (validadas no controller, não no
 -- schema): overlap dentro do mesmo (course, gender) é bloqueio; gap
 -- entre faixas é warning; 'ALL' não pode coexistir com 'M'/'F' no
--- mesmo campo. Migration 2026_08_21.
+-- mesmo campo.
+--
+-- tee_color (ENUM) = legado, mantido nullable por 1 deploy pra permitir
+-- rollback do backend novo. TODO: dropar em migration futura depois de
+-- confirmar que nada consome mais (ver comentário no arquivo da migration
+-- 2026_08_21_course_tees.sql).
+--
+-- tee_id → course_tees(id): coluna nova, backfilled a partir do
+-- tee_color mapeado por nome PT-BR (white→'Branco', yellow→'Amarelo',
+-- blue→'Azul', red→'Vermelho').
+--
+-- Migration original: 2026_08_21_course_tee_rules; extensão dinâmica:
+-- 2026_08_21_course_tees.
 CREATE TABLE IF NOT EXISTS course_tee_rules (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   course_id      INT NOT NULL,
   gender         ENUM('M','F','ALL')                          NOT NULL DEFAULT 'ALL',
-  tee_color      ENUM('white','yellow','blue','red')          NOT NULL,
+  tee_color      ENUM('white','yellow','blue','red')          NULL,      -- LEGADO — dropar em migration futura
+  tee_id         INT NULL,                                                -- fonte da verdade nova (course_tees)
   handicap_min   DECIMAL(4,1) NOT NULL,
   handicap_max   DECIMAL(4,1) NOT NULL,
   display_order  INT NOT NULL DEFAULT 0,
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_ctr_course FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ctr_course FOREIGN KEY (course_id) REFERENCES courses(id)     ON DELETE CASCADE,
+  CONSTRAINT fk_ctr_tee    FOREIGN KEY (tee_id)    REFERENCES course_tees(id) ON DELETE CASCADE,
   INDEX idx_ctr_course_gender (course_id, gender)
 );
 
@@ -419,6 +451,6 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- =====================================================================
 -- FIM DO SCHEMA
 -- =====================================================================
--- Total: 24 tabelas (17 antigas + 2 tee times + 2 handicap + 5 circuits/sponsors + 1 tee rules)
+-- Total: 25 tabelas (17 antigas + 2 tee times + 2 handicap + 5 circuits/sponsors + 2 tee rules/tees)
 -- Legado não incluído: training_tables, training_kicks (não usadas no código atual)
 -- =====================================================================

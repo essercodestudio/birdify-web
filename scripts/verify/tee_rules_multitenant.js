@@ -99,6 +99,20 @@ async function setup() {
     // Vínculos club_admins
     await c.execute(`INSERT IGNORE INTO club_admins (user_id, club_id) VALUES (?, ?)`, [state.admin1UserId, CLUB1_ID]);
     await c.execute(`INSERT IGNORE INTO club_admins (user_id, club_id) VALUES (?, ?)`, [state.admin2UserId, state.club2Id]);
+
+    // Auto-seed manual dos 4 tees padrão nos dois cursos (o createCourse do
+    // controller faria isso automaticamente, mas aqui inserimos courses via
+    // SQL direto pra evitar dependência de HTTP/auth durante o setup).
+    for (const cid of [state.courseAId, state.courseBId]) {
+      await c.execute(
+        `INSERT INTO course_tees (course_id, tee_name, color_hex, display_order) VALUES
+         (?, 'Branco',   '#ffffff', 0),
+         (?, 'Amarelo',  '#eab308', 1),
+         (?, 'Azul',     '#0077b6', 2),
+         (?, 'Vermelho', '#dc2626', 3)`,
+        [cid, cid, cid, cid],
+      );
+    }
   });
 }
 
@@ -146,12 +160,24 @@ function check(name, condition, detail) {
   console.log(`${condition ? '✅' : '❌'} ${name}${detail ? ' — ' + detail : ''}`);
 }
 
-const SAMPLE_RULES = [
-  { rules: [
-    { gender: 'M', tee_color: 'white',  handicap_min: 0,   handicap_max: 8.5 },
-    { gender: 'M', tee_color: 'yellow', handicap_min: 8.6, handicap_max: 18.0 },
-  ]},
-];
+// Depois do Bloco B, as regras referenciam course_tees.id (não mais tee_color ENUM).
+// Cada course tem os 4 tees padrão seedados pela migration; buscamos os IDs no runtime.
+async function sampleRulesFor(courseId) {
+  const c = await mysql.createConnection(DB_CFG);
+  try {
+    const [rows] = await c.execute(
+      `SELECT id, tee_name FROM course_tees WHERE course_id = ? AND tee_name IN ('Branco','Amarelo') ORDER BY display_order`,
+      [courseId],
+    );
+    const branco = rows.find(r => r.tee_name === 'Branco');
+    const amarelo = rows.find(r => r.tee_name === 'Amarelo');
+    if (!branco || !amarelo) throw new Error(`Tees padrão não encontrados no course ${courseId} — auto-seed do createCourse falhou?`);
+    return { rules: [
+      { gender: 'M', tee_id: branco.id,  handicap_min: 0,   handicap_max: 8.5 },
+      { gender: 'M', tee_id: amarelo.id, handicap_min: 8.6, handicap_max: 18.0 },
+    ]};
+  } finally { await c.end(); }
+}
 
 async function main() {
   console.log(`Backend: ${BACKEND}`);
@@ -168,34 +194,45 @@ async function main() {
     const admin2 = await loginToken(ADMIN2_EMAIL, originClub2);
     const player1 = await loginToken(PLAYER1_EMAIL, originClub1);
 
+    // Payloads dinâmicos: tee_id de cada regra vem do próprio course.
+    const rulesA = await sampleRulesFor(state.courseAId);
+    const rulesB = await sampleRulesFor(state.courseBId);
+
     // T1 — control: admin1 no curso A (próprio)
-    const t1 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, admin1, SAMPLE_RULES[0], originClub1);
+    const t1 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, admin1, rulesA, originClub1);
     check('T1 admin1 → PUT curso próprio (A) → 200', t1.status === 200, `got ${t1.status}`);
 
     // T2 — isolation: admin1 tentando curso B (do clube 2)
-    const t2 = await api('PUT', `/courses/${state.courseBId}/tee-rules`, admin1, SAMPLE_RULES[0], originClub1);
+    const t2 = await api('PUT', `/courses/${state.courseBId}/tee-rules`, admin1, rulesB, originClub1);
     check('T2 admin1 → PUT curso alheio (B do clube 2) → 404', t2.status === 404, `got ${t2.status} body=${JSON.stringify(t2.body)}`);
 
     // T3 — control: admin2 no curso B (próprio)
-    const t3 = await api('PUT', `/courses/${state.courseBId}/tee-rules`, admin2, SAMPLE_RULES[0], originClub2);
+    const t3 = await api('PUT', `/courses/${state.courseBId}/tee-rules`, admin2, rulesB, originClub2);
     check('T3 admin2 → PUT curso próprio (B) → 200', t3.status === 200, `got ${t3.status}`);
 
     // T4 — isolation reverse: admin2 tentando curso A (do clube 1)
-    const t4 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, admin2, SAMPLE_RULES[0], originClub2);
+    const t4 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, admin2, rulesA, originClub2);
     check('T4 admin2 → PUT curso alheio (A do clube 1) → 404', t4.status === 404, `got ${t4.status} body=${JSON.stringify(t4.body)}`);
 
     // T5 — auth: player1 (não-admin) tentando qualquer PUT
-    const t5 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, player1, SAMPLE_RULES[0], originClub1);
+    const t5 = await api('PUT', `/courses/${state.courseAId}/tee-rules`, player1, rulesA, originClub1);
     check('T5 player1 (não-admin) → PUT → 403', t5.status === 403, `got ${t5.status} body=${JSON.stringify(t5.body)}`);
 
     // T6 — GET isolation
     const t6 = await api('GET', `/courses/${state.courseBId}/tee-rules`, admin1, null, originClub1);
     check('T6 admin1 → GET tee-rules do curso alheio (B) → 404', t6.status === 404, `got ${t6.status} body=${JSON.stringify(t6.body)}`);
 
-    // Sanity extra: admin1 lendo curso próprio depois do PUT → regras batem
+    // Sanity extra: admin1 lendo curso próprio depois do PUT →
+    // regras batem + JOIN devolve tee_name/color_hex dos course_tees.
     const sanity = await api('GET', `/courses/${state.courseAId}/tee-rules`, admin1, null, originClub1);
-    const rulesLen = Array.isArray(sanity.body?.rules) ? sanity.body.rules.length : -1;
-    check('Sanity admin1 GET curso próprio (A) → 200 com 2 regras', sanity.status === 200 && rulesLen === 2, `status=${sanity.status} rules=${rulesLen}`);
+    const rules = Array.isArray(sanity.body?.rules) ? sanity.body.rules : [];
+    const hasBranco  = rules.some(r => r.tee_name === 'Branco'  && r.color_hex === '#ffffff');
+    const hasAmarelo = rules.some(r => r.tee_name === 'Amarelo' && r.color_hex === '#eab308');
+    check(
+      'Sanity admin1 GET curso próprio (A) → 200 com 2 regras e JOIN em course_tees (tee_name/color_hex)',
+      sanity.status === 200 && rules.length === 2 && hasBranco && hasAmarelo,
+      `status=${sanity.status} rules=${rules.length} branco=${hasBranco} amarelo=${hasAmarelo}`,
+    );
   } finally {
     await cleanup();
     console.log('Cleanup: dados de teste removidos.');

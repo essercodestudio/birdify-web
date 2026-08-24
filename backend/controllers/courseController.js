@@ -123,6 +123,18 @@ exports.createCourse = async (req, res) => {
 
     await db.query(holesQuery, [holesData]);
 
+    // Auto-seed dos 4 tees padrão (feature "tees dinâmicos"). Espelha o backfill
+    // da migration 2026_08_21_course_tees pra que cursos novos já nasçam
+    // com o mesmo conjunto que a migration deu aos cursos existentes.
+    await db.query(
+      `INSERT INTO course_tees (course_id, tee_name, color_hex, display_order) VALUES
+         (?, 'Branco',   '#ffffff', 0),
+         (?, 'Amarelo',  '#eab308', 1),
+         (?, 'Azul',     '#0077b6', 2),
+         (?, 'Vermelho', '#dc2626', 3)`,
+      [courseId, courseId, courseId, courseId],
+    );
+
     res.status(201).json({
       message: "Campo e buracos criados com sucesso!",
       courseId,

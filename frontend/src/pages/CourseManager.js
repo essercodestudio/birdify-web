@@ -4,39 +4,26 @@ import api from "../services/api"; // Ajuste o caminho se necessário
 import { mediaUrl } from "../services/media";
 import { useNavigate } from "react-router-dom";
 import AdminNavMenu from "../components/AdminNavMenu";
-import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX, LuTarget, LuTriangleAlert } from "react-icons/lu";
-
-// Cores de tee: chave do banco → label PT-BR + cores visuais (batem com o card
-// de buracos, onde yellow é rotulado "Preto" e red é rotulado "Verde").
-const TEE_COLORS = [
-  { key: "white",  label: "Branco", border: "#ddd",     bg: "#fff"    },
-  { key: "yellow", label: "Preto",  border: "#ffd700",  bg: "#fffacd" },
-  { key: "blue",   label: "Azul",   border: "#3b82f6",  bg: "#e6f2ff" },
-  { key: "red",    label: "Verde",  border: "#22c55e",  bg: "#e8fbe8" },
-];
+import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX, LuTarget, LuTriangleAlert, LuPlus, LuChevronUp, LuChevronDown } from "react-icons/lu";
 
 const GENDER_LABEL = { ALL: "Todos", M: "Masculino", F: "Feminino" };
 
-// Grid vazio: mode + linha por (gender, color) sem valores.
+// Editor de regras agora indexado por tee_id (dinâmico).
+// Shape: { mode, rows: { ALL: {teeId: {min, max}}, M: {...}, F: {...} } }
 function emptyTeeRulesEditor() {
-  const blankRow = () => ({ min: "", max: "" });
-  const blankGender = () => ({
-    white: blankRow(), yellow: blankRow(), blue: blankRow(), red: blankRow(),
-  });
   return {
     mode: "single", // 'single' = ALL; 'gender' = M+F
-    rows: { ALL: blankGender(), M: blankGender(), F: blankGender() },
+    rows: { ALL: {}, M: {}, F: {} },
   };
 }
 
-// Backend rules[] → editor grid. Detecta modo pelo primeiro registro.
 function rulesToEditor(rules) {
   const editor = emptyTeeRulesEditor();
   if (!rules || rules.length === 0) return editor;
   editor.mode = rules.some((r) => r.gender !== "ALL") ? "gender" : "single";
   for (const r of rules) {
-    if (!editor.rows[r.gender] || !editor.rows[r.gender][r.tee_color]) continue;
-    editor.rows[r.gender][r.tee_color] = {
+    if (!editor.rows[r.gender]) continue;
+    editor.rows[r.gender][r.tee_id] = {
       min: String(r.handicap_min),
       max: String(r.handicap_max),
     };
@@ -44,21 +31,21 @@ function rulesToEditor(rules) {
   return editor;
 }
 
-// Editor → payload do backend. Só envia gêneros do modo atual e linhas
-// com min E max preenchidos. display_order = ordem visual das cores.
-function editorToPayload(editor) {
+// Editor → payload do backend. Só envia gêneros do modo atual e apenas
+// linhas com min E max preenchidos, na ordem dos tees do campo.
+function editorToPayload(editor, tees) {
   const genders = editor.mode === "single" ? ["ALL"] : ["M", "F"];
   const out = [];
   for (const gender of genders) {
-    TEE_COLORS.forEach(({ key: color }, idx) => {
-      const row = editor.rows[gender]?.[color];
+    tees.forEach((tee, idx) => {
+      const row = editor.rows[gender]?.[tee.id];
       if (!row) return;
       const min = row.min?.toString().trim();
       const max = row.max?.toString().trim();
       if (min === "" || max === "") return;
       out.push({
         gender,
-        tee_color: color,
+        tee_id: tee.id,
         handicap_min: Number(min),
         handicap_max: Number(max),
         display_order: idx,
@@ -87,6 +74,12 @@ function CourseManager() {
   const [teeEditor, setTeeEditor] = useState(emptyTeeRulesEditor());
   const [teeWarnings, setTeeWarnings] = useState([]);
   const [savingTeeRules, setSavingTeeRules] = useState(false);
+
+  // Tees dinâmicos do campo (Bloco C): cadastro/edição/reordenação livre.
+  const [tees, setTees] = useState([]); // [{id, tee_name, color_hex, display_order, rules_count}]
+  const [newTeeName, setNewTeeName] = useState("");
+  const [newTeeHex, setNewTeeHex] = useState("#22c55e");
+  const [addingTee, setAddingTee] = useState(false);
 
   // TEMA PADRONIZADO BIRDIFY
   const theme = {
@@ -149,11 +142,13 @@ function CourseManager() {
     }
 
     try {
-      const [holesRes, rulesRes] = await Promise.all([
+      const [holesRes, rulesRes, teesRes] = await Promise.all([
         api.get(`/courses/${id}/holes`),
         api.get(`/courses/${id}/tee-rules`),
+        api.get(`/courses/${id}/tees`),
       ]);
       setHoles(holesRes.data);
+      setTees(teesRes.data?.tees || []);
       setTeeEditor(rulesToEditor(rulesRes.data?.rules || []));
       setTeeWarnings(rulesRes.data?.warnings || []);
     } catch (error) {
@@ -161,8 +156,94 @@ function CourseManager() {
     }
   };
 
-  const handleTeeCellChange = (gender, color, field, value) => {
-    // Só aceita dígitos e um ponto/vírgula (permite digitar "8,5" ou vazio).
+  // ─── CRUD de Tees do Campo (Bloco C) ─────────────────────────────
+  const reloadTees = async () => {
+    if (!selectedCourseId) return;
+    try {
+      const res = await api.get(`/courses/${selectedCourseId}/tees`);
+      setTees(res.data?.tees || []);
+    } catch (e) {
+      console.warn("[tees] falha ao recarregar:", e?.response?.status, e?.message);
+    }
+  };
+
+  const handleAddTee = async () => {
+    if (!selectedCourseId) return;
+    const name = newTeeName.trim();
+    if (!name) { alert("Dá um nome pro tee (ex: Championship, Sênior)."); return; }
+    setAddingTee(true);
+    try {
+      await api.post(`/courses/${selectedCourseId}/tees`, {
+        tee_name: name,
+        color_hex: newTeeHex,
+      });
+      setNewTeeName("");
+      setNewTeeHex("#22c55e");
+      await reloadTees();
+    } catch (e) {
+      alert(e.response?.data?.error || "Erro ao adicionar tee.");
+    } finally {
+      setAddingTee(false);
+    }
+  };
+
+  const handleUpdateTeeField = async (teeId, patch) => {
+    // PUT individual — otimista no state, rollback se der erro.
+    const prev = tees;
+    setTees((list) => list.map((t) => (t.id === teeId ? { ...t, ...patch } : t)));
+    try {
+      await api.put(`/courses/${selectedCourseId}/tees/${teeId}`, patch);
+    } catch (e) {
+      setTees(prev); // rollback
+      alert(e.response?.data?.error || "Erro ao salvar tee.");
+    }
+  };
+
+  const handleReorderTee = async (teeId, direction) => {
+    // Swap com o vizinho direção +1/-1 e persiste display_order dos dois.
+    const idx = tees.findIndex((t) => t.id === teeId);
+    const neighborIdx = idx + direction;
+    if (idx < 0 || neighborIdx < 0 || neighborIdx >= tees.length) return;
+    const a = tees[idx];
+    const b = tees[neighborIdx];
+    // Otimista: troca display_order no state
+    const swapped = [...tees];
+    swapped[idx] = { ...b, display_order: a.display_order };
+    swapped[neighborIdx] = { ...a, display_order: b.display_order };
+    swapped.sort((x, y) => x.display_order - y.display_order);
+    setTees(swapped);
+    try {
+      await Promise.all([
+        api.put(`/courses/${selectedCourseId}/tees/${a.id}`, { display_order: b.display_order }),
+        api.put(`/courses/${selectedCourseId}/tees/${b.id}`, { display_order: a.display_order }),
+      ]);
+    } catch (e) {
+      alert(e.response?.data?.error || "Erro ao reordenar. Recarregando.");
+      await reloadTees();
+    }
+  };
+
+  const handleDeleteTee = async (tee) => {
+    const msg = tee.rules_count > 0
+      ? `Apagar tee "${tee.tee_name}"? Isso remove ${tee.rules_count} regra(s) de handicap que apontam pra ele. Continuar?`
+      : `Apagar tee "${tee.tee_name}"?`;
+    if (!window.confirm(msg)) return;
+    try {
+      await api.delete(`/courses/${selectedCourseId}/tees/${tee.id}`);
+      // Após deletar, também recarrega as regras (podem ter cascateado)
+      const [teesRes, rulesRes] = await Promise.all([
+        api.get(`/courses/${selectedCourseId}/tees`),
+        api.get(`/courses/${selectedCourseId}/tee-rules`),
+      ]);
+      setTees(teesRes.data?.tees || []);
+      setTeeEditor(rulesToEditor(rulesRes.data?.rules || []));
+      setTeeWarnings(rulesRes.data?.warnings || []);
+    } catch (e) {
+      alert(e.response?.data?.error || "Erro ao apagar tee.");
+    }
+  };
+
+  const handleTeeCellChange = (gender, teeId, field, value) => {
     const cleaned = value.replace(",", ".").replace(/[^0-9.]/g, "");
     setTeeEditor((prev) => ({
       ...prev,
@@ -170,7 +251,7 @@ function CourseManager() {
         ...prev.rows,
         [gender]: {
           ...prev.rows[gender],
-          [color]: { ...prev.rows[gender][color], [field]: cleaned },
+          [teeId]: { ...(prev.rows[gender]?.[teeId] || { min: "", max: "" }), [field]: cleaned },
         },
       },
     }));
@@ -184,7 +265,7 @@ function CourseManager() {
 
   const handleSaveTeeRules = async () => {
     if (!selectedCourseId) return;
-    const payload = editorToPayload(teeEditor);
+    const payload = editorToPayload(teeEditor, tees);
     if (payload.length === 0) {
       const ok = window.confirm(
         "Nenhuma faixa preenchida no modo atual. Salvar assim vai APAGAR todas as regras de tee desse campo. Continuar?",
@@ -764,6 +845,127 @@ function CourseManager() {
                 </div>
               </div>
 
+              {/* CARD DE TEES DO CAMPO (Bloco C) — nome + cor livres, alimenta as Regras abaixo */}
+              <div style={{ ...styles.card, borderTop: `4px solid ${theme.info}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                  <h3 style={{ margin: 0, color: theme.info, display: "flex", alignItems: "center", gap: 8 }}>
+                    <LuFlag size={18} /> Tees do Campo
+                  </h3>
+                  <span style={{ color: theme.textMuted, fontSize: 12 }}>
+                    {tees.length} tee{tees.length === 1 ? "" : "s"} cadastrado{tees.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                <p style={{ margin: "0 0 14px", color: theme.textMuted, fontSize: 13 }}>
+                  Cadastre os tees que o campo oferece. Nome livre (ex: "Championship", "Sênior")
+                  e cor visual real. Cada tee cadastrado aparece como linha nas Regras de Tee por
+                  Handicap abaixo.
+                </p>
+
+                {tees.length === 0 && (
+                  <div style={{ padding: "12px 14px", backgroundColor: theme.bg, border: `1px dashed ${theme.cardLight}`, borderRadius: 8, color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>
+                    Nenhum tee cadastrado. Adicione abaixo pra começar.
+                  </div>
+                )}
+
+                {tees.map((tee, idx) => (
+                  <div key={tee.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", backgroundColor: theme.cardLight, borderRadius: 8, marginBottom: 6 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => handleReorderTee(tee.id, -1)}
+                        title="Subir"
+                        style={{ background: "none", border: "none", color: idx === 0 ? theme.cardLight : theme.textMuted, cursor: idx === 0 ? "not-allowed" : "pointer", padding: 0, height: 14 }}
+                      >
+                        <LuChevronUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === tees.length - 1}
+                        onClick={() => handleReorderTee(tee.id, +1)}
+                        title="Descer"
+                        style={{ background: "none", border: "none", color: idx === tees.length - 1 ? theme.cardLight : theme.textMuted, cursor: idx === tees.length - 1 ? "not-allowed" : "pointer", padding: 0, height: 14 }}
+                      >
+                        <LuChevronDown size={14} />
+                      </button>
+                    </div>
+                    <input
+                      type="color"
+                      value={tee.color_hex}
+                      onChange={(e) => handleUpdateTeeField(tee.id, { color_hex: e.target.value })}
+                      title="Cor visual do tee"
+                      style={{ width: 36, height: 32, border: `1px solid ${theme.cardLight}`, borderRadius: 6, backgroundColor: "transparent", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={tee.tee_name}
+                      maxLength={60}
+                      onChange={(e) => setTees((list) => list.map((t) => (t.id === tee.id ? { ...t, tee_name: e.target.value } : t)))}
+                      onBlur={(e) => {
+                        const name = e.target.value.trim();
+                        if (name && name !== tee.tee_name) handleUpdateTeeField(tee.id, { tee_name: name });
+                      }}
+                      style={{ flex: 1, minWidth: 120, padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, fontSize: 14 }}
+                    />
+                    <span
+                      title={tee.rules_count === 0 ? "Sem regras usando este tee" : `${tee.rules_count} regra(s) apontam pra este tee`}
+                      style={{
+                        padding: "3px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        backgroundColor: tee.rules_count > 0 ? "rgba(56,189,248,0.15)" : "rgba(148,163,184,0.12)",
+                        color: tee.rules_count > 0 ? theme.info : theme.textMuted,
+                        border: `1px solid ${tee.rules_count > 0 ? theme.info : theme.cardLight}`,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {tee.rules_count} regra{tee.rules_count === 1 ? "" : "s"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTee(tee)}
+                      title="Apagar tee"
+                      style={{ background: "none", border: "none", color: theme.danger, cursor: "pointer", padding: 6 }}
+                    >
+                      <LuTrash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Adicionar novo tee */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, padding: "10px 12px", backgroundColor: theme.bg, borderRadius: 8, border: `1px dashed ${theme.cardLight}` }}>
+                  <input
+                    type="color"
+                    value={newTeeHex}
+                    onChange={(e) => setNewTeeHex(e.target.value)}
+                    title="Cor do novo tee"
+                    style={{ width: 36, height: 32, border: `1px solid ${theme.cardLight}`, borderRadius: 6, backgroundColor: "transparent", cursor: "pointer" }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Nome do novo tee (ex: Championship)"
+                    maxLength={60}
+                    value={newTeeName}
+                    onChange={(e) => setNewTeeName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleAddTee(); }}
+                    style={{ flex: 1, minWidth: 120, padding: "8px 10px", borderRadius: 6, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.card, color: theme.textMain, fontSize: 14 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddTee}
+                    disabled={addingTee || !newTeeName.trim()}
+                    style={{
+                      padding: "8px 14px", borderRadius: 6, border: "none",
+                      backgroundColor: addingTee || !newTeeName.trim() ? theme.cardLight : theme.info,
+                      color: addingTee || !newTeeName.trim() ? theme.textMuted : "#fff",
+                      fontWeight: 700, fontSize: 13, cursor: addingTee || !newTeeName.trim() ? "not-allowed" : "pointer",
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                    }}
+                  >
+                    <LuPlus size={14} /> {addingTee ? "..." : "ADICIONAR"}
+                  </button>
+                </div>
+              </div>
+
               {/* CARD DE REGRAS DE TEE POR HANDICAP (Bloco 3) */}
               <div style={{ ...styles.card, borderTop: `4px solid ${theme.accent}` }}>
                 <div
@@ -851,43 +1053,43 @@ function CourseManager() {
                           </tr>
                         </thead>
                         <tbody>
-                          {TEE_COLORS.map(({ key, label, border, bg }) => {
-                            const row = teeEditor.rows[gender][key];
+                          {tees.length === 0 && (
+                            <tr>
+                              <td colSpan={3} style={{ ...styles.td, ...styles.firstTd, ...styles.lastTd, color: theme.textMuted, textAlign: "center", fontSize: 12 }}>
+                                Cadastre pelo menos 1 tee no card acima pra criar regras.
+                              </td>
+                            </tr>
+                          )}
+                          {tees.map((tee) => {
+                            const row = teeEditor.rows[gender]?.[tee.id] || { min: "", max: "" };
                             return (
-                              <tr key={`${gender}-${key}`}>
+                              <tr key={`${gender}-${tee.id}`}>
                                 <td style={{ ...styles.td, ...styles.firstTd, textAlign: "left" }}>
                                   <span
                                     style={{
                                       display: "inline-block",
-                                      width: 14,
-                                      height: 14,
-                                      borderRadius: "50%",
-                                      backgroundColor: bg,
-                                      border: `2px solid ${border}`,
-                                      verticalAlign: "middle",
-                                      marginRight: 8,
+                                      width: 14, height: 14, borderRadius: "50%",
+                                      backgroundColor: tee.color_hex,
+                                      border: `2px solid ${tee.color_hex}`,
+                                      verticalAlign: "middle", marginRight: 8,
                                     }}
                                   />
-                                  {label}
+                                  {tee.tee_name}
                                 </td>
                                 <td style={styles.td}>
                                   <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder="-"
+                                    type="text" inputMode="decimal" placeholder="-"
                                     value={row.min}
-                                    onChange={(e) => handleTeeCellChange(gender, key, "min", e.target.value)}
-                                    style={styles.yardInput(border, bg)}
+                                    onChange={(e) => handleTeeCellChange(gender, tee.id, "min", e.target.value)}
+                                    style={styles.yardInput(tee.color_hex, "#fff")}
                                   />
                                 </td>
                                 <td style={{ ...styles.td, ...styles.lastTd }}>
                                   <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder="-"
+                                    type="text" inputMode="decimal" placeholder="-"
                                     value={row.max}
-                                    onChange={(e) => handleTeeCellChange(gender, key, "max", e.target.value)}
-                                    style={styles.yardInput(border, bg)}
+                                    onChange={(e) => handleTeeCellChange(gender, tee.id, "max", e.target.value)}
+                                    style={styles.yardInput(tee.color_hex, "#fff")}
                                   />
                                 </td>
                               </tr>

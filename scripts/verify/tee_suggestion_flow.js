@@ -52,13 +52,37 @@ async function setup() {
     state.courseWithRulesId = c1.insertId;
     state.courseNoRulesId = c2.insertId;
 
-    // Regras: M 0-8.5 white, M 8.6-18 yellow. Player M com HC 5 → match=white;
+    // Auto-seed dos 4 tees padrão em AMBOS os cursos (o createCourse do
+    // controller faria isso automaticamente; aqui inserimos via SQL direto).
+    for (const cid of [state.courseWithRulesId, state.courseNoRulesId]) {
+      await c.execute(
+        `INSERT INTO course_tees (course_id, tee_name, color_hex, display_order) VALUES
+         (?, 'Branco',   '#ffffff', 0),
+         (?, 'Amarelo',  '#eab308', 1),
+         (?, 'Azul',     '#0077b6', 2),
+         (?, 'Vermelho', '#dc2626', 3)`,
+        [cid, cid, cid, cid],
+      );
+    }
+
+    // Regras APENAS no primeiro curso: M 0-8.5 Branco, M 8.6-18 Amarelo.
+    // Referenciam course_tees.id (não mais ENUM). Player M com HC 5 → match=Branco;
     // HC 30 → out_of_range; curso sem regra → no_rules.
+    const [[branco]]  = await c.execute(
+      `SELECT id FROM course_tees WHERE course_id=? AND tee_name='Branco'`,
+      [state.courseWithRulesId],
+    );
+    const [[amarelo]] = await c.execute(
+      `SELECT id FROM course_tees WHERE course_id=? AND tee_name='Amarelo'`,
+      [state.courseWithRulesId],
+    );
+    state.teeBrancoId  = branco.id;
+    state.teeAmareloId = amarelo.id;
     await c.execute(
-      `INSERT INTO course_tee_rules (course_id, gender, tee_color, handicap_min, handicap_max, display_order) VALUES
-       (?, 'M', 'white',  0.0, 8.5, 0),
-       (?, 'M', 'yellow', 8.6, 18.0, 1)`,
-      [state.courseWithRulesId, state.courseWithRulesId],
+      `INSERT INTO course_tee_rules (course_id, gender, tee_color, tee_id, handicap_min, handicap_max, display_order) VALUES
+       (?, 'M', 'white',  ?, 0.0, 8.5, 0),
+       (?, 'M', 'yellow', ?, 8.6, 18.0, 1)`,
+      [state.courseWithRulesId, branco.id, state.courseWithRulesId, amarelo.id],
     );
 
     // Usuários
@@ -170,6 +194,16 @@ async function main() {
       `status=${rulesResWith.status} len=${rulesWith?.length}`,
     );
 
+    // A2b (Bloco B): JOIN em course_tees traz tee_id/tee_name/color_hex junto de cada regra
+    check(
+      'A2b GET tee-rules devolve JOIN com course_tees (tee_id + tee_name + color_hex por regra)',
+      Array.isArray(rulesWith) && rulesWith.length === 2
+        && rulesWith.every(r => Number.isInteger(r.tee_id) && r.tee_id > 0)
+        && rulesWith.some(r => r.tee_name === 'Branco'  && r.color_hex === '#ffffff')
+        && rulesWith.some(r => r.tee_name === 'Amarelo' && r.color_hex === '#eab308'),
+      JSON.stringify(rulesWith?.map(r => ({ n: r.tee_name, c: r.color_hex, id: r.tee_id }))),
+    );
+
     // A3: GET tee-rules do curso SEM regra devolve rules:[]
     const rulesResNo = await api('GET', `/courses/${state.courseNoRulesId}/tee-rules`, playerToken);
     check(
@@ -181,15 +215,15 @@ async function main() {
     // ─── (b) Util suggestTee, alimentado com dados reais, decide certo ─
     const rulesReal = rulesResWith.body.rules;
 
-    // B1: handicap dentro (5.0, M) → 'match' com tee white ("Branco")
+    // B1: handicap dentro (5.0, M) → 'match' com tee Branco (color_hex real do banco)
     const b1 = suggestTee(5.0, 'M', rulesReal);
     check(
-      "B1 Chip TORNEIO: HC 5.0 M com regras reais → status 'match' cor=white label=Branco",
-      b1.status === 'match' && b1.tee_color === 'white' && b1.label === 'Branco',
+      "B1 Chip TORNEIO: HC 5.0 M com regras reais → status 'match' tee_name=Branco color_hex=#ffffff",
+      b1.status === 'match' && b1.tee_name === 'Branco' && b1.color_hex === '#ffffff',
       JSON.stringify(b1),
     );
 
-    // B2: handicap fora (30.0, M) → 'out_of_range' (nem white 0-8.5 nem yellow 8.6-18 cobrem)
+    // B2: handicap fora (30.0, M) → 'out_of_range' (nem Branco 0-8.5 nem Amarelo 8.6-18 cobrem)
     const b2 = suggestTee(30.0, 'M', rulesReal);
     check(
       "B2 Chip TORNEIO: HC 30.0 M fora das faixas → status 'out_of_range'",
@@ -208,19 +242,19 @@ async function main() {
     // B4: normalização de gender ('Masculino' extenso, como vem de alguns registros)
     const b4 = suggestTee(5.0, 'Masculino', rulesReal);
     check(
-      "B4 Chip: gender 'Masculino' (extenso) é normalizado pra 'M' → 'match'",
-      b4.status === 'match' && b4.tee_color === 'white',
+      "B4 Chip: gender 'Masculino' (extenso) é normalizado pra 'M' → 'match' Branco",
+      b4.status === 'match' && b4.tee_name === 'Branco',
       JSON.stringify(b4),
     );
 
-    // B5: boundary — HC 8.5 (limite superior da white) e HC 8.6 (limite inferior da yellow)
+    // B5: boundary — HC 8.5 (limite superior do Branco) e HC 8.6 (limite inferior do Amarelo)
     const b5a = suggestTee(8.5, 'M', rulesReal);
     const b5b = suggestTee(8.6, 'M', rulesReal);
     check(
-      'B5 Boundaries inclusivos: HC 8.5 → white; HC 8.6 → yellow (sem overlap nem gap na fronteira)',
-      b5a.status === 'match' && b5a.tee_color === 'white'
-        && b5b.status === 'match' && b5b.tee_color === 'yellow',
-      `8.5=${b5a.tee_color} 8.6=${b5b.tee_color}`,
+      'B5 Boundaries inclusivos: HC 8.5 → Branco; HC 8.6 → Amarelo (sem overlap nem gap na fronteira)',
+      b5a.status === 'match' && b5a.tee_name === 'Branco'
+        && b5b.status === 'match' && b5b.tee_name === 'Amarelo',
+      `8.5=${b5a.tee_name} 8.6=${b5b.tee_name}`,
     );
   } finally {
     await cleanup();

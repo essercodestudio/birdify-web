@@ -5,6 +5,7 @@ const multer = require('multer');
 const router = express.Router();
 const courseController = require('../controllers/courseController');
 const courseTeeRulesController = require('../controllers/courseTeeRulesController');
+const courseTeesController = require('../controllers/courseTeesController');
 const { requireAuth, requireAdmin } = require('../middlewares/authMiddleware');
 
 // Upload de imagem por buraco — arquivo vai pra public/uploads/holes/{clubId}/
@@ -43,11 +44,18 @@ router.post('/update-holes', requireAdmin, courseController.updateHoles);
 router.delete('/delete/:id', requireAdmin, courseController.deleteCourse);
 router.put('/update/:id', requireAdmin, courseController.updateCourse);
 
-// Regras de "faixa de handicap → cor de tee" por campo.
+// Regras de "faixa de handicap → tee" por campo.
 // GET aberto pra qualquer jogador logado (usado no lobby pra sugerir tee);
 // PUT é bulk replace só do admin.
 router.get('/:id/tee-rules', requireAuth, courseTeeRulesController.getTeeRules);
 router.put('/:id/tee-rules', requireAdmin, courseTeeRulesController.replaceTeeRules);
+
+// Tees dinâmicos por campo (nome/cor livres). Granular pra preservar IDs
+// e evitar cascade destrutivo das regras que apontam pros tees.
+router.get   ('/:id/tees',          requireAuth,  courseTeesController.listTees);
+router.post  ('/:id/tees',          requireAdmin, courseTeesController.createTee);
+router.put   ('/:id/tees/:teeId',   requireAdmin, courseTeesController.updateTee);
+router.delete('/:id/tees/:teeId',   requireAdmin, courseTeesController.deleteTee);
 
 // Imagem por buraco (Feature 2)
 router.post(

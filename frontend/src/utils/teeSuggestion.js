@@ -1,15 +1,19 @@
-// Sugestão de tee por faixa de handicap (Bloco 4).
-// Consome as regras retornadas por GET /api/courses/:id/tee-rules e o
-// handicap declarado no lobby. Nada persistido; puro cálculo.
+// Sugestão de tee por faixa de handicap (Bloco 4, extendido no Bloco C).
+// Consome as regras retornadas por GET /api/courses/:id/tee-rules — o
+// backend faz JOIN com course_tees e devolve tee_name + color_hex reais.
+// O util só decide qual regra aplicar; renderização visa direto o dado.
+//
+// Retro-compat: se por algum motivo (rollback futuro do backend) a rule
+// não trouxer tee_name/color_hex mas trouxer tee_color legado, cai em
+// fallback determinístico com labels PT-BR históricas.
 
-export const TEE_META = {
-  white:  { label: "Branco", border: "#ddd",    bg: "#fff"    },
-  yellow: { label: "Preto",  border: "#ffd700", bg: "#fffacd" },
-  blue:   { label: "Azul",   border: "#3b82f6", bg: "#e6f2ff" },
-  red:    { label: "Verde",  border: "#22c55e", bg: "#e8fbe8" },
+const LEGACY_LABEL = {
+  white: "Branco", yellow: "Amarelo", blue: "Azul", red: "Vermelho",
+};
+const LEGACY_HEX = {
+  white: "#ffffff", yellow: "#eab308", blue: "#0077b6", red: "#dc2626",
 };
 
-// Aceita 'M', 'F', 'Masculino', 'Feminino', undefined, null, etc.
 function normalizeGender(g) {
   if (!g) return null;
   const s = String(g).trim().toUpperCase();
@@ -18,16 +22,22 @@ function normalizeGender(g) {
   return null;
 }
 
+// Extrai nome/cor da rule, priorizando o formato novo (tee_name/color_hex)
+// e caindo pro legado se ausente.
+function displayFor(rule) {
+  const name = rule.tee_name || LEGACY_LABEL[rule.tee_color] || "Tee";
+  const hex  = rule.color_hex || LEGACY_HEX[rule.tee_color] || "#94a3b8";
+  return { name, hex };
+}
+
 /**
  * @param {number|string} handicap
  * @param {string|null} gender
- * @param {Array<{gender:string, tee_color:string, handicap_min:number, handicap_max:number}>} rules
- * @returns {{status:'match'|'out_of_range'|'no_rules', tee_color?:string, label?:string, meta?:object}}
+ * @param {Array<{gender:string, tee_name?:string, color_hex?:string, tee_color?:string, handicap_min:number, handicap_max:number}>} rules
+ * @returns {{status:'match'|'out_of_range'|'no_rules', tee_name?:string, color_hex?:string}}
  */
 export function suggestTee(handicap, gender, rules) {
-  if (!Array.isArray(rules) || rules.length === 0) {
-    return { status: "no_rules" };
-  }
+  if (!Array.isArray(rules) || rules.length === 0) return { status: "no_rules" };
   const hc = Number(handicap);
   if (!Number.isFinite(hc)) return { status: "no_rules" };
 
@@ -42,8 +52,6 @@ export function suggestTee(handicap, gender, rules) {
   );
   if (!match) return { status: "out_of_range" };
 
-  const meta = TEE_META[match.tee_color] || {
-    label: match.tee_color, border: "#94a3b8", bg: "#e5e7eb",
-  };
-  return { status: "match", tee_color: match.tee_color, label: meta.label, meta };
+  const { name, hex } = displayFor(match);
+  return { status: "match", tee_name: name, color_hex: hex };
 }
