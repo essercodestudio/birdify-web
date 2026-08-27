@@ -18,6 +18,7 @@ import CourseManager from "./pages/CourseManager";
 import DailyTraining from "./pages/DailyTraining";
 import TrainingScorecard from './pages/TrainingScorecard';
 import TrainingLeaderboard from './pages/TrainingLeaderboard';
+import TrainingRankingPublic from './pages/TrainingRankingPublic';
 import PlayerHistory from './pages/PlayerHistory';
 import MyPerformance from './pages/MyPerformance';
 import CircuitManagement from './pages/CircuitManagement';
@@ -186,6 +187,7 @@ function App() {
             <Route path="/training-scorecard/:groupId" element={<ProtectedRoute><TrainingScorecard /></ProtectedRoute>} />
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
             <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
+            <Route path="/treino/:groupId/ranking" element={<TrainingRankingPublic />} />
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
             <Route path="/my-performance" element={<ProtectedRoute><MyPerformance /></ProtectedRoute>} />
             <Route path="/circuits" element={<ProtectedRoute><CircuitManagement /></ProtectedRoute>} />

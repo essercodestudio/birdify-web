@@ -6,7 +6,7 @@ import { getIncompleteEntries, formatIncompleteSummary } from '../utils/scoreCom
 import { getUser } from '../services/authStorage';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
-import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList } from 'react-icons/lu';
+import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList, LuShare2 } from 'react-icons/lu';
 import HolePhotoBadge from '../components/HolePhotoBadge';
 import HoleDistanceBadge from '../components/HoleDistanceBadge';
 import TeeSuggestionChip from '../components/TeeSuggestionChip';
@@ -51,6 +51,7 @@ function TrainingScorecard() {
   const [players, setPlayers]           = useState([]);
   const [groupStatus, setGroupStatus]   = useState('aguardando');
   const [holesData, setHolesData]       = useState([]);
+  const [slotMap, setSlotMap]           = useState({ white: null, yellow: null, blue: null, red: null });
   const [currentHole, setCurrentHole]   = useState(() => {
     if (!sessionKey) return 1;
     const stored = parseInt(sessionStorage.getItem(sessionKey), 10);
@@ -113,8 +114,12 @@ function TrainingScorecard() {
   const loadScorecardData = useCallback(async (savedGroup, allPlayers, scoresRaw) => {
     // Sempre atualiza holesData e scores (fontes de verdade contínuas)
     if (savedGroup.course_id) {
-      const holesRes = await api.get(`/courses/${savedGroup.course_id}/holes`);
+      const [holesRes, mapRes] = await Promise.all([
+        api.get(`/courses/${savedGroup.course_id}/holes`),
+        api.get(`/courses/${savedGroup.course_id}/yard-slot-map`).catch(() => ({ data: null })),
+      ]);
       setHolesData(holesRes.data);
+      if (mapRes.data) setSlotMap(mapRes.data);
     }
 
     const scoresMap = {};
@@ -879,6 +884,21 @@ function TrainingScorecard() {
             <LuTrophy size={15} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
             Ver Ranking do Dia
           </button>
+          <button
+            onClick={async () => {
+              const url = `${window.location.origin}/treino/${groupId}/ranking`;
+              const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do meu treino em tempo real:', url };
+              try {
+                if (navigator.share) { await navigator.share(shareData); return; }
+                await navigator.clipboard.writeText(url);
+                alert('Link copiado! Cole em qualquer aplicativo pra compartilhar.');
+              } catch (_) { /* usuário cancelou o share nativo — silêncio */ }
+            }}
+            style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: theme.textMain, fontSize: '14px', fontWeight: '700', border: `1px solid ${theme.cardLight}`, borderRadius: '8px', cursor: 'pointer', marginTop: '8px' }}
+          >
+            <LuShare2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
+            Compartilhar link do ranking
+          </button>
           <div style={{ height: '40px' }} />
         </div>
       </div>
@@ -1027,7 +1047,7 @@ function TrainingScorecard() {
             <span style={{ color: theme.textMuted, fontSize: '16px' }}>PAR {currentHoleData.par}</span>
           </div>
           <div style={{ marginTop: 4, display: 'flex', justifyContent: 'center' }}>
-            <HoleDistanceBadge hole={currentHoleData} />
+            <HoleDistanceBadge hole={currentHoleData} slotMap={slotMap} />
           </div>
         </div>
         <button

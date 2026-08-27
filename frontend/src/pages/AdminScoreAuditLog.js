@@ -1,6 +1,8 @@
 // frontend/src/pages/AdminScoreAuditLog.js
 // Histórico de todas as edições feitas via /admin/ajustar-scores.
-// Filtro por contexto (torneio/treino) e opcionalmente por evento específico.
+// Duas abas: Torneios e Treinos. Cada aba tem seu próprio filtro por evento
+// (o eventId de uma não bagunça o da outra ao trocar), e sua própria lista.
+// Sem "Todos" — se precisar comparar contextos, olha as duas abas.
 // Objetivo: transparência — sem tela de histórico o audit fica invisível ao
 // gestor, o que anula parte do propósito de ter auditado.
 import React, { useEffect, useMemo, useState, useCallback } from "react";
@@ -11,10 +13,9 @@ import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
 import AdminNavMenu from "../components/AdminNavMenu";
 import { LuHistory, LuPencilLine, LuTrophy, LuFlag } from "react-icons/lu";
 
-const CONTEXT_OPTS = [
-  { id: "",           label: "Todos" },
-  { id: "tournament", label: "Torneios" },
-  { id: "training",   label: "Treinos" },
+const TABS = [
+  { id: "tournament", label: "Torneios", icon: LuTrophy },
+  { id: "training",   label: "Treinos",  icon: LuFlag },
 ];
 
 const ACTION_LABEL = {
@@ -35,11 +36,14 @@ export default function AdminScoreAuditLog() {
   const navigate = useNavigate();
   const theme = useBirdifyTheme();
 
-  const [context, setContext] = useState("");
-  const [eventId, setEventId] = useState("");
+  const [tab, setTab] = useState("tournament");
+  // eventIds separados por aba — trocar de aba preserva o filtro escolhido lá.
+  const [eventIdTournament, setEventIdTournament] = useState("");
+  const [eventIdTraining, setEventIdTraining] = useState("");
   const [tournaments, setTournaments] = useState([]);
   const [trainings, setTrainings] = useState([]);
-  const [audits, setAudits] = useState([]);
+  // Cache por aba — evita refetch e a lista da aba oculta permanece disponível.
+  const [auditsByTab, setAuditsByTab] = useState({ tournament: [], training: [] });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -48,37 +52,37 @@ export default function AdminScoreAuditLog() {
     if (u.role !== "ADMIN") { navigate("/"); return; }
   }, [navigate]);
 
-  // Popula seletores auxiliares uma vez
   useEffect(() => {
     api.get("/admin/scores/tournaments").then(r => setTournaments(r.data || [])).catch(() => {});
     api.get("/admin/scores/trainings").then(r => setTrainings(r.data || [])).catch(() => {});
   }, []);
 
+  const eventId = tab === "tournament" ? eventIdTournament : eventIdTraining;
+  const setEventId = tab === "tournament" ? setEventIdTournament : setEventIdTraining;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (context)  params.context  = context;
-      if (eventId)  params.event_id = eventId;
+      const params = { context: tab };
+      if (eventId) params.event_id = eventId;
       const r = await api.get("/admin/scores/audit", { params });
-      setAudits(r.data || []);
+      setAuditsByTab(prev => ({ ...prev, [tab]: r.data || [] }));
     } catch (e) {
       console.error(e);
-      setAudits([]);
+      setAuditsByTab(prev => ({ ...prev, [tab]: [] }));
     } finally {
       setLoading(false);
     }
-  }, [context, eventId]);
+  }, [tab, eventId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const eventOptions = useMemo(() => {
-    if (context === "tournament") return tournaments;
-    if (context === "training")   return trainings;
-    return [];
-  }, [context, tournaments, trainings]);
+  const eventOptions = tab === "tournament" ? tournaments : trainings;
+  const audits = auditsByTab[tab] || [];
 
-  const clearFilters = () => { setContext(""); setEventId(""); };
+  const clearFilter = () => setEventId("");
+
+  const totalCount = useMemo(() => audits.length, [audits]);
 
   return (
     <div style={{ backgroundColor: theme.bg, minHeight: "100vh", color: theme.textMain, padding: 20 }}>
@@ -104,32 +108,53 @@ export default function AdminScoreAuditLog() {
           </button>
         </div>
 
-        {/* Filtros */}
-        <div style={{ backgroundColor: theme.card, padding: 16, borderRadius: 12, marginBottom: 16, display: "grid", gridTemplateColumns: "180px 1fr auto", gap: 12, alignItems: "end" }}>
-          <div>
-            <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>Contexto</label>
-            <select
-              value={context}
-              onChange={(e) => { setContext(e.target.value); setEventId(""); }}
-              style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, width: "100%", boxSizing: "border-box" }}
-            >
-              {CONTEXT_OPTS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
-          </div>
+        {/* Abas */}
+        <div role="tablist" style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: `1px solid ${theme.border}` }}>
+          {TABS.map(t => {
+            const Icon = t.icon;
+            const active = t.id === tab;
+            return (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(t.id)}
+                style={{
+                  padding: "10px 16px",
+                  backgroundColor: "transparent",
+                  color: active ? theme.accent : theme.textMuted,
+                  border: "none",
+                  borderBottom: `2px solid ${active ? theme.accent : "transparent"}`,
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <Icon size={16} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Filtro por evento (contextual da aba) */}
+        <div style={{ backgroundColor: theme.card, padding: 16, borderRadius: 12, marginBottom: 16, display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
           <div>
             <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-              {context === "tournament" ? "Torneio" : context === "training" ? "Treino" : "Evento"}
+              {tab === "tournament" ? "Torneio (opcional)" : "Treino (opcional)"}
             </label>
             <select
               value={eventId}
               onChange={(e) => setEventId(e.target.value)}
-              disabled={!context}
-              style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, width: "100%", boxSizing: "border-box", opacity: context ? 1 : 0.5 }}
+              style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, width: "100%", boxSizing: "border-box" }}
             >
-              <option value="">{context ? "Todos" : "Selecione um contexto primeiro"}</option>
+              <option value="">Todos {tab === "tournament" ? "os torneios" : "os treinos"} do clube</option>
               {eventOptions.map(ev => (
                 <option key={ev.id} value={ev.id}>
-                  {context === "tournament"
+                  {tab === "tournament"
                     ? `${ev.name} — ${(ev.start_date || "").slice(0, 10)}`
                     : `${ev.group_name} — ${(ev.created_at || "").slice(0, 10)} · ${ev.status}`}
                 </option>
@@ -137,10 +162,11 @@ export default function AdminScoreAuditLog() {
             </select>
           </div>
           <button
-            onClick={clearFilters}
-            style={{ padding: "10px 16px", backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer" }}
+            onClick={clearFilter}
+            disabled={!eventId}
+            style={{ padding: "10px 16px", backgroundColor: theme.cardLight, color: eventId ? theme.textMain : theme.textMuted, border: `1px solid ${theme.border}`, borderRadius: 8, fontWeight: 600, cursor: eventId ? "pointer" : "not-allowed", opacity: eventId ? 1 : 0.6 }}
           >
-            Limpar
+            Limpar filtro
           </button>
         </div>
 
@@ -148,7 +174,7 @@ export default function AdminScoreAuditLog() {
           <p style={{ textAlign: "center", color: theme.textMuted, padding: 30 }}>Carregando...</p>
         ) : audits.length === 0 ? (
           <p style={{ textAlign: "center", color: theme.textMuted, padding: 30, backgroundColor: theme.card, borderRadius: 12 }}>
-            Nenhuma edição registrada com esses filtros.
+            Nenhuma edição de {tab === "tournament" ? "torneio" : "treino"} registrada{eventId ? " nesse evento" : ""}.
           </p>
         ) : (
           <div style={{ backgroundColor: theme.card, borderRadius: 12, overflow: "hidden" }}>
@@ -157,8 +183,7 @@ export default function AdminScoreAuditLog() {
                 <thead>
                   <tr style={{ backgroundColor: theme.cardLight, color: theme.textMuted, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>
                     <th style={{ padding: "10px 12px", textAlign: "left" }}>Quando</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left" }}>Contexto</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left" }}>Evento</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left" }}>{tab === "tournament" ? "Torneio" : "Treino"}</th>
                     <th style={{ padding: "10px 12px", textAlign: "left" }}>Admin</th>
                     <th style={{ padding: "10px 12px", textAlign: "left" }}>Jogador</th>
                     <th style={{ padding: "10px 12px", textAlign: "center" }}>Buraco</th>
@@ -170,20 +195,14 @@ export default function AdminScoreAuditLog() {
                 <tbody>
                   {audits.map((a) => {
                     const act = ACTION_LABEL[a.action] || { text: a.action, color: theme.textMuted };
-                    const Icon = a.context === "tournament" ? LuTrophy : LuFlag;
                     const eventName = a.context === "tournament" ? a.tournament_name : a.training_group_name;
+                    const eventFallbackId = a.tournament_id || a.training_group_id;
                     return (
                       <tr key={a.id} style={{ borderTop: `1px solid ${theme.cardLight}` }}>
                         <td style={{ padding: "10px 12px", whiteSpace: "nowrap", color: theme.textMuted, fontSize: 12 }}>
                           {fmtDateTime(a.created_at)}
                         </td>
-                        <td style={{ padding: "10px 12px" }}>
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: theme.textMuted }}>
-                            <Icon size={14} />
-                            {a.context === "tournament" ? "Torneio" : "Treino"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "10px 12px" }}>{eventName || `#${a.tournament_id || a.training_group_id}`}</td>
+                        <td style={{ padding: "10px 12px" }}>{eventName || `#${eventFallbackId}`}</td>
                         <td style={{ padding: "10px 12px" }}>{a.admin_name}</td>
                         <td style={{ padding: "10px 12px" }}>{a.target_name}</td>
                         <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700 }}>{a.hole_number}</td>
@@ -209,7 +228,7 @@ export default function AdminScoreAuditLog() {
               </table>
             </div>
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardLight}`, fontSize: 11, color: theme.textMuted, textAlign: "center" }}>
-              {audits.length} registro(s) — ordenados do mais recente pro mais antigo.
+              {totalCount} registro(s) — ordenados do mais recente pro mais antigo.
             </div>
           </div>
         )}

@@ -2,24 +2,53 @@
 // Renderiza uma pill por cor de tee preenchida no buraco (blue/white/yellow/red).
 // Cada pill mostra a jarda com o fundo colorido do tee correspondente — padrão
 // internacional de golfe. Buracos sem nenhuma jarda preenchida não renderizam nada.
+//
+// Prop opcional `slotMap` (course_yard_slot_map): quando presente e um slot está
+// mapeado pra um tee dinâmico, a pill usa a cor do tee em vez da default. Título
+// (tooltip) da pill vira o nome do tee. Se `slotMap` não vier, comportamento
+// default preservado.
 import React from "react";
 
 const YARDS_PER_METER = 1.0936;
 
-// Cores oficiais dos tees no golfe.
+// Cores oficiais dos tees no golfe (fallback quando o slot não está mapeado).
 const TEES = [
-  { key: "yards_blue",   bg: "#0077b6", fg: "#ffffff", border: "#0077b6" },
-  { key: "yards_white",  bg: "#ffffff", fg: "#000000", border: "#cbd5e1" },
-  { key: "yards_yellow", bg: "#eab308", fg: "#000000", border: "#eab308" },
-  { key: "yards_red",    bg: "#dc2626", fg: "#ffffff", border: "#dc2626" },
+  { key: "yards_blue",   slot: "blue",   bg: "#0077b6", fg: "#ffffff", border: "#0077b6", label: "Azul" },
+  { key: "yards_white",  slot: "white",  bg: "#ffffff", fg: "#000000", border: "#cbd5e1", label: "Branco" },
+  { key: "yards_yellow", slot: "yellow", bg: "#eab308", fg: "#000000", border: "#eab308", label: "Preto" },
+  { key: "yards_red",    slot: "red",    bg: "#dc2626", fg: "#ffffff", border: "#dc2626", label: "Verde" },
 ];
 
-function collect(hole) {
+// Deriva foreground (preto/branco) a partir do brilho do bg. Evita amarelo com fg branco (ilegível).
+function pickFg(hex) {
+  const h = String(hex || "").replace("#", "");
+  if (h.length !== 6) return "#000000";
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness > 150 ? "#000000" : "#ffffff";
+}
+
+function collect(hole, slotMap) {
   if (!hole) return [];
   const out = [];
   for (const t of TEES) {
     const raw = Number(hole[t.key]);
-    if (raw > 0) out.push({ ...t, value: Math.round(raw) });
+    if (raw <= 0) continue;
+    const mapping = slotMap?.[t.slot];
+    if (mapping) {
+      out.push({
+        ...t,
+        bg: mapping.color_hex,
+        border: mapping.color_hex,
+        fg: pickFg(mapping.color_hex),
+        label: mapping.tee_name,
+        value: Math.round(raw),
+      });
+    } else {
+      out.push({ ...t, value: Math.round(raw) });
+    }
   }
   // Fallback: se o clube guarda em metros (colunas raras) — mostra como se fosse tee único.
   if (out.length === 0) {
@@ -40,8 +69,8 @@ function collect(hole) {
 
 // compact = pills menores (default). Usado no scorecard (torneio + treino) onde
 // o espaço lateral é apertado no mobile por causa dos botões ◀▶ de navegação.
-export default function HoleDistanceBadge({ hole, compact = true }) {
-  const items = collect(hole);
+export default function HoleDistanceBadge({ hole, compact = true, slotMap = null }) {
+  const items = collect(hole, slotMap);
   if (items.length === 0) return null;
 
   const style = compact
@@ -62,6 +91,7 @@ export default function HoleDistanceBadge({ hole, compact = true }) {
       {items.map((t) => (
         <span
           key={t.key}
+          title={t.label}
           style={{
             display: "inline-flex",
             alignItems: "center",

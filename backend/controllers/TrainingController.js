@@ -503,6 +503,98 @@ exports.getOpenLobbies = async (req, res) => {
   }
 };
 
+// Versão pública do ranking do dia — mesma agregação, sem dados pessoais
+// sensíveis (gender/handicap). Alimenta a rota pública /treino/:groupId/ranking
+// que qualquer pessoa (mesmo sem login) pode abrir pra acompanhar.
+// Não expõe categorias por HCP (que dependem dos dois campos removidos).
+exports.getDailyRankingPublic = async (req, res) => {
+  try {
+    const cid = clubId(req);
+
+    const [ranking] = await db.execute(
+      `SELECT
+         tg.id                                                      AS group_id,
+         tg.group_name,
+         tg.course_id,
+         tg.status                                                  AS group_status,
+         u.id,
+         u.name,
+         COALESCE(SUM(ts.strokes), 0)                               AS total_strokes,
+         COUNT(DISTINCT ts.hole_number)                             AS holes_played,
+         COALESCE(SUM(ts.strokes - COALESCE(h.par, ch.par, 4)), 0) AS score_to_par
+       FROM training_groups tg
+       JOIN  training_participants tp ON tp.group_id = tg.id
+       JOIN  users u  ON u.id = tp.user_id
+       LEFT JOIN training_scores ts
+         ON ts.group_id = tg.id AND ts.user_id = u.id
+       LEFT JOIN holes h
+         ON h.course_id = tg.course_id AND h.hole_number = ts.hole_number
+       LEFT JOIN course_holes ch
+         ON ch.course_id = tg.course_id AND ch.hole_number = ts.hole_number
+       WHERE tg.club_id = ?
+         AND DATE(tg.created_at) = CURDATE()
+         AND tg.status IN ('ativo', 'finalizado')
+       GROUP BY tg.id, tg.group_name, tg.course_id, tg.status, u.id, u.name
+       ORDER BY holes_played DESC, score_to_par ASC, tg.id ASC`,
+      [cid],
+    );
+
+    const [holeScores] = await db.execute(
+      `SELECT ts.user_id, ts.group_id, ts.hole_number, ts.strokes,
+              COALESCE(h.par, ch.par, 4) AS hole_par
+       FROM training_scores ts
+       JOIN training_groups tg ON ts.group_id = tg.id
+       LEFT JOIN holes h
+         ON h.course_id = tg.course_id AND h.hole_number = ts.hole_number
+       LEFT JOIN course_holes ch
+         ON ch.course_id = tg.course_id AND ch.hole_number = ts.hole_number
+       WHERE tg.club_id = ?
+         AND DATE(tg.created_at) = CURDATE()
+         AND tg.status IN ('ativo', 'finalizado')`,
+      [cid],
+    );
+
+    let holesData = [];
+    const courseId = ranking.find((r) => r.course_id)?.course_id;
+    if (courseId) {
+      try {
+        const [holes] = await db.execute(
+          "SELECT hole_number, par FROM holes WHERE course_id = ? ORDER BY hole_number",
+          [courseId],
+        );
+        holesData = holes;
+      } catch (_) {}
+      if (holesData.length === 0) {
+        try {
+          const [choles] = await db.execute(
+            "SELECT hole_number, par FROM course_holes WHERE course_id = ? ORDER BY hole_number",
+            [courseId],
+          );
+          holesData = choles;
+        } catch (_) {}
+      }
+    }
+
+    const userGroupOrder = {};
+    ranking.forEach((r) => {
+      if (!userGroupOrder[r.id]) userGroupOrder[r.id] = [];
+      if (!userGroupOrder[r.id].includes(r.group_id))
+        userGroupOrder[r.id].push(r.group_id);
+    });
+
+    const labeledRanking = ranking.map((r) => {
+      const groups = userGroupOrder[r.id];
+      const training_label = groups.length > 1 ? `Treino ${groups.indexOf(r.group_id) + 1}` : null;
+      return { ...r, training_label };
+    });
+
+    res.json({ ranking: labeledRanking, hole_scores: holeScores, holesData });
+  } catch (error) {
+    console.error("Erro ao buscar ranking diário público:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
 exports.getDailyRanking = async (req, res) => {
   try {
     const cid = clubId(req);

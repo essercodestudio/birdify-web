@@ -147,6 +147,26 @@ CREATE TABLE IF NOT EXISTS course_tee_rules (
   INDEX idx_ctr_course_gender (course_id, gender)
 );
 
+-- ─── 7c. course_yard_slot_map (mapeia tees dinâmicos → 4 colunas de jardas) ─
+-- Cada linha diz "para o campo X, a coluna física <slot> da grade de jardas
+-- (holes.yards_<slot>) exibe o tee dinâmico <tee_id>". Só troca RÓTULO e COR
+-- exibidos — os valores numéricos ficam em holes.yards_white/yellow/blue/red
+-- (intocados). Se a linha não existe pra um slot, o frontend faz fallback pro
+-- nome/cor default hardcoded do slot ('Branco' pra white, 'Preto' pra yellow,
+-- 'Azul' pra blue, 'Verde' pra red).
+-- Limite intencional: 4 slots. Um clube que quiser N colunas espera o Bloco F.
+-- Migration: 2026_08_26_course_yard_slot_map.
+CREATE TABLE IF NOT EXISTS course_yard_slot_map (
+  course_id  INT NOT NULL,
+  slot       ENUM('white','yellow','blue','red') NOT NULL,
+  tee_id     INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (course_id, slot),
+  CONSTRAINT fk_cysm_course FOREIGN KEY (course_id) REFERENCES courses(id)     ON DELETE CASCADE,
+  CONSTRAINT fk_cysm_tee    FOREIGN KEY (tee_id)    REFERENCES course_tees(id) ON DELETE CASCADE,
+  INDEX idx_cysm_course (course_id)
+);
+
 -- ─── 8. tournaments ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tournaments (
   id                     INT AUTO_INCREMENT PRIMARY KEY,

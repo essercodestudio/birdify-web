@@ -35,6 +35,7 @@ function Scorecard() {
   const [group, setGroup] = useState(null);
   const [players, setPlayers] = useState([]);
   const [holesData, setHolesData] = useState([]);
+  const [slotMap, setSlotMap] = useState({ white: null, yellow: null, blue: null, red: null });
 
   const [currentHole, setCurrentHole] = useState(1);
   const [scores, setScores] = useState({});
@@ -165,8 +166,12 @@ function Scorecard() {
       const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
 
       if (actualCourseId) {
-          const courseRes = await api.get(`/courses/${actualCourseId}/holes`);
+          const [courseRes, mapRes] = await Promise.all([
+            api.get(`/courses/${actualCourseId}/holes`),
+            api.get(`/courses/${actualCourseId}/yard-slot-map`).catch(() => ({ data: null })),
+          ]);
           setHolesData(courseRes.data);
+          if (mapRes.data) setSlotMap(mapRes.data);
       }
 
       const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
@@ -761,7 +766,7 @@ function Scorecard() {
             <span style={styles.parInfo}>PAR {currentHoleData.par}</span>
           </div>
           <div style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
-            <HoleDistanceBadge hole={currentHoleData} />
+            <HoleDistanceBadge hole={currentHoleData} slotMap={slotMap} />
           </div>
           {/* Pills de yards por tee agora vêm dentro do HoleDistanceBadge acima —
               evita duplicação. Cores yellow/red antigas estavam trocadas (yellow→preto,

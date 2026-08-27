@@ -16,6 +16,7 @@ router.post('/start',         requireAuth, ctrl.startTraining);
 router.post('/finish',        requireAuth, ctrl.finishTraining);
 router.get('/current',        ctrl.getCurrentGroup);
 router.get('/lobbies',        ctrl.getOpenLobbies);
+router.get('/ranking/daily/public', ctrl.getDailyRankingPublic);
 router.get('/ranking/daily',  ctrl.getDailyRanking);
 router.get('/scorecard/:groupId/:userId', ctrl.getTrainingScorecard);
 router.get('/history/:userId',            ctrl.getPlayerHistory);

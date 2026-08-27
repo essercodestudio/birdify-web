@@ -8,6 +8,31 @@ import { LuFlag, LuTrash2, LuSave, LuArrowLeft, LuImagePlus, LuX, LuTarget, LuTr
 
 const GENDER_LABEL = { ALL: "Todos", M: "Masculino", F: "Feminino" };
 
+// Defaults hardcoded pros 4 slots físicos da grade de jardas (holes.yards_*).
+// Usados quando o admin ainda não mapeou aquele slot pra um tee dinâmico
+// (course_yard_slot_map). Preservam o comportamento pré-migration
+// 2026_08_26_course_yard_slot_map — rótulos e cores atuais do CourseManager.
+const YARD_SLOTS = ["white", "yellow", "blue", "red"];
+const SLOT_DEFAULTS = {
+  white:  { label: "Branco", border: "#ddd",    bg: "#fff"    },
+  yellow: { label: "Preto",  border: "#ffd700", bg: "#fffacd" },
+  blue:   { label: "Azul",   border: "#3b82f6", bg: "#e6f2ff" },
+  red:    { label: "Verde",  border: "#ef4444", bg: "#ffe6e6" },
+};
+
+// Retorna { label, border, bg } efetivos pra um slot considerando o mapping.
+// Se mapeado, usa tee_name + color_hex (com bg leve derivado). Senão, default.
+function resolveSlotVisual(slot, mapping) {
+  const entry = mapping?.[slot];
+  if (!entry) return SLOT_DEFAULTS[slot];
+  return {
+    label: entry.tee_name,
+    border: entry.color_hex,
+    // bg claro derivado do hex — permite input aparecer sobre fundo colorido leve.
+    bg: entry.color_hex + "1a",
+  };
+}
+
 // Editor de regras agora indexado por tee_id (dinâmico).
 // Shape: { mode, rows: { ALL: {teeId: {min, max}}, M: {...}, F: {...} } }
 function emptyTeeRulesEditor() {
@@ -81,6 +106,10 @@ function CourseManager() {
   const [newTeeHex, setNewTeeHex] = useState("#22c55e");
   const [addingTee, setAddingTee] = useState(false);
 
+  // Mapeamento coluna da grade → tee dinâmico. Shape: { white|yellow|blue|red: {tee_id, tee_name, color_hex} | null }
+  const [yardSlotMap, setYardSlotMap] = useState({ white: null, yellow: null, blue: null, red: null });
+  const [savingSlotMap, setSavingSlotMap] = useState(false);
+
   // TEMA PADRONIZADO BIRDIFY
   const theme = {
     bg: "#0f172a",
@@ -142,17 +171,49 @@ function CourseManager() {
     }
 
     try {
-      const [holesRes, rulesRes, teesRes] = await Promise.all([
+      const [holesRes, rulesRes, teesRes, slotMapRes] = await Promise.all([
         api.get(`/courses/${id}/holes`),
         api.get(`/courses/${id}/tee-rules`),
         api.get(`/courses/${id}/tees`),
+        api.get(`/courses/${id}/yard-slot-map`),
       ]);
       setHoles(holesRes.data);
       setTees(teesRes.data?.tees || []);
       setTeeEditor(rulesToEditor(rulesRes.data?.rules || []));
       setTeeWarnings(rulesRes.data?.warnings || []);
+      setYardSlotMap(slotMapRes.data || { white: null, yellow: null, blue: null, red: null });
     } catch (error) {
       alert("Erro ao carregar dados do campo.");
+    }
+  };
+
+  const handleChangeSlot = (slot, teeIdOrNull) => {
+    setYardSlotMap(prev => {
+      const teeId = teeIdOrNull ? Number(teeIdOrNull) : null;
+      if (!teeId) return { ...prev, [slot]: null };
+      const tee = tees.find(t => t.id === teeId);
+      if (!tee) return prev;
+      return { ...prev, [slot]: { tee_id: teeId, tee_name: tee.tee_name, color_hex: tee.color_hex } };
+    });
+  };
+
+  const handleSaveYardSlotMap = async () => {
+    if (!selectedCourseId) return;
+    const payload = {
+      white:  yardSlotMap.white?.tee_id  ?? null,
+      yellow: yardSlotMap.yellow?.tee_id ?? null,
+      blue:   yardSlotMap.blue?.tee_id   ?? null,
+      red:    yardSlotMap.red?.tee_id    ?? null,
+    };
+    setSavingSlotMap(true);
+    try {
+      const res = await api.put(`/courses/${selectedCourseId}/yard-slot-map`, payload);
+      setYardSlotMap(res.data?.map || payload);
+      alert("Rótulos das colunas de jardas salvos.");
+    } catch (e) {
+      alert(e.response?.data?.error || "Erro ao salvar rótulos das colunas.");
+    } finally {
+      setSavingSlotMap(false);
     }
   };
 
@@ -736,12 +797,21 @@ function CourseManager() {
       <tr>
         <th style={styles.th}>Buraco</th>
         <th style={styles.th}>PAR</th>
-        <th style={styles.th}>Branco</th>
-        {/* Mudamos Amarelo para Preto */}
-        <th style={styles.th}>Preto</th>
-        <th style={styles.th}>Azul</th>
-        {/* Mudamos Vermelho para Verde */}
-        <th style={styles.th}>Verde</th>
+        {YARD_SLOTS.map(slot => {
+          const vis = resolveSlotVisual(slot, yardSlotMap);
+          const isMapped = !!yardSlotMap?.[slot];
+          return (
+            <th key={slot} style={styles.th}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, backgroundColor: vis.border, border: `1px solid ${theme.cardLight}` }} />
+                {vis.label}
+                {isMapped && (
+                  <span title="mapeado pra um tee do campo" style={{ fontSize: 8, color: theme.info, letterSpacing: 0.5 }}>●</span>
+                )}
+              </span>
+            </th>
+          );
+        })}
         <th style={styles.th}>Foto</th>
       </tr>
     </thead>
@@ -768,68 +838,23 @@ function CourseManager() {
                               <option value={5}>5</option>
                             </select>
                           </td>
-                          <td style={styles.td}>
-                            <input
-                              type="number"
-                              min="0"
-                              max="1000"
-                              placeholder="-"
-                              value={h.yards_white === 0 ? "" : h.yards_white}
-                              onChange={(e) =>
-                                handleHoleChange(
-                                  index,
-                                  "yards_white",
-                                  e.target.value,
-                                )
-                              }
-                              style={styles.yardInput("#ddd", "#fff")}
-                            />
-                          </td>
-                          <td style={styles.td}>
-                            <input
-                              type="number"
-                              placeholder="-"
-                              value={h.yards_yellow === 0 ? "" : h.yards_yellow}
-                              onChange={(e) =>
-                                handleHoleChange(
-                                  index,
-                                  "yards_yellow",
-                                  e.target.value,
-                                )
-                              }
-                              style={styles.yardInput("#ffd700", "#fffacd")}
-                            />
-                          </td>
-                          <td style={styles.td}>
-                            <input
-                              type="number"
-                              placeholder="-"
-                              value={h.yards_blue === 0 ? "" : h.yards_blue}
-                              onChange={(e) =>
-                                handleHoleChange(
-                                  index,
-                                  "yards_blue",
-                                  e.target.value,
-                                )
-                              }
-                              style={styles.yardInput("#3b82f6", "#e6f2ff")}
-                            />
-                          </td>
-                          <td style={styles.td}>
-                            <input
-                              type="number"
-                              placeholder="-"
-                              value={h.yards_red === 0 ? "" : h.yards_red}
-                              onChange={(e) =>
-                                handleHoleChange(
-                                  index,
-                                  "yards_red",
-                                  e.target.value,
-                                )
-                              }
-                              style={styles.yardInput("#ef4444", "#ffe6e6")}
-                            />
-                          </td>
+                          {YARD_SLOTS.map(slot => {
+                            const vis = resolveSlotVisual(slot, yardSlotMap);
+                            const field = `yards_${slot}`;
+                            return (
+                              <td key={slot} style={styles.td}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="1000"
+                                  placeholder="-"
+                                  value={h[field] === 0 ? "" : h[field]}
+                                  onChange={(e) => handleHoleChange(index, field, e.target.value)}
+                                  style={styles.yardInput(vis.border, vis.bg)}
+                                />
+                              </td>
+                            );
+                          })}
                           <td style={{ ...styles.td, ...styles.lastTd }}>
                             <HoleImageCell
                               hole={h}
@@ -964,6 +989,69 @@ function CourseManager() {
                     <LuPlus size={14} /> {addingTee ? "..." : "ADICIONAR"}
                   </button>
                 </div>
+              </div>
+
+              {/* CARD DE MAPEAMENTO COLUNA DA GRADE → TEE DINÂMICO
+                  A grade de jardas tem 4 slots físicos fixos (yards_white/yellow/blue/red).
+                  O admin escolhe qual tee dinâmico rotula cada slot. "usar rótulo padrão"
+                  volta pro nome hardcoded (Branco/Preto/Azul/Verde). */}
+              <div style={{ ...styles.card, borderTop: `4px solid ${theme.gold}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                  <h3 style={{ margin: 0, color: theme.gold, display: "flex", alignItems: "center", gap: 8 }}>
+                    <LuFlag size={18} /> Colunas da Grade de Jardas
+                  </h3>
+                  <button
+                    onClick={handleSaveYardSlotMap}
+                    disabled={savingSlotMap}
+                    style={{ ...styles.button, backgroundColor: theme.gold, color: "#000", opacity: savingSlotMap ? 0.6 : 1 }}
+                  >
+                    <LuSave size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+                    {savingSlotMap ? "SALVANDO..." : "SALVAR RÓTULOS"}
+                  </button>
+                </div>
+
+                <p style={{ margin: "0 0 14px", color: theme.textMuted, fontSize: 13 }}>
+                  Cada coluna da grade acima usa por padrão o rótulo fixo ({SLOT_DEFAULTS.white.label}/{SLOT_DEFAULTS.yellow.label}/{SLOT_DEFAULTS.blue.label}/{SLOT_DEFAULTS.red.label}).
+                  Se você cadastrou tees próprios acima, pode escolher qual deles rotula cada coluna aqui.
+                  As jardas em si NÃO mudam — só o rótulo e a cor exibidos.
+                </p>
+
+                {tees.length === 0 && (
+                  <div style={{ padding: "12px 14px", backgroundColor: theme.bg, border: `1px dashed ${theme.cardLight}`, borderRadius: 8, color: theme.textMuted, fontSize: 13 }}>
+                    Cadastre tees no card acima primeiro pra poder mapear.
+                  </div>
+                )}
+
+                {tees.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                    {YARD_SLOTS.map(slot => {
+                      const vis = resolveSlotVisual(slot, yardSlotMap);
+                      const currentTeeId = yardSlotMap?.[slot]?.tee_id || "";
+                      return (
+                        <div key={slot} style={{ padding: 12, backgroundColor: theme.cardLight, borderRadius: 8, borderLeft: `4px solid ${vis.border}` }}>
+                          <div style={{ fontSize: 11, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                            Coluna {SLOT_DEFAULTS[slot].label.toLowerCase()}
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <span style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: vis.border, border: `1px solid ${theme.cardLight}` }} />
+                            <span style={{ fontWeight: 700, color: theme.textMain, fontSize: 14 }}>{vis.label}</span>
+                          </div>
+                          <select
+                            data-testid={`yard-slot-select-${slot}`}
+                            value={currentTeeId}
+                            onChange={(e) => handleChangeSlot(slot, e.target.value || null)}
+                            style={{ width: "100%", padding: 8, borderRadius: 6, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, fontSize: 13 }}
+                          >
+                            <option value="">— usar rótulo padrão ({SLOT_DEFAULTS[slot].label}) —</option>
+                            {tees.map(t => (
+                              <option key={t.id} value={t.id}>{t.tee_name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* CARD DE REGRAS DE TEE POR HANDICAP (Bloco 3) */}
