@@ -155,6 +155,34 @@ exports.getDashboardKPIs = async (req, res) => {
   }
 };
 
+// GET /api/admin/me — preflight do frontend pra decidir se renderiza AdminRoute.
+// Único endpoint sob /api/admin/ sem requireAdmin (usa requireAuth apenas), porque
+// é justamente ele que responde a pergunta "sou admin deste clube?". Nunca dá 403:
+// devolve { isAdminOfCurrentClub: false } pra player, admin sem vínculo, ou
+// admin cujo req.club nem foi identificado.
+exports.getMe = async (req, res) => {
+  try {
+    const clubId = req.club?.id || null;
+    const clubInfo = clubId ? { id: clubId, name: req.club.name } : null;
+
+    if (req.user.role !== "ADMIN" || !clubId) {
+      return res.json({ isAdminOfCurrentClub: false, club: clubInfo });
+    }
+
+    const [rows] = await db.query(
+      "SELECT 1 FROM club_admins WHERE user_id = ? AND club_id = ? LIMIT 1",
+      [req.user.id, clubId]
+    );
+    return res.json({
+      isAdminOfCurrentClub: rows.length > 0,
+      club: clubInfo,
+    });
+  } catch (error) {
+    console.error("Erro em GET /admin/me:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
 // GET /api/admin/club — retorna dados editáveis do clube atual
 exports.getClub = async (req, res) => {
   try {

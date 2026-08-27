@@ -11,10 +11,13 @@ router.post('/sponsors',              requireAdmin, c.createSponsor);
 router.delete('/sponsors/:sponsorId', requireAdmin, c.deleteSponsor);
 
 // ── Circuitos ─────────────────────────────────────────────────────────────────
-router.get('/',             c.listCircuits);
-router.get('/:id',          c.getCircuit);
+// Isolamento multi-tenant (2026-08-27): listagem/detalhe/sponsors do circuito
+// são páginas do CircuitManagement (admin) — sobem pra requireAdmin. Ranking
+// segue público pra CircuitRankingPublic (rota /ranking/:circuitId sem login).
+router.get('/',             requireAdmin, c.listCircuits);
+router.get('/:id',          requireAdmin, c.getCircuit);
 router.get('/:id/ranking',  c.getCircuitRanking);
-router.get('/:id/sponsors', c.getCircuitSponsors);  // público
+router.get('/:id/sponsors', requireAdmin, c.getCircuitSponsors);
 
 router.post('/',            requireAdmin, c.createCircuit);
 router.put('/:id',          requireAdmin, c.updateCircuit);

@@ -4,7 +4,12 @@ const router = express.Router();
 const adminController = require("../controllers/adminController");
 const teeController = require("../controllers/teeTimeController");
 const scoreEditor = require("../controllers/adminScoreController");
-const { requireAdmin } = require("../middlewares/authMiddleware");
+const { requireAuth, requireAdmin } = require("../middlewares/authMiddleware");
+
+// Preflight — responde "sou admin do clube atual?" sem 403 (usado pelo
+// AdminRoute do frontend pra decidir se renderiza tela admin). Único
+// endpoint sob /api/admin/ sem requireAdmin.
+router.get("/me", requireAuth, adminController.getMe);
 
 router.get("/dashboard", requireAdmin, adminController.getDashboardKPIs);
 router.get("/club", requireAdmin, adminController.getClub);
