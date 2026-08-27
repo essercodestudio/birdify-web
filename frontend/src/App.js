@@ -1,5 +1,5 @@
 // frontend/src/App.js
-import React, { useState, useEffect, createContext, Suspense, lazy } from "react";
+import React, { useState, useEffect, useContext, useCallback, createContext, Suspense, lazy } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import api from "./services/api";
 import syncService from "./services/syncService";
@@ -59,6 +59,43 @@ const mediaUrl = (url) => {
 // --- 1. CRIANDO A "MEMÓRIA GLOBAL" DO CAMALEÃO ---
 export const ThemeContext = createContext();
 
+// Isolamento multi-tenant do admin (2026-08-27): admin sem vínculo em
+// club_admins pro clube do domínio atual se comporta como jogador comum.
+// AdminRoute e itens de menu admin consultam este contexto (que faz
+// preflight em GET /api/admin/me) em vez de olhar só o role local.
+const AdminMembershipContext = createContext({ loading: true, isAdmin: false, refresh: () => {} });
+export const useAdminMembership = () => useContext(AdminMembershipContext);
+
+function AdminMembershipProvider({ isLoggedIn, children }) {
+  const [state, setState] = useState({ loading: true, isAdmin: false });
+  // Ler o token direto do storage em cada refresh (nao via prop isLoggedIn),
+  // porque isLoggedIn no App.js so re-inicializa em outras abas via
+  // 'storage' event — mesma aba fica stale apos login/logout. Login.js chama
+  // refresh() manualmente apos setSession pra atualizar o contexto.
+  const refresh = useCallback(async () => {
+    if (!getToken()) { setState({ loading: false, isAdmin: false }); return false; }
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const res = await api.get("/admin/me");
+      const isAdmin = !!res.data?.isAdminOfCurrentClub;
+      setState({ loading: false, isAdmin });
+      return isAdmin;
+    } catch {
+      // Falha de rede ou 401 (token expirado). Por seguranca, tratar como nao-admin;
+      // AdminRoute vai redirecionar pro /login se o token realmente sumiu.
+      setState({ loading: false, isAdmin: false });
+      return false;
+    }
+  }, []);
+  // Sincroniza quando isLoggedIn muda em outras abas (via storage event).
+  useEffect(() => { refresh(); }, [refresh, isLoggedIn]);
+  return (
+    <AdminMembershipContext.Provider value={{ ...state, refresh }}>
+      {children}
+    </AdminMembershipContext.Provider>
+  );
+}
+
 const ProtectedRoute = ({ children }) => {
   const token = getToken();
   if (!token) return <Navigate to="/login" replace />;
@@ -69,12 +106,25 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+// AdminRoute reescrito: além de role ADMIN, valida vínculo com o clube do
+// dominio atual via /api/admin/me. Sem vinculo -> redireciona pra "/"
+// silenciosamente (mesma UX de player comum), nao mostra tela de erro.
+// Spinner discreto enquanto o preflight carrega (tipicamente <200ms).
 const AdminRoute = ({ children }) => {
+  // Hook chamado ANTES de qualquer early return — regra do react-hooks.
+  const { loading, isAdmin } = useAdminMembership();
   const token = getToken();
   if (!token) return <Navigate to="/login" replace />;
   const user = getUser();
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== "ADMIN") return <Navigate to="/" replace />;
+  if (!user || !user.id) return <Navigate to="/login" replace />;
+  if (loading) {
+    return (
+      <div style={{ backgroundColor: "#0f172a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 13 }}>
+        Carregando…
+      </div>
+    );
+  }
+  if (!isAdmin) return <Navigate to="/" replace />;
   return children;
 };
 
@@ -163,6 +213,7 @@ function App() {
   return (
     // --- 3. ABRAÇANDO O SITE COM O CONTEXTO DE CORES ---
     <ThemeContext.Provider value={clubTheme}>
+     <AdminMembershipProvider isLoggedIn={isLoggedIn}>
       <Router>
         <LGPDBanner />
 
@@ -174,11 +225,15 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/tournament/:id" element={<ProtectedRoute><TournamentManager /></ProtectedRoute>} />
+            {/* Telas de gerenciamento admin (torneios, grupos, campos, circuitos) —
+                AdminRoute com preflight de vinculo. Antes eram ProtectedRoute,
+                o que deixava player logado abrir e admin cross-tenant enxergar
+                dados do clube errado (fix 2026-08-27). */}
+            <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
+            <Route path="/tournament/:id" element={<AdminRoute><TournamentManager /></AdminRoute>} />
             <Route path="/scorecard/:groupId" element={<ProtectedRoute><Scorecard /></ProtectedRoute>} />
             <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
-            <Route path="/courses" element={<ProtectedRoute><CourseManager /></ProtectedRoute>} />
+            <Route path="/courses" element={<AdminRoute><CourseManager /></AdminRoute>} />
             {/* Rota legada: PlayerDashboard foi unificado com JoinGame em PlayerHome ("/") */}
             <Route path="/player" element={<Navigate to="/" replace />} />
 
@@ -190,7 +245,7 @@ function App() {
             <Route path="/treino/:groupId/ranking" element={<TrainingRankingPublic />} />
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
             <Route path="/my-performance" element={<ProtectedRoute><MyPerformance /></ProtectedRoute>} />
-            <Route path="/circuits" element={<ProtectedRoute><CircuitManagement /></ProtectedRoute>} />
+            <Route path="/circuits" element={<AdminRoute><CircuitManagement /></AdminRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
             <Route path="/admin/kpis" element={<AdminRoute><AdminKPIs /></AdminRoute>} />
             <Route path="/admin/clube" element={<AdminRoute><ClubSettings /></AdminRoute>} />
@@ -224,6 +279,7 @@ function App() {
 
         {showSponsorBar && <GlobalSponsorsBar sponsors={globalSponsors} />}
       </Router>
+     </AdminMembershipProvider>
     </ThemeContext.Provider>
   );
 }

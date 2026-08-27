@@ -6,7 +6,7 @@ import api from "../services/api";
 import { logout } from "../services/session";
 import { getUser, updateUser } from "../services/authStorage";
 import { useNavigate } from "react-router-dom";
-import { ThemeContext } from "../App";
+import { ThemeContext, useAdminMembership } from "../App";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
 import Cropper from "react-easy-crop";
 import {
@@ -45,6 +45,7 @@ function PlayerHome() {
   const navigate = useNavigate();
   const club = useContext(ThemeContext) || {};
   const theme = useBirdifyTheme();
+  const { isAdmin: isAdminOfCurrentClub } = useAdminMembership();
 
   const [user, setUser] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -751,7 +752,7 @@ function PlayerHome() {
                   <LuUser size={18} color={theme.accent} />
                   Meu Perfil
                 </button>
-                {user.role === "ADMIN" && (
+                {isAdminOfCurrentClub && (
                   <button
                     style={styles.dropdownItem}
                     onClick={() => { setMenuOpen(false); navigate("/dashboard"); }}

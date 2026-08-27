@@ -7,7 +7,7 @@ import { LuEye, LuEyeOff } from "react-icons/lu";
 import logoImg from "../assets/logo_birdify.png";
 
 // 2. Importando a Memória Global do Camaleão
-import { ThemeContext } from "../App";
+import { ThemeContext, useAdminMembership } from "../App";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -16,6 +16,7 @@ function Login() {
   const [keepConnected, setKeepConnected] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const { refresh: refreshAdminMembership } = useAdminMembership();
 
   // 3. Puxando as informações do clube atual
   const clubTheme = useContext(ThemeContext) || {};
@@ -43,11 +44,13 @@ function Login() {
       });
       const { token, user } = response.data;
       setSession({ token, user, keepConnected });
-      if (user.role === "ADMIN") {
-        navigate("/dashboard");
-      } else {
-        navigate("/");
-      }
+      // refreshAdminMembership() faz preflight GET /admin/me e ja retorna
+      // se o user e admin do dominio atual. Alem de decidir o navigate,
+      // atualiza o AdminMembershipContext pra o menu do PlayerHome e o
+      // AdminRoute nao caírem em cache stale (isLoggedIn no App.js so
+      // muda em outras abas via storage event).
+      const isAdminHere = await refreshAdminMembership();
+      navigate(isAdminHere ? "/dashboard" : "/");
     } catch (err) {
       setError(
         err.response
