@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
-import { LuArrowLeft, LuTrophy } from 'react-icons/lu';
+import { LuArrowLeft, LuTrophy, LuShare2 } from 'react-icons/lu';
 import { TOURNAMENT_CATEGORIES, applyCategoryFilter, isNetCategory } from '../utils/categories';
 
 // Categorias da MESMA fonte do torneio (utils/categories.js) — lista completa,
@@ -20,6 +20,19 @@ function TrainingLeaderboard() {
   const [data, setData]               = useState({ ranking: [], hole_scores: [], holesData: [] });
   const [activeTab, setActiveTab]     = useState('ABSOLUTO');
   const [expandedKey, setExpandedKey] = useState(null);
+  const [shareToast, setShareToast]   = useState(false);
+
+  const handleShare = async () => {
+    if (!returnGroupId) return;
+    const url = `${window.location.origin}/treino/${returnGroupId}/ranking`;
+    const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do treino em tempo real:', url };
+    try {
+      if (navigator.share) { await navigator.share(shareData); return; }
+      await navigator.clipboard.writeText(url);
+      setShareToast(true);
+      setTimeout(() => setShareToast(false), 2000);
+    } catch (_) { /* usuário cancelou o share nativo — silêncio */ }
+  };
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -198,12 +211,29 @@ function TrainingLeaderboard() {
           }}
           style={styles.btnBack}
         ><LuArrowLeft size={15} /> VOLTAR</button>
-        {isLiveDay && (
-          <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span className="live-dot" /> AO VIVO
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {isLiveDay && (
+            <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="live-dot" /> AO VIVO
+            </div>
+          )}
+          {returnGroupId && (
+            <button
+              onClick={handleShare}
+              aria-label="Compartilhar ranking"
+              title="Compartilhar ranking"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, backgroundColor: 'transparent', color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: 'pointer' }}
+            >
+              <LuShare2 size={16} />
+            </button>
+          )}
+        </div>
       </div>
+      {shareToast && (
+        <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', backgroundColor: accent, color: '#000', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', zIndex: 9999 }}>
+          Link copiado!
+        </div>
+      )}
 
       <h2 style={{ color: theme.gold, margin: '0 0 20px', fontSize: '20px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <LuTrophy size={18} />

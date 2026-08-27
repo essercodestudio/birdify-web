@@ -6,7 +6,7 @@ import { getIncompleteEntries, formatIncompleteSummary } from '../utils/scoreCom
 import { getUser } from '../services/authStorage';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
-import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList, LuShare2 } from 'react-icons/lu';
+import { LuArrowLeft, LuTrophy, LuCopy, LuTrash2, LuLogOut, LuCircleCheck, LuCheck, LuPencil, LuEye, LuClipboardList } from 'react-icons/lu';
 import HolePhotoBadge from '../components/HolePhotoBadge';
 import HoleDistanceBadge from '../components/HoleDistanceBadge';
 import TeeSuggestionChip from '../components/TeeSuggestionChip';
@@ -814,7 +814,7 @@ function TrainingScorecard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '12px', borderBottom: `1px solid ${theme.cardLight}` }}>
             <button style={st.btnBack} onClick={() => navigate('/daily-training')}><LuArrowLeft size={15} /> VOLTAR</button>
             <button
-              onClick={() => navigate('/training-leaderboard')}
+              onClick={() => navigate('/training-leaderboard', { state: { groupId } })}
               style={{ backgroundColor: theme.gold, color: '#000', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
             >
               <LuTrophy size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
@@ -878,26 +878,11 @@ function TrainingScorecard() {
           })}
 
           <button
-            onClick={() => navigate('/training-leaderboard')}
+            onClick={() => navigate('/training-leaderboard', { state: { groupId } })}
             style={{ width: '100%', padding: '16px', backgroundColor: theme.gold, color: '#000', fontSize: '16px', fontWeight: '900', border: 'none', borderRadius: '8px', cursor: 'pointer', marginTop: '8px' }}
           >
             <LuTrophy size={15} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
             Ver Ranking do Dia
-          </button>
-          <button
-            onClick={async () => {
-              const url = `${window.location.origin}/treino/${groupId}/ranking`;
-              const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do meu treino em tempo real:', url };
-              try {
-                if (navigator.share) { await navigator.share(shareData); return; }
-                await navigator.clipboard.writeText(url);
-                alert('Link copiado! Cole em qualquer aplicativo pra compartilhar.');
-              } catch (_) { /* usuário cancelou o share nativo — silêncio */ }
-            }}
-            style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: theme.textMain, fontSize: '14px', fontWeight: '700', border: `1px solid ${theme.cardLight}`, borderRadius: '8px', cursor: 'pointer', marginTop: '8px' }}
-          >
-            <LuShare2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
-            Compartilhar link do ranking
           </button>
           <div style={{ height: '40px' }} />
         </div>

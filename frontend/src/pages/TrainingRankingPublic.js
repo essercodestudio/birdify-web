@@ -9,7 +9,7 @@ import { useParams } from 'react-router-dom';
 import api from '../services/api';
 import { socket } from '../services/socket';
 import { useClub } from '../context/ClubContext';
-import { LuFlag, LuTrophy } from 'react-icons/lu';
+import { LuFlag, LuTrophy, LuShare2 } from 'react-icons/lu';
 
 function TrainingRankingPublic() {
   const { groupId } = useParams();
@@ -19,8 +19,20 @@ function TrainingRankingPublic() {
   const [data, setData]               = useState({ ranking: [], hole_scores: [], holesData: [] });
   const [expandedKey, setExpandedKey] = useState(null);
   const [error, setError]             = useState(null);
+  const [shareToast, setShareToast]   = useState(false);
   const anchoredOnce                  = useRef(false);
   const anchorRef                     = useRef(null);
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do treino em tempo real:', url };
+    try {
+      if (navigator.share) { await navigator.share(shareData); return; }
+      await navigator.clipboard.writeText(url);
+      setShareToast(true);
+      setTimeout(() => setShareToast(false), 2000);
+    } catch (_) { /* usuário cancelou o share nativo — silêncio */ }
+  };
 
   const accent = club?.primary_color || '#22c55e';
   const theme  = {
@@ -195,12 +207,27 @@ function TrainingRankingPublic() {
         <div style={{ fontSize: '10px', color: theme.textMuted, letterSpacing: '2px', fontWeight: '700' }}>
           {(club?.name || 'BIRDIFY').toUpperCase()}
         </div>
-        {isLiveDay && (
-          <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span className="live-dot" /> AO VIVO
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {isLiveDay && (
+            <div style={{ color: theme.danger, fontWeight: 'bold', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span className="live-dot" /> AO VIVO
+            </div>
+          )}
+          <button
+            onClick={handleShare}
+            aria-label="Compartilhar ranking"
+            title="Compartilhar ranking"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, backgroundColor: 'transparent', color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: 'pointer' }}
+          >
+            <LuShare2 size={16} />
+          </button>
+        </div>
       </div>
+      {shareToast && (
+        <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', backgroundColor: accent, color: '#000', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', zIndex: 9999 }}>
+          Link copiado!
+        </div>
+      )}
 
       <h2 style={{ color: theme.gold, margin: '0 0 12px', fontSize: '20px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <LuTrophy size={18} />
