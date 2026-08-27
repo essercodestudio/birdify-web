@@ -797,14 +797,15 @@ function CourseManager() {
       <tr>
         <th style={styles.th}>Buraco</th>
         <th style={styles.th}>PAR</th>
-        {YARD_SLOTS.map(slot => {
+        {YARD_SLOTS.map((slot, idx) => {
           const vis = resolveSlotVisual(slot, yardSlotMap);
           const isMapped = !!yardSlotMap?.[slot];
+          const headerLabel = isMapped ? vis.label : `Coluna ${idx + 1}`;
           return (
             <th key={slot} style={styles.th}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, backgroundColor: vis.border, border: `1px solid ${theme.cardLight}` }} />
-                {vis.label}
+                {headerLabel}
                 {isMapped && (
                   <span title="mapeado pra um tee do campo" style={{ fontSize: 8, color: theme.info, letterSpacing: 0.5 }}>●</span>
                 )}
@@ -993,8 +994,9 @@ function CourseManager() {
 
               {/* CARD DE MAPEAMENTO COLUNA DA GRADE → TEE DINÂMICO
                   A grade de jardas tem 4 slots físicos fixos (yards_white/yellow/blue/red).
-                  O admin escolhe qual tee dinâmico rotula cada slot. "usar rótulo padrão"
-                  volta pro nome hardcoded (Branco/Preto/Azul/Verde). */}
+                  O admin escolhe qual tee dinâmico rotula cada slot. Sem mapeamento,
+                  o card mostra "Coluna N" (posição) e "— sem tee —" — nunca nomes
+                  legados que não correspondem a tees reais do clube. */}
               <div style={{ ...styles.card, borderTop: `4px solid ${theme.gold}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
                   <h3 style={{ margin: 0, color: theme.gold, display: "flex", alignItems: "center", gap: 8 }}>
@@ -1024,17 +1026,20 @@ function CourseManager() {
 
                 {tees.length > 0 && (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-                    {YARD_SLOTS.map(slot => {
+                    {YARD_SLOTS.map((slot, idx) => {
                       const vis = resolveSlotVisual(slot, yardSlotMap);
+                      const mapped = !!yardSlotMap?.[slot];
                       const currentTeeId = yardSlotMap?.[slot]?.tee_id || "";
                       return (
                         <div key={slot} style={{ padding: 12, backgroundColor: theme.cardLight, borderRadius: 8, borderLeft: `4px solid ${vis.border}` }}>
                           <div style={{ fontSize: 11, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-                            Coluna {SLOT_DEFAULTS[slot].label.toLowerCase()}
+                            Coluna {idx + 1}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                             <span style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: vis.border, border: `1px solid ${theme.cardLight}` }} />
-                            <span style={{ fontWeight: 700, color: theme.textMain, fontSize: 14 }}>{vis.label}</span>
+                            <span style={{ fontWeight: 700, color: mapped ? theme.textMain : theme.textMuted, fontSize: 14, fontStyle: mapped ? "normal" : "italic" }}>
+                              {mapped ? vis.label : "— sem tee —"}
+                            </span>
                           </div>
                           <select
                             data-testid={`yard-slot-select-${slot}`}
@@ -1042,7 +1047,7 @@ function CourseManager() {
                             onChange={(e) => handleChangeSlot(slot, e.target.value || null)}
                             style={{ width: "100%", padding: 8, borderRadius: 6, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, fontSize: 13 }}
                           >
-                            <option value="">— usar rótulo padrão ({SLOT_DEFAULTS[slot].label}) —</option>
+                            <option value="">— sem tee mapeado —</option>
                             {tees.map(t => (
                               <option key={t.id} value={t.id}>{t.tee_name}</option>
                             ))}

@@ -11,12 +11,16 @@ import React from "react";
 
 const YARDS_PER_METER = 1.0936;
 
-// Cores oficiais dos tees no golfe (fallback quando o slot não está mapeado).
+// Cores default de cada slot físico (fallback quando o admin não mapeou o
+// slot pra um tee dinâmico). Sem `label` no fallback — o nome legado
+// ("Branco/Preto/Azul/Verde") não corresponde a nenhum tee real, então
+// não deve vazar como tooltip. Se mapeado, `collect()` sobrescreve
+// com o nome do tee dinâmico.
 const TEES = [
-  { key: "yards_blue",   slot: "blue",   bg: "#0077b6", fg: "#ffffff", border: "#0077b6", label: "Azul" },
-  { key: "yards_white",  slot: "white",  bg: "#ffffff", fg: "#000000", border: "#cbd5e1", label: "Branco" },
-  { key: "yards_yellow", slot: "yellow", bg: "#eab308", fg: "#000000", border: "#eab308", label: "Preto" },
-  { key: "yards_red",    slot: "red",    bg: "#dc2626", fg: "#ffffff", border: "#dc2626", label: "Verde" },
+  { key: "yards_blue",   slot: "blue",   bg: "#0077b6", fg: "#ffffff", border: "#0077b6" },
+  { key: "yards_white",  slot: "white",  bg: "#ffffff", fg: "#000000", border: "#cbd5e1" },
+  { key: "yards_yellow", slot: "yellow", bg: "#eab308", fg: "#000000", border: "#eab308" },
+  { key: "yards_red",    slot: "red",    bg: "#dc2626", fg: "#ffffff", border: "#dc2626" },
 ];
 
 // Deriva foreground (preto/branco) a partir do brilho do bg. Evita amarelo com fg branco (ilegível).
