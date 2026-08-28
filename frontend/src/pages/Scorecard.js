@@ -8,6 +8,44 @@ import { LuClipboardList, LuCheck, LuPencil, LuTrophy } from "react-icons/lu";
 import HolePhotoBadge from "../components/HolePhotoBadge";
 import HoleDistanceBadge from "../components/HoleDistanceBadge";
 
+// Data de hoje em BRT no formato YYYY-MM-DD.
+// Item 5 · commit 4 (2026-08-28): NÃO usar toISOString — converte pra UTC e
+// perto da meia-noite BRT retorna o dia errado (bug idêntico ao do Item 3).
+// toLocaleDateString('sv-SE', {timeZone}) devolve YYYY-MM-DD do fuso solicitado.
+const todayBRT = () =>
+  new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+
+// Extrai o dia BRT de uma round_date vinda do backend. round_date pode chegar
+// como "2026-08-29T12:00:00.000Z" (ISO UTC vindo do MySQL DATETIME) OU como
+// "2026-08-29 12:00:00" (string local sem TZ). Nos dois casos, o que interessa
+// é o DIA no fuso BRT — não o dia UTC.
+const roundDayBRT = (roundDate) => {
+  if (!roundDate) return null;
+  const d = new Date(roundDate);
+  if (isNaN(d)) return String(roundDate).slice(0, 10); // fallback defensivo
+  return d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+};
+
+// Decide qual round o jogador está marcando AGORA:
+//   1) Round cujo dia BRT == hoje BRT (match exato). Se >1, pega o menor number.
+//   2) Se ninguém casa, o próximo futuro (menor round_date > hoje).
+//   3) Se nenhum futuro, o último passado (maior round_date <= hoje).
+//   4) Fallback: 1 (single-round ou lista vazia).
+const pickCurrentRound = (rounds) => {
+  if (!Array.isArray(rounds) || rounds.length === 0) return 1;
+  const today = todayBRT();
+  const withDay = rounds
+    .map(r => ({ n: Number(r.round_number), day: roundDayBRT(r.round_date) }))
+    .filter(r => r.n && r.day);
+  const exact = withDay.filter(r => r.day === today).sort((a, b) => a.n - b.n)[0];
+  if (exact) return exact.n;
+  const futures = withDay.filter(r => r.day > today).sort((a, b) => a.day.localeCompare(b.day));
+  if (futures.length) return futures[0].n;
+  const pasts = withDay.filter(r => r.day <= today).sort((a, b) => b.day.localeCompare(a.day));
+  if (pasts.length) return pasts[0].n;
+  return 1;
+};
+
 // --- O CÉREBRO DAS CATEGORIAS E CORES DE TEE ---
 const calcularPerfilGolfista = (genero, handicap) => {
   const hc = parseFloat(handicap) || 0;
@@ -37,6 +75,14 @@ function Scorecard() {
   const [holesData, setHolesData] = useState([]);
   const [slotMap, setSlotMap] = useState({ white: null, yellow: null, blue: null, red: null });
 
+  // Item 5 · commit 4: multi-rodada. totalRounds=1 → UI/comportamento antigos
+  // preservados. >1 → currentRound alimenta save/sign/getScores/getSignature
+  // e o header mostra "R{n} · Sexta 25/08". Auto-detect por data BRT em
+  // pickCurrentRound; usuário pode trocar via seletor pra ver R1 depois de R2.
+  const [totalRounds, setTotalRounds] = useState(1);
+  const [rounds, setRounds] = useState([]);
+  const [currentRound, setCurrentRound] = useState(1);
+
   const [currentHole, setCurrentHole] = useState(1);
   const [scores, setScores] = useState({});
   const [playedHoles, setPlayedHoles] = useState([]);
@@ -63,20 +109,24 @@ function Scorecard() {
     gold: '#eab308', textMain: '#f8fafc', textMuted: '#94a3b8', danger: '#ef4444'
   };
 
-  // Funções para gerenciar rascunho no localStorage
-  const getDraftKey = useCallback((matchId, holeNumber) => {
-    return `draft_scores_match_${matchId}_hole_${holeNumber}`;
+  // Funções para gerenciar rascunho no localStorage.
+  // Item 5 · commit 4: chave inclui round pra rascunho de R1 não vazar pra R2.
+  // Torneios single-round (round=1) preservam a chave visual antiga por não
+  // usar sufixo — a chave é `draft_scores_match_<tid>_hole_<h>` como antes.
+  const getDraftKey = useCallback((matchId, holeNumber, roundNumber = 1) => {
+    const roundPart = Number(roundNumber) > 1 ? `_round_${roundNumber}` : '';
+    return `draft_scores_match_${matchId}${roundPart}_hole_${holeNumber}`;
   }, []);
 
-  const saveDraftToLocalStorage = useCallback((matchId, holeNumber, scoresToSave) => {
+  const saveDraftToLocalStorage = useCallback((matchId, holeNumber, scoresToSave, roundNumber = 1) => {
     if (!matchId) return;
-    const draftKey = getDraftKey(matchId, holeNumber);
+    const draftKey = getDraftKey(matchId, holeNumber, roundNumber);
     localStorage.setItem(draftKey, JSON.stringify(scoresToSave));
   }, [getDraftKey]);
 
-  const loadDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+  const loadDraftFromLocalStorage = useCallback((matchId, holeNumber, roundNumber = 1) => {
     if (!matchId) return null;
-    const draftKey = getDraftKey(matchId, holeNumber);
+    const draftKey = getDraftKey(matchId, holeNumber, roundNumber);
     const draftData = localStorage.getItem(draftKey);
     if (draftData) {
       try {
@@ -89,17 +139,21 @@ function Scorecard() {
     return null;
   }, [getDraftKey]);
 
-  const clearDraftFromLocalStorage = useCallback((matchId, holeNumber) => {
+  const clearDraftFromLocalStorage = useCallback((matchId, holeNumber, roundNumber = 1) => {
     if (!matchId) return;
-    const draftKey = getDraftKey(matchId, holeNumber);
+    const draftKey = getDraftKey(matchId, holeNumber, roundNumber);
     localStorage.removeItem(draftKey);
   }, [getDraftKey]);
 
+  // Limpa rascunhos de TODAS as rounds do match — usado após assinar (fecha
+  // aquela rodada, mas ficamos conservadores e limpamos tudo pra evitar dado
+  // stale se o jogador reabrir depois).
   const clearAllDraftsForMatch = useCallback((matchId) => {
     if (!matchId) return;
-    for (let i = 1; i <= 18; i++) {
-      const draftKey = getDraftKey(matchId, i);
-      localStorage.removeItem(draftKey);
+    for (let r = 1; r <= 10; r++) {
+      for (let i = 1; i <= 18; i++) {
+        localStorage.removeItem(getDraftKey(matchId, i, r));
+      }
     }
   }, [getDraftKey]);
 
@@ -163,7 +217,20 @@ function Scorecard() {
       if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
 
       const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
-      const actualCourseId = tourRes.data.course_id || savedGroup.course_id;
+      // Item 5 · commit 4: hidrata metadados multi-rodada + calcula round atual.
+      // Se torneio single-round (total_rounds=1), setCurrentRound(1) preserva tudo.
+      const tr = Number(tourRes.data.total_rounds || 1);
+      const roundsList = Array.isArray(tourRes.data.rounds) ? tourRes.data.rounds : [];
+      setTotalRounds(tr);
+      setRounds(roundsList);
+      const autoRound = pickCurrentRound(roundsList);
+      setCurrentRound(autoRound);
+      // Para multi-rodada, o CURSO relevante é o da RODADA (cada round pode ser
+      // num campo diferente). Single-round cai no fallback do course do torneio.
+      const roundCourseId = tr > 1
+        ? (roundsList.find(r => Number(r.round_number) === autoRound)?.course_id || tourRes.data.course_id)
+        : tourRes.data.course_id;
+      const actualCourseId = roundCourseId || savedGroup.course_id;
 
       if (actualCourseId) {
           const [courseRes, mapRes] = await Promise.all([
@@ -174,7 +241,11 @@ function Scorecard() {
           if (mapRes.data) setSlotMap(mapRes.data);
       }
 
-      const scoresRes = await api.get(`/scores/list/${savedGroup.tournament_id}`);
+      // Filtro por round no GET — evita puxar scores das OUTRAS rodadas pra o
+      // scoresMap desta tela. Backend aceita ?round=N desde commit 2 do Item 5.
+      const scoresRes = await api.get(
+        `/scores/list/${savedGroup.tournament_id}${tr > 1 ? `?round=${autoRound}` : ''}`
+      );
       const scoresMap = {};
       scoresRes.data.forEach((s) => {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
@@ -182,10 +253,13 @@ function Scorecard() {
       // Overlay offline-first: itens na fila do syncService ainda não confirmados
       // pelo servidor (pending/syncing/failed) sobrepõem o que veio do GET. Sem
       // isso, um refetch (F5, socket) apagaria scores marcados offline.
+      // Item 5 · commit 4: filtra também por round pra não puxar scores de R1
+      // sobre a tela de R2 (que exibe só os scores desta rodada).
       const pendingOverlay = {};
       syncService.getPendingItems((item) =>
         item.endpoint === "/scores/save"
         && Number(item.payload?.tournament_id) === Number(savedGroup.tournament_id)
+        && Number(item.payload?.round_number || 1) === autoRound
       ).forEach((item) => {
         const p = item.payload;
         pendingOverlay[`${p.user_id}-${p.hole_number}`] = p.strokes;
@@ -250,9 +324,9 @@ function Scorecard() {
         setCurrentHole(resolvedHole);
       }
 
-      // Carregar rascunhos do localStorage para o buraco atual
+      // Carregar rascunhos do localStorage para o buraco atual — chave inclui round
       if (savedGroup.tournament_id) {
-        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, resolvedHole);
+        const draftData = loadDraftFromLocalStorage(savedGroup.tournament_id, resolvedHole, autoRound);
         if (draftData) {
           setScores(prev => ({ ...prev, ...draftData }));
         }
@@ -269,16 +343,18 @@ function Scorecard() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Busca a assinatura atual do grupo. Se existe e invalidated_at != null,
-  // a UI mostra banner vermelho: admin ajustou score depois da assinatura.
+  // Busca a assinatura atual do grupo NA RODADA ATUAL. Se existe e
+  // invalidated_at != null, banner vermelho: admin ajustou score depois.
+  // Item 5 · commit 4: refetch quando currentRound muda — cada rodada tem
+  // sua própria assinatura, então trocar de round precisa recarregar.
   useEffect(() => {
     let cancelled = false;
     if (!groupId) return;
-    api.get(`/scores/signature/${groupId}`)
+    api.get(`/scores/signature/${groupId}?round=${currentRound}`)
       .then((r) => { if (!cancelled) setSignature(r.data || null); })
       .catch(() => { /* silencioso — grupo pode não ter sido assinado ainda */ });
     return () => { cancelled = true; };
-  }, [groupId]);
+  }, [groupId, currentRound]);
 
   // Persistência reativa: a cada mudança no estado relevante, salva o snapshot.
   // Não persiste durante o loading inicial para evitar gravar estado vazio.
@@ -324,15 +400,19 @@ function Scorecard() {
   // pendência anterior em vez de empilhar duplicatas.
   const enqueueScore = (userId, hole, strokes) => {
     if (!group?.tournament_id) return;
+    // Item 5 · commit 4: round_number no payload. dedupKey inclui round pra que
+    // scores da mesma (user,hole) em rounds diferentes NÃO substituam um ao outro
+    // na fila (bug potencial se dedupKey ignorasse round).
     syncService.enqueue({
       endpoint: "/scores/save",
       payload: {
         tournament_id: group.tournament_id,
         user_id: Number(userId),
         hole_number: Number(hole),
+        round_number: Number(currentRound),
         strokes: Number(strokes),
       },
-      dedupKey: `score:${group.tournament_id}:${userId}:${hole}`,
+      dedupKey: `score:${group.tournament_id}:${currentRound}:${userId}:${hole}`,
     });
   };
 
@@ -381,7 +461,7 @@ function Scorecard() {
           currentHoleScores[scoreKey] = updatedScores[scoreKey];
         }
       });
-      saveDraftToLocalStorage(group.tournament_id, hole, currentHoleScores);
+      saveDraftToLocalStorage(group.tournament_id, hole, currentHoleScores, currentRound);
     }
 
     // Debounce 400ms → enqueue offline-first
@@ -407,7 +487,7 @@ function Scorecard() {
     });
     // Rascunho do buraco pode ser limpo: syncService é o source-of-truth
     // dos envios pendentes; o snapshot consolidado mantém os scores na tela.
-    if (group?.tournament_id) clearDraftFromLocalStorage(group.tournament_id, hole);
+    if (group?.tournament_id) clearDraftFromLocalStorage(group.tournament_id, hole, currentRound);
   };
 
   const changeHole = (delta) => {
@@ -449,9 +529,9 @@ function Scorecard() {
         setCurrentHole(nextHole);
         sessionStorage.setItem(`scorecard_hole_${groupId}`, nextHole);
 
-        // Carregar rascunho do próximo buraco se existir
+        // Carregar rascunho do próximo buraco se existir (chave inclui round)
         if (group?.tournament_id) {
-          const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole);
+          const draftData = loadDraftFromLocalStorage(group.tournament_id, nextHole, currentRound);
           if (draftData) {
             setScores(prev => ({ ...prev, ...draftData }));
           }
@@ -468,9 +548,9 @@ function Scorecard() {
         setCurrentHole(prevHole);
         sessionStorage.setItem(`scorecard_hole_${groupId}`, prevHole);
 
-        // Carregar rascunho do buraco anterior se existir
+        // Carregar rascunho do buraco anterior se existir (chave inclui round)
         if (group?.tournament_id) {
-          const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole);
+          const draftData = loadDraftFromLocalStorage(group.tournament_id, prevHole, currentRound);
           if (draftData) {
             setScores(prev => ({ ...prev, ...draftData }));
           }
@@ -544,10 +624,13 @@ function Scorecard() {
     }
 
     // Grava assinatura oficial no backend (endpoint novo do Bloco 3).
+    // Item 5 · commit 4: assina POR ROUND. R1 e R2 têm assinaturas independentes;
+    // editar R2 depois NÃO invalida R1 (validado no verify do commit 2).
     try {
       await api.post("/scores/sign-card", {
         tournament_id: group.tournament_id,
         group_id: Number(groupId),
+        round_number: Number(currentRound),
       });
     } catch (err) {
       const data = err.response?.data;
@@ -690,6 +773,24 @@ function Scorecard() {
         <div style={styles.headerInfo}>
           <small style={{ color: theme.textMuted, textTransform: "uppercase", letterSpacing: "1px" }}>{group.tournament_name}</small>
           <h3 style={{ margin: "5px 0", color: "#fff" }}>{group.group_name}</h3>
+          {totalRounds > 1 && (() => {
+            // Badge da rodada atual. Item 5 · commit 4: só aparece pra multi-rodada.
+            // Mostra "R2 · Sáb 30/08" — dia BRT do round vindo do backend.
+            const roundInfo = rounds.find(r => Number(r.round_number) === currentRound);
+            const dayBR = roundInfo ? new Date(roundInfo.round_date).toLocaleDateString('pt-BR', {
+              timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit'
+            }) : '';
+            return (
+              <div style={{
+                display: "inline-block", marginTop: 4, padding: "3px 10px",
+                borderRadius: 12, fontSize: 11, fontWeight: "bold",
+                backgroundColor: "rgba(234,179,8,0.15)", color: theme.gold,
+                border: `1px solid ${theme.gold}55`,
+              }}>
+                R{currentRound} de {totalRounds}{dayBR ? ` · ${dayBR}` : ''}
+              </div>
+            );
+          })()}
           {(!syncStatus.online || syncStatus.pending > 0) && (
             <div
               title={syncStatus.online ? "Sincronizando tacadas pendentes..." : "Sem conexão — tacadas serão enviadas ao reconectar"}
