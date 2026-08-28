@@ -43,6 +43,13 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   // Status do torneio: "LIVE" só aparece com torneio em andamento (não em histórico)
   const [tournamentStatus,    setTournamentStatus]    = useState(null);
   const [courseId,            setCourseId]            = useState(null);
+  // Item 5 · commit 5 (2026-08-28): multi-rodada. activeRound === 'all' soma
+  // todas as rodadas (comportamento antigo pra torneios single-round e default
+  // pra multi). Números filtram a rodada específica. rounds[] vem do backend
+  // via GET /tournaments/:id — segunda faixa de tabs só aparece se total_rounds>1.
+  const [totalRounds,         setTotalRounds]         = useState(1);
+  const [rounds,              setRounds]              = useState([]);
+  const [activeRound,         setActiveRound]         = useState('all');
 
   const fetchInfo = useCallback(async () => {
     if (!tournamentId) return;
@@ -51,6 +58,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       if (res.data.sponsors) setSponsors(res.data.sponsors);
       setTournamentStatus(res.data.status || null);
       setCourseId(res.data.course_id || null);
+      // Item 5 · commit 5: metadados multi-rodada
+      setTotalRounds(Number(res.data.total_rounds || 1));
+      setRounds(Array.isArray(res.data.rounds) ? res.data.rounds : []);
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
@@ -62,7 +72,11 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   const fetchRanking = useCallback(async () => {
     if (!tournamentId) return;
     try {
-      const res = await api.get(`/leaderboard/${tournamentId}`);
+      // ?round=all preserva o backend default (soma tudo). ?round=N filtra rodada.
+      const path = activeRound === 'all'
+        ? `/leaderboard/${tournamentId}`
+        : `/leaderboard/${tournamentId}?round=${activeRound}`;
+      const res = await api.get(path);
       setRanking(res.data.map(p => ({
         ...p,
         handicap:      parseFloat(p.handicap || 0),
@@ -72,7 +86,7 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
         net_to_par:    parseInt(p.score_to_par  || 0) - parseFloat(p.handicap || 0),
       })));
     } catch (e) { console.error("Leaderboard fetchRanking:", e); }
-  }, [tournamentId]);
+  }, [tournamentId, activeRound]);
 
   useEffect(() => {
     fetchInfo();
@@ -91,11 +105,17 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   const handlePlayerClick = async (player) => {
     setSelectedPlayer(player);
     setIsScoreModalOpen(true);
-    if (!playerScores._loadedFor || playerScores._loadedFor !== player.id) {
+    // Cache-key inclui round pra evitar mostrar scores da round errada quando
+    // o mesmo jogador é clicado depois de trocar de tab.
+    const cacheKey = `${player.id}:${activeRound}`;
+    if (!playerScores._loadedFor || playerScores._loadedFor !== cacheKey) {
       try {
-        const res = await api.get(`/leaderboard/details/${tournamentId}/${player.id}`);
+        const path = activeRound === 'all'
+          ? `/leaderboard/details/${tournamentId}/${player.id}`
+          : `/leaderboard/details/${tournamentId}/${player.id}?round=${activeRound}`;
+        const res = await api.get(path);
         const data = res.data;
-        data._loadedFor = player.id;
+        data._loadedFor = cacheKey;
         setPlayerScores(data);
       } catch { setPlayerScores([]); }
     }
@@ -112,10 +132,18 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
     return sa !== sb ? sa - sb : ha - hb;
   });
 
-  const renderNine = (start) => (
+  // Item 5 · commit 5: renderNine filtra por round quando fornecido.
+  // Se roundFilter=null (single ou activeRound sem round), pega qualquer linha
+  // com aquele hole_number (comportamento antigo). Se roundFilter=N, só linhas
+  // daquela rodada — evita mostrar score de R1 na visão de R2 quando os dados
+  // vêm agregados via activeRound='all'.
+  const renderNine = (start, roundFilter = null) => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(9, 1fr)", gap: "5px", marginBottom: "14px" }}>
       {Array.from({ length: 9 }, (_, i) => start + i).map(num => {
-        const hole = (playerScores || []).find(h => h.hole_number === num);
+        const rows = (playerScores || []).filter(h => h.hole_number === num);
+        const hole = roundFilter != null
+          ? rows.find(h => Number(h.round_number) === Number(roundFilter))
+          : rows[0];
         const st  = hole ? hole.strokes : null;
         const par = hole ? hole.par     : null;
         const { color, bg, border } = getScoreStyle(st, par);
@@ -181,6 +209,34 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
               {tab}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Item 5 · commit 5: filtro TOTAL/R1/R2/R3 — só multi-rodada.
+          Fica DENTRO de cada categoria (não substitui as tabs acima).
+          TOTAL soma; R{n} filtra aquela rodada. */}
+      {totalRounds > 1 && (
+        <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap", padding: embedded ? "0 16px" : "0" }}>
+          {['all', ...Array.from({ length: totalRounds }, (_, i) => i + 1)].map(r => {
+            const label = r === 'all' ? 'TOTAL' : `R${r}`;
+            const active = activeRound === r;
+            return (
+              <button
+                key={String(r)}
+                onClick={() => setActiveRound(r)}
+                aria-label={`Filtrar por ${label}`}
+                style={{
+                  padding: "7px 14px", borderRadius: "999px", border: "none",
+                  fontSize: "11px", fontWeight: "bold", cursor: "pointer",
+                  backgroundColor: active ? theme.gold : "transparent",
+                  color: active ? "#000" : theme.textMuted,
+                  border: `1px solid ${active ? theme.gold : theme.cardLight}`,
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -257,12 +313,44 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
               <h3 style={{ margin: 0, color: theme.accent, fontSize: "16px" }}>{selectedPlayer.name}</h3>
               <button onClick={() => setIsScoreModalOpen(false)} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: "22px", lineHeight: 1 }}>×</button>
             </div>
-            <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px" }}>FRENTE (1–9)</p>
-            {renderNine(1)}
-            <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px", marginTop: "16px" }}>VOLTA (10–18)</p>
-            {renderNine(10)}
+            {(() => {
+              // Se torneio multi + activeRound='all', separa por rodada (evita
+              // mostrar apenas o primeiro score por hole quando há dois rounds).
+              // Nas demais combinações (single OU activeRound=N), renderiza uma
+              // seção Frente/Volta como sempre.
+              if (totalRounds > 1 && activeRound === 'all') {
+                const roundsInScorecard = Array.from(
+                  new Set((playerScores || []).map(s => Number(s.round_number)))
+                ).sort((a, b) => a - b);
+                if (roundsInScorecard.length === 0) {
+                  return <p style={{ color: theme.textMuted, textAlign: "center" }}>Sem tacadas registradas.</p>;
+                }
+                return roundsInScorecard.map(rn => (
+                  <div key={rn} style={{ marginBottom: 20 }}>
+                    <p style={{ color: theme.gold, fontSize: "12px", fontWeight: "700", letterSpacing: "1.5px", marginBottom: "8px" }}>
+                      RODADA {rn}
+                    </p>
+                    <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px" }}>FRENTE (1–9)</p>
+                    {renderNine(1, rn)}
+                    <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px", marginTop: "10px" }}>VOLTA (10–18)</p>
+                    {renderNine(10, rn)}
+                  </div>
+                ));
+              }
+              return (
+                <>
+                  <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px" }}>FRENTE (1–9)</p>
+                  {renderNine(1)}
+                  <p style={{ color: theme.textMuted, fontSize: "11px", fontWeight: "600", letterSpacing: "1px", marginBottom: "8px", marginTop: "16px" }}>VOLTA (10–18)</p>
+                  {renderNine(10)}
+                </>
+              );
+            })()}
             <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: `1px solid ${theme.cardLight}`, textAlign: "center" }}>
-              <span style={{ fontSize: "17px", color: theme.textMain }}>Total Gross: <strong>{selectedPlayer.total_strokes}</strong></span>
+              <span style={{ fontSize: "17px", color: theme.textMain }}>
+                {activeRound === 'all' && totalRounds > 1 ? 'Total Gross (todas): ' : 'Total Gross: '}
+                <strong>{selectedPlayer.total_strokes}</strong>
+              </span>
             </div>
           </div>
         </div>

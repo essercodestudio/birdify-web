@@ -374,6 +374,63 @@ function Scorecard() {
     return syncService.subscribe(setSyncStatus);
   }, []);
 
+  // Item 5 · commit 5 (2026-08-28): switchRound — troca a rodada manualmente.
+  // Fluxo: drena debounce pendente do round atual → seta currentRound → refetch
+  // scores/course/slotMap da nova rodada. Auto-select do commit 4 continua
+  // sendo o comportamento padrão; este handler dá overrider ao usuário.
+  const switchRound = async (nextRound) => {
+    if (!group?.tournament_id) return;
+    if (Number(nextRound) === Number(currentRound)) return;
+    // Drena qualquer clique pendente do round anterior pra fila com round OLD
+    Object.entries(saveTimers.current).forEach(([key, timerId]) => {
+      clearTimeout(timerId);
+      const [uid, hNum] = key.split("-");
+      const s = scores[key];
+      delete saveTimers.current[key];
+      if (s > 0) enqueueScore(uid, hNum, s); // usa currentRound antigo (ainda vigente)
+    });
+
+    // Atualiza estado do round NOVO
+    setCurrentRound(nextRound);
+
+    // Refetch: scores (filtrados por round), course/holes (rodada pode ter curso diferente)
+    try {
+      // Curso da nova rodada
+      const roundInfo = rounds.find(r => Number(r.round_number) === Number(nextRound));
+      const newCourseId = roundInfo?.course_id || group?.course_id;
+      if (newCourseId) {
+        const [courseRes, mapRes] = await Promise.all([
+          api.get(`/courses/${newCourseId}/holes`),
+          api.get(`/courses/${newCourseId}/yard-slot-map`).catch(() => ({ data: null })),
+        ]);
+        setHolesData(courseRes.data);
+        if (mapRes.data) setSlotMap(mapRes.data);
+      }
+      // Scores só da nova rodada
+      const scoresRes = await api.get(`/scores/list/${group.tournament_id}?round=${nextRound}`);
+      const scoresMap = {};
+      scoresRes.data.forEach(s => { scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes; });
+      // Overlay offline-first da NOVA rodada
+      const pendingOverlay = {};
+      syncService.getPendingItems(item =>
+        item.endpoint === "/scores/save"
+        && Number(item.payload?.tournament_id) === Number(group.tournament_id)
+        && Number(item.payload?.round_number || 1) === Number(nextRound)
+      ).forEach(item => {
+        const p = item.payload;
+        pendingOverlay[`${p.user_id}-${p.hole_number}`] = p.strokes;
+      });
+      // Substitui inteiro (não merge com scores do round anterior)
+      setScores({ ...scoresMap, ...pendingOverlay });
+      // Reseta pra o buraco de saída da nova rodada (starting_hole vale igual)
+      setCurrentHole(group?.starting_hole || 1);
+      setPlayedHoles([group?.starting_hole || 1]);
+      sessionStorage.setItem(`scorecard_hole_${groupId}`, group?.starting_hole || 1);
+    } catch (err) {
+      console.error("switchRound falhou:", err);
+    }
+  };
+
   // Cleanup: se o usuário sair do scorecard sem clicar em ▶, dispara os timers
   // pendentes de debounce → enqueue. A fila persiste em localStorage e é
   // drenada ao reabrir/reconectar.
@@ -820,6 +877,37 @@ function Scorecard() {
         </button>
       </div>
       <style>{`@keyframes birdifyPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
+
+      {/* Item 5 · commit 5: seletor manual de rodada. Só aparece em multi-rodada.
+          Auto-detect por hoje BRT já escolhe a rodada certa na entrada — este
+          seletor é pra o jogador ver R1 depois de terminar R2 (conferência). */}
+      {totalRounds > 1 && (
+        <div style={{ display: "flex", gap: "6px", marginBottom: 14, flexWrap: "wrap" }}>
+          {Array.from({ length: totalRounds }, (_, i) => i + 1).map(rn => {
+            const active = Number(currentRound) === rn;
+            const info = rounds.find(r => Number(r.round_number) === rn);
+            const dayBR = info ? new Date(info.round_date).toLocaleDateString('pt-BR', {
+              timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit'
+            }) : '';
+            return (
+              <button
+                key={rn}
+                onClick={() => switchRound(rn)}
+                aria-label={`Ver rodada ${rn}`}
+                style={{
+                  padding: "6px 12px", borderRadius: "999px",
+                  fontSize: 11, fontWeight: "bold", cursor: "pointer",
+                  border: `1px solid ${active ? theme.gold : theme.cardLight}`,
+                  backgroundColor: active ? theme.gold : "transparent",
+                  color: active ? "#000" : theme.textMuted,
+                }}
+              >
+                R{rn}{dayBR ? ` · ${dayBR}` : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {signature && signature.invalidated_at && (
         <div style={{
