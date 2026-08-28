@@ -107,6 +107,14 @@ function Dashboard() {
   const [isEditing, setIsEditing] = useState(false);
   const [editTournamentId, setEditTournamentId] = useState(null);
 
+  // Item 5 · commit 3 (2026-08-28): torneio multi-rodada.
+  // Toggle default OFF → UX antiga preservada (backend cria round 1 sozinho).
+  // Toggle ON → admin preenche N rodadas (round_date + course_id por rodada).
+  // Regras validadas server-side: length==total_rounds, sequencial 1..N,
+  // round_date estritamente crescente, cursos do clube.
+  const [multiRound, setMultiRound] = useState(false);
+  const [rounds, setRounds] = useState([]); // [{round_number, round_date, course_id}]
+
   const theme = {
     bg: '#0f172a',
     card: '#1e293b',
@@ -229,12 +237,49 @@ function Dashboard() {
     if (registrationDeadline && newTournamentDate && registrationDeadline >= newTournamentDate) {
       alert('A data limite de inscrição deve ser anterior à data do torneio.'); return;
     }
-    
+
+    // Item 5 · commit 3: valida rounds client-side antes de submeter — bate com as
+    // regras do backend (validateRoundsPayload) pra dar feedback imediato. Ordem
+    // estritamente crescente, sequência 1..N, curso preenchido em cada linha.
+    let roundsPayload = undefined;
+    let totalRoundsPayload = 1;
+    if (multiRound) {
+      if (rounds.length < 2 || rounds.length > 10) {
+        alert('Torneio multi-rodada precisa entre 2 e 10 rodadas.'); return;
+      }
+      for (let i = 0; i < rounds.length; i++) {
+        const r = rounds[i];
+        if (Number(r.round_number) !== i + 1) {
+          alert(`Numeração das rodadas precisa ser 1..${rounds.length} sem gaps.`); return;
+        }
+        if (!r.round_date || !validYear(r.round_date)) {
+          alert(`R${r.round_number}: data inválida.`); return;
+        }
+        if (!r.course_id) {
+          alert(`R${r.round_number}: escolha o campo.`); return;
+        }
+        if (i > 0 && r.round_date <= rounds[i - 1].round_date) {
+          alert(`R${r.round_number} precisa ser depois de R${r.round_number - 1}.`); return;
+        }
+        if (!isEditing && r.round_date < now) {
+          alert(`R${r.round_number}: data no passado.`); return;
+        }
+      }
+      roundsPayload = rounds.map(r => ({
+        round_number: Number(r.round_number),
+        round_date: r.round_date,
+        course_id: Number(r.course_id),
+      }));
+      totalRoundsPayload = rounds.length;
+    }
+
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
       registration_deadline: registrationDeadline, categories: selectedCategories, sponsors,
-      format
+      format,
+      total_rounds: totalRoundsPayload,
+      ...(roundsPayload ? { rounds: roundsPayload } : {}),
     };
     
     try {
@@ -261,6 +306,19 @@ function Dashboard() {
       setSponsors(t.sponsors || []);
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
       setFormat(t.format === 'tee_time' ? 'tee_time' : 'shotgun');
+      // Item 5 · commit 3: hidrata estado multi-rodada quando o torneio tem >1 round
+      const tr = Number(t.total_rounds || 1);
+      if (tr > 1 && Array.isArray(t.rounds)) {
+        setMultiRound(true);
+        setRounds(t.rounds.map(r => ({
+          round_number: Number(r.round_number),
+          round_date: formatForInput(r.round_date),
+          course_id: r.course_id,
+        })));
+      } else {
+        setMultiRound(false);
+        setRounds([]);
+      }
       setIsEditing(true);
       setEditTournamentId(t.id);
       window.scrollTo(0, 0);
@@ -272,7 +330,43 @@ function Dashboard() {
     setDescription(''); setFee(''); setPaymentInfo(''); setWhatsappContact(''); setRegistrationDeadline('');
     setSelectedCategories([]); setSponsors([]); setPixKeyType('Chave Aleatória');
     setFormat('shotgun');
+    setMultiRound(false); setRounds([]);
     setIsEditing(false); setEditTournamentId(null);
+  };
+
+  // Item 5 · commit 3 — helpers de multi-rodada
+  //
+  // toggleMultiRound: ao LIGAR, se ainda não há rounds, pré-preenche R1 com o
+  // (start_date, course_id) atuais + R2 vazia (dá pro admin visualizar o padrão).
+  // Ao DESLIGAR, apaga o array — envio ao backend fica sem rounds[].
+  const toggleMultiRound = (on) => {
+    setMultiRound(on);
+    if (on && rounds.length === 0) {
+      setRounds([
+        { round_number: 1, round_date: newTournamentDate || '', course_id: selectedCourseId || '' },
+        { round_number: 2, round_date: '', course_id: selectedCourseId || '' },
+      ]);
+    }
+  };
+
+  const updateRound = (idx, patch) => {
+    setRounds(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  };
+
+  const addRound = () => {
+    if (rounds.length >= 10) return;
+    setRounds(prev => [
+      ...prev,
+      { round_number: prev.length + 1, round_date: '', course_id: prev[prev.length - 1]?.course_id || selectedCourseId || '' },
+    ]);
+  };
+
+  const removeRound = (idx) => {
+    if (rounds.length <= 2) return; // multi-rodada exige >= 2
+    setRounds(prev => prev
+      .filter((_, i) => i !== idx)
+      .map((r, i) => ({ ...r, round_number: i + 1 }))
+    );
   };
 
   const styles = {
@@ -394,6 +488,99 @@ function Dashboard() {
           <div style={{...styles.inputGroup, marginTop: '20px'}}>
             <label style={styles.label}>DESCRIÇÃO / REGRAS</label>
             <textarea style={styles.textarea} value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
+
+          {/* Item 5 · commit 3 — MULTI-RODADA */}
+          <div style={{ marginTop: '20px', padding: '14px', border: `1px solid ${theme.cardLight}`, borderRadius: '10px', backgroundColor: theme.bg }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={multiRound}
+                onChange={e => toggleMultiRound(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: theme.accent, cursor: 'pointer' }}
+                aria-label="Torneio multi-rodada"
+              />
+              <span style={{ color: theme.textMain, fontWeight: 'bold', fontSize: 14 }}>Torneio multi-rodada</span>
+              <span style={{ color: theme.textMuted, fontSize: 12 }}>
+                (ex: sexta/sábado/domingo = R1/R2/R3)
+              </span>
+            </label>
+
+            {multiRound && (
+              <div style={{ marginTop: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ color: theme.textMuted, fontSize: 12 }}>
+                    {rounds.length} rodada(s) — datas em ordem crescente, cada uma com seu campo
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addRound}
+                    disabled={rounds.length >= 10}
+                    style={{
+                      ...styles.btnAction,
+                      backgroundColor: rounds.length >= 10 ? theme.cardLight : theme.info,
+                      opacity: rounds.length >= 10 ? 0.5 : 1,
+                    }}
+                  >
+                    + ADICIONAR RODADA
+                  </button>
+                </div>
+                {rounds.map((r, idx) => (
+                  <div key={idx} style={{
+                    display: 'grid',
+                    gridTemplateColumns: '60px 1fr 1fr 40px',
+                    gap: '10px',
+                    alignItems: 'center',
+                    padding: '10px',
+                    marginBottom: '8px',
+                    backgroundColor: theme.card,
+                    border: `1px solid ${theme.cardLight}`,
+                    borderRadius: '8px',
+                  }}>
+                    <div style={{ color: theme.gold, fontWeight: 'bold', fontSize: 15 }}>R{r.round_number}</div>
+                    <input
+                      type="datetime-local"
+                      value={r.round_date || ''}
+                      onChange={e => updateRound(idx, { round_date: e.target.value })}
+                      min={isEditing ? undefined : nowLocalInput()}
+                      max="2035-12-31T23:59"
+                      style={{ ...styles.input, padding: '10px', fontSize: 13 }}
+                      aria-label={`Data e hora da R${r.round_number}`}
+                      required
+                    />
+                    <select
+                      value={r.course_id || ''}
+                      onChange={e => updateRound(idx, { course_id: e.target.value })}
+                      style={{ ...styles.input, padding: '10px', fontSize: 13 }}
+                      aria-label={`Campo da R${r.round_number}`}
+                      required
+                    >
+                      <option value="">Selecione o campo</option>
+                      {courses.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.city ? ` — ${c.city}/${c.state}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => removeRound(idx)}
+                      disabled={rounds.length <= 2}
+                      style={{
+                        ...styles.btnAction,
+                        backgroundColor: rounds.length <= 2 ? theme.cardLight : theme.danger,
+                        opacity: rounds.length <= 2 ? 0.5 : 1,
+                        padding: '8px',
+                      }}
+                      aria-label={`Remover R${r.round_number}`}
+                      title={rounds.length <= 2 ? 'Mínimo 2 rodadas' : 'Remover esta rodada'}
+                    >
+                      <LuTrash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>2. CATEGORIAS</div>

@@ -215,8 +215,9 @@ exports.createTournament = async (req, res) => {
         // falhar, ROLLBACK — não fica torneio sem rounds nem vice-versa.
         await conn.beginTransaction();
 
-        // mysql2 recusa undefined em bind — normaliza opcionais pra null.
-        const nn = (v) => (v === undefined ? null : v);
+        // mysql2 recusa undefined em bind; MySQL recusa string vazia em coluna
+        // datetime NULL. Normaliza os dois pra NULL de uma vez.
+        const nn = (v) => (v === undefined || v === '' ? null : v);
         const [result] = await conn.execute(
             `INSERT INTO tournaments
              (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, club_id)
