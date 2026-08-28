@@ -243,6 +243,10 @@ function App() {
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
             <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
             <Route path="/treino/:groupId/ranking" element={<TrainingRankingPublic />} />
+            {/* Rota pública sem âncora — link compartilhável do dia inteiro do clube.
+                Usada como fallback do botão de share quando o usuário não veio
+                do próprio scorecard (não tem returnGroupId no state). */}
+            <Route path="/ranking/dia" element={<TrainingRankingPublic />} />
             <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
             <Route path="/my-performance" element={<ProtectedRoute><MyPerformance /></ProtectedRoute>} />
             <Route path="/circuits" element={<AdminRoute><CircuitManagement /></AdminRoute>} />

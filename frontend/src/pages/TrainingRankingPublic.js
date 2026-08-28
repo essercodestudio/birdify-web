@@ -25,7 +25,7 @@ function TrainingRankingPublic() {
 
   const handleShare = async () => {
     const url = window.location.href;
-    const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do treino em tempo real:', url };
+    const shareData = { title: 'Ranking do treino — Birdify', url };
     try {
       if (navigator.share) { await navigator.share(shareData); return; }
       await navigator.clipboard.writeText(url);

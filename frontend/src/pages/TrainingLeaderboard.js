@@ -23,9 +23,12 @@ function TrainingLeaderboard() {
   const [shareToast, setShareToast]   = useState(false);
 
   const handleShare = async () => {
-    if (!returnGroupId) return;
-    const url = `${window.location.origin}/treino/${returnGroupId}/ranking`;
-    const shareData = { title: 'Ranking do treino — Birdify', text: 'Acompanhe o ranking do treino em tempo real:', url };
+    // returnGroupId presente → âncora o grupo do próprio scorecard.
+    // Ausente (visitante sem partida) → link da rota pública sem âncora.
+    const url = returnGroupId
+      ? `${window.location.origin}/treino/${returnGroupId}/ranking`
+      : `${window.location.origin}/ranking/dia`;
+    const shareData = { title: 'Ranking do treino — Birdify', url };
     try {
       if (navigator.share) { await navigator.share(shareData); return; }
       await navigator.clipboard.writeText(url);
@@ -217,16 +220,14 @@ function TrainingLeaderboard() {
               <span className="live-dot" /> AO VIVO
             </div>
           )}
-          {returnGroupId && (
-            <button
-              onClick={handleShare}
-              aria-label="Compartilhar ranking"
-              title="Compartilhar ranking"
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, backgroundColor: 'transparent', color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: 'pointer' }}
-            >
-              <LuShare2 size={16} />
-            </button>
-          )}
+          <button
+            onClick={handleShare}
+            aria-label="Compartilhar ranking"
+            title="Compartilhar ranking"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, backgroundColor: 'transparent', color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: 'pointer' }}
+          >
+            <LuShare2 size={16} />
+          </button>
         </div>
       </div>
       {shareToast && (
