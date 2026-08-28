@@ -168,6 +168,9 @@ CREATE TABLE IF NOT EXISTS course_yard_slot_map (
 );
 
 -- ─── 8. tournaments ──────────────────────────────────────────────────
+-- total_rounds: 1 = torneio "normal" (comportamento antigo, tudo agregado);
+-- 2..N = torneio multi-rodada (ex: sexta/sábado/domingo). Cada rodada tem
+-- sua própria data + curso em tournament_rounds. Migration 2026_08_28.
 CREATE TABLE IF NOT EXISTS tournaments (
   id                     INT AUTO_INCREMENT PRIMARY KEY,
   club_id                INT NOT NULL,
@@ -182,12 +185,31 @@ CREATE TABLE IF NOT EXISTS tournaments (
   registration_deadline  DATE          DEFAULT NULL,
   status                 VARCHAR(30)   NOT NULL DEFAULT 'OPEN',
   format                 ENUM('shotgun','tee_time') NOT NULL DEFAULT 'shotgun',
+  total_rounds           TINYINT UNSIGNED NOT NULL DEFAULT 1,
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
   CONSTRAINT fk_tourn_course FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
   INDEX idx_tourn_club (club_id),
   INDEX idx_tourn_status (status)
+);
+
+-- ─── 8b. tournament_rounds (multi-rodada — 1..N linhas por torneio) ──
+-- Cada rodada tem sua data + curso. Torneios com total_rounds=1 têm exatamente
+-- 1 linha aqui (round_number=1) — o backfill da migration 2026_08_28 cria isso
+-- pros torneios existentes usando (start_date, course_id) do próprio torneio.
+-- FK do curso é RESTRICT: proteger contra apagar curso amarrado a rodada.
+CREATE TABLE IF NOT EXISTS tournament_rounds (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  tournament_id INT NOT NULL,
+  round_number  TINYINT UNSIGNED NOT NULL,
+  round_date    DATETIME NOT NULL,
+  course_id     INT NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_tr_tourn  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tr_course FOREIGN KEY (course_id)     REFERENCES courses(id)     ON DELETE RESTRICT,
+  UNIQUE KEY uk_tr_num (tournament_id, round_number),
+  INDEX idx_tr_tourn (tournament_id, round_number)
 );
 
 -- ─── 9. tournament_categories ────────────────────────────────────────
@@ -228,15 +250,20 @@ CREATE TABLE IF NOT EXISTS group_players (
 -- invalidated_at/invalidated_reason: adicionados em 2026_08_17 pra marcar quando
 -- o admin ajusta score depois da assinatura — a linha NÃO é apagada, mantém o
 -- histórico "foi assinado uma vez com esses valores" + evidência da invalidação.
+-- round_number: adicionado em 2026_08_28 pra suportar torneio multi-rodada
+-- (cada rodada tem sua própria assinatura). idx_sig_tourn foi criado no mesmo
+-- deploy pra sustentar fk_sig_tourn depois do drop do uk_sig antigo.
 CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
   id                  INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id       INT NOT NULL,
   group_id            INT NOT NULL,
   user_id             INT NOT NULL,
+  round_number        TINYINT UNSIGNED NOT NULL DEFAULT 1,
   signed_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   invalidated_at      TIMESTAMP    NULL,
   invalidated_reason  VARCHAR(500) NULL,
-  UNIQUE KEY uk_sig (tournament_id, group_id, user_id),
+  UNIQUE KEY uk_sig (tournament_id, group_id, user_id, round_number),
+  INDEX idx_sig_tourn (tournament_id),
   CONSTRAINT fk_sig_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id)       ON DELETE CASCADE,
   CONSTRAINT fk_sig_group FOREIGN KEY (group_id)      REFERENCES tournament_groups(id) ON DELETE CASCADE,
   CONSTRAINT fk_sig_user  FOREIGN KEY (user_id)       REFERENCES users(id)             ON DELETE CASCADE
@@ -250,6 +277,8 @@ CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
 -- sobrevive à deleção do alvo (é prova histórica, não pode desaparecer
 -- junto com o dado que auditou). Só club_id CASCADE — off-boarding
 -- do clube inteiro leva os audits dele.
+-- round_number: adicionado em 2026_08_28, NULLABLE (NULL = torneio 1-rodada
+-- legado ou treino, onde a coluna não se aplica).
 CREATE TABLE IF NOT EXISTS admin_score_audit (
   id                 INT AUTO_INCREMENT PRIMARY KEY,
   club_id            INT NOT NULL,
@@ -259,6 +288,7 @@ CREATE TABLE IF NOT EXISTS admin_score_audit (
   training_group_id  INT DEFAULT NULL,
   target_user_id     INT DEFAULT NULL,
   hole_number        INT NOT NULL,
+  round_number       TINYINT UNSIGNED NULL,
   previous_strokes   INT DEFAULT NULL,
   new_strokes        INT DEFAULT NULL,
   action             ENUM('insert','update','delete') NOT NULL,
@@ -301,17 +331,25 @@ CREATE TABLE IF NOT EXISTS inscriptions (
 );
 
 -- ─── 14. scores (tacadas no torneio) ─────────────────────────────────
+-- round_number identifica a rodada (1..N). Default 1 pra torneios single-round
+-- (histórico e novos). O UNIQUE inclui round_number pra permitir mesmo
+-- (user, tournament, hole) em rodadas diferentes num torneio multi-round.
+-- Migration 2026_08_28 também DROPOU um índice legado unique_score que não
+-- estava no SCHEMA.sql e bloqueava multi-rodada.
 CREATE TABLE IF NOT EXISTS scores (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id INT NOT NULL,
   user_id       INT NOT NULL,
   hole_number   INT NOT NULL,
+  round_number  TINYINT UNSIGNED NOT NULL DEFAULT 1,
   strokes       INT NOT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_scores_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
   CONSTRAINT fk_scores_user  FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE,
-  UNIQUE KEY uk_score (tournament_id, user_id, hole_number),
-  INDEX idx_scores_tourn (tournament_id)
+  UNIQUE KEY uk_score (tournament_id, user_id, hole_number, round_number),
+  INDEX idx_scores_tourn (tournament_id),
+  INDEX idx_scores_round (tournament_id, round_number),
+  INDEX idx_scores_user  (user_id)
 );
 
 -- ═════════════════════════════════════════════════════════════════════
