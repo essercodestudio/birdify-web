@@ -165,19 +165,45 @@ exports.leaveGroup = async (req, res) => {
   }
 };
 
+// Cancelar treino em qualquer etapa (aguardando OU ativo) — só o criador.
+// 'finalizado' fica intocável (o cartão foi assinado e virou histórico do
+// ranking); 'cancelado' é idempotente. Além do UPDATE, emitimos socket
+// pros participantes saírem da tela sem precisar de F5.
 exports.deleteGroup = async (req, res) => {
   try {
     const { group_id } = req.body;
     const creator_id = req.user.id;
+    const cid = clubId(req);
+
+    // Pega status atual pra dar mensagem específica em vez de 403 genérico
+    const [rows] = await db.execute(
+      "SELECT status FROM training_groups WHERE id = ? AND creator_id = ? AND club_id = ?",
+      [group_id, creator_id, cid],
+    );
+    if (rows.length === 0)
+      return res.status(403).json({ message: "Acesso negado ou treino não encontrado." });
+
+    const currentStatus = rows[0].status;
+    if (currentStatus === "finalizado")
+      return res.status(409).json({ message: "Treino já finalizado não pode ser excluído." });
+    if (currentStatus === "cancelado")
+      return res.json({ message: "Treino já estava cancelado." });
 
     const [result] = await db.execute(
       `UPDATE training_groups SET status = 'cancelado'
-       WHERE id = ? AND creator_id = ? AND club_id = ? AND status = 'aguardando'`,
-      [group_id, creator_id, clubId(req)],
+       WHERE id = ? AND creator_id = ? AND club_id = ? AND status IN ('aguardando','ativo')`,
+      [group_id, creator_id, cid],
     );
 
     if (result.affectedRows === 0)
-      return res.status(403).json({ message: "Acesso negado ou treino já iniciado." });
+      return res.status(409).json({ message: "Treino mudou de estado — recarregue a tela." });
+
+    // Notifica sala aberta — jogador na tela do scorecard sai sem F5.
+    // Ranking do dia também recalcula (o treino sai do IN ('ativo','finalizado')).
+    socketService.emitToRoom(`training:${group_id}`, "training:cancelled", {
+      group_id, by_creator: true,
+    });
+    socketService.emitToRoom("training:ranking", "training:ranking_updated", { group_id });
 
     res.json({ message: "Treino cancelado." });
   } catch (error) {

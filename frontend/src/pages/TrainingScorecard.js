@@ -321,11 +321,24 @@ function TrainingScorecard() {
       }
     };
 
+    // Criador cancelou o treino no meio da partida — tira todos da tela sem F5.
+    // Quem disparou (o próprio criador) já foi redirecionado no handler local;
+    // este listener cobre os participantes que estão vendo o scorecard.
+    const onCancelled = () => {
+      if (!active) return;
+      localStorage.removeItem('activeTrainingGroup');
+      localStorage.removeItem(`training_hole_${groupId}`);
+      if (sessionKey) sessionStorage.removeItem(sessionKey);
+      alert('O criador cancelou este treino.');
+      navigate('/daily-training', { replace: true });
+    };
+
     socket.on('connect',                onConnect);
     socket.on('training:score_saved',   onScoreSaved);
     socket.on('training:player_joined', onPlayerJoined);
     socket.on('training:started',       onStarted);
     socket.on('training:finished',      onFinished);
+    socket.on('training:cancelled',     onCancelled);
 
     return () => {
       active = false;
@@ -334,6 +347,7 @@ function TrainingScorecard() {
       socket.off('training:player_joined', onPlayerJoined);
       socket.off('training:started',       onStarted);
       socket.off('training:finished',      onFinished);
+      socket.off('training:cancelled',     onCancelled);
       socket.emit('leave:training', groupId);
       // ⚠️ NÃO desconectar: socket é singleton — disconnect aqui cancela o handshake WSS
       // Ao sair do scorecard, dispara os timers pendentes → enqueue (a fila do
@@ -396,15 +410,24 @@ function TrainingScorecard() {
     }
   };
 
+  // Aceita cancelar em FASE 1 (sala de espera) OU FASE 2 (partida em andamento).
+  // Mensagem de confirmação diferente por fase — cancelar durante jogo perde
+  // tacadas do dia, então avisa explicitamente. Drena timers pendentes antes
+  // pra não deixar enqueue solto tentando gravar em grupo já cancelado.
   const handleCancel = async () => {
     if (!isCreator) return;
-    if (!window.confirm('Cancelar o treino? Todos os atletas serão removidos da sala.')) return;
+    const emAndamento = groupStatus === 'ativo';
+    const msg = emAndamento
+      ? 'Excluir este treino em andamento? Todas as tacadas registradas serão descartadas e os atletas serão desconectados. Esta ação não pode ser desfeita.'
+      : 'Cancelar o treino? Todos os atletas serão removidos da sala.';
+    if (!window.confirm(msg)) return;
     try {
+      if (emAndamento) flushAllPendingTimers();
       const loggedUser = getUser();
       await api.post('/training/cancel', { group_id: Number(groupId), creator_id: loggedUser?.id });
       localStorage.removeItem('activeTrainingGroup');
       localStorage.removeItem(`training_hole_${groupId}`);
-      sessionStorage.removeItem(sessionKey);
+      if (sessionKey) sessionStorage.removeItem(sessionKey);
       navigate('/daily-training', { replace: true });
     } catch (err) {
       alert(err.response?.data?.message || 'Erro ao cancelar treino.');
@@ -1073,10 +1096,27 @@ function TrainingScorecard() {
       </div>
 
       {isCreator && (
-        <button style={st.finishBtn} onClick={() => setShowSummary(true)}>
-          <LuClipboardList size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
-          Finalizar Treino
-        </button>
+        <>
+          <button style={st.finishBtn} onClick={() => setShowSummary(true)}>
+            <LuClipboardList size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+            Finalizar Treino
+          </button>
+          {/* Escape hatch pro criador que percebeu meio do jogo que o treino foi
+              criado errado (grupo trocado, sobrou alguém de fora, etc). Descarta
+              tudo. Só cancela — não invalida ranking finalizado. */}
+          <button
+            onClick={handleCancel}
+            style={{
+              width: '100%', padding: '12px', marginBottom: '20px',
+              backgroundColor: 'transparent', color: theme.danger,
+              border: `1px solid ${theme.danger}55`, borderRadius: '10px',
+              cursor: 'pointer', fontWeight: 'bold', fontSize: '14px',
+            }}
+          >
+            <LuTrash2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+            Excluir Treino
+          </button>
+        </>
       )}
     </div>
   );
