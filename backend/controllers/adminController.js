@@ -194,6 +194,44 @@ exports.getMe = async (req, res) => {
   }
 };
 
+// GET /api/admin/trainings — lista treinos do clube atual pro Dashboard admin.
+// Item 2 (2026-08-28): o Dashboard antes só listava torneios; agora tem abas
+// Torneios | Treinos, e esta rota alimenta a segunda aba. Retorna metadados
+// pra UI (nome do curso, criador, players_count) que o /admin/scores/trainings
+// não tem (aquele serve o editor de scores e é menos payload).
+exports.listTrainings = async (req, res) => {
+  try {
+    const cid = req.club?.id;
+    if (!cid) return res.status(400).json({ error: "Clube não identificado." });
+
+    const [rows] = await db.execute(
+      `SELECT
+         tg.id,
+         tg.group_name,
+         tg.access_code,
+         tg.status,
+         tg.starting_hole,
+         tg.created_at,
+         tg.course_id,
+         c.name AS course_name,
+         u.name AS creator_name,
+         (SELECT COUNT(*) FROM training_participants tp WHERE tp.group_id = tg.id) AS players_count,
+         (SELECT COUNT(DISTINCT ts.hole_number) FROM training_scores ts WHERE ts.group_id = tg.id) AS holes_played_total
+       FROM training_groups tg
+       LEFT JOIN courses c ON c.id = tg.course_id
+       LEFT JOIN users   u ON u.id = tg.creator_id
+       WHERE tg.club_id = ?
+       ORDER BY tg.created_at DESC
+       LIMIT 200`,
+      [cid]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("Erro ao listar treinos (admin):", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
 // GET /api/admin/club — retorna dados editáveis do clube atual
 exports.getClub = async (req, res) => {
   try {

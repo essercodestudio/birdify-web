@@ -16,6 +16,11 @@ router.get("/club", requireAdmin, adminController.getClub);
 router.put("/club", requireAdmin, adminController.updateClub);
 router.get("/onboarding", requireAdmin, adminController.getOnboardingChecklist);
 
+// Item 2 (2026-08-28): Dashboard admin com abas Torneios | Treinos.
+// Lista completa de treinos do clube (últimos 200 por created_at DESC) com
+// metadados que o /admin/scores/trainings não expõe.
+router.get("/trainings", requireAdmin, adminController.listTrainings);
+
 // Tee Times — admin
 router.get("/tee-settings",           requireAdmin, teeController.getSettings);
 router.put("/tee-settings",           requireAdmin, teeController.updateSettings);
