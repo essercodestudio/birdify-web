@@ -1,26 +1,40 @@
 // backend/controllers/scoreController.js
 const db = require("../db");
 
-// Salvar (ou atualizar) o score de um buraco com Faxina Automática!
+// Salvar (ou atualizar) o score de um buraco.
+// Item 5 · commit 2 (2026-08-28): aceita round_number no payload (default 1).
+// Grava via UPSERT atômico usando uk_score(tournament_id,user_id,hole_number,round_number)
+// — antes era DELETE+INSERT (janela de race). Como uk_score agora inclui round_number,
+// o UPSERT resolve tanto single-round (round=1) quanto multi-rodada corretamente.
 exports.saveScore = async (req, res) => {
   try {
     const { tournament_id, user_id, hole_number, strokes } = req.body;
+    const round_number = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
 
     // Validação básica dos dados
     if (!tournament_id || !user_id || !hole_number || strokes === undefined) {
-      return res.status(400).json({ 
-        error: 'Dados incompletos. Envie tournament_id, user_id, hole_number e strokes.' 
+      return res.status(400).json({
+        error: 'Dados incompletos. Envie tournament_id, user_id, hole_number e strokes.'
       });
     }
+    if (!Number.isInteger(round_number) || round_number < 1) {
+      return res.status(400).json({ error: 'round_number inválido.' });
+    }
 
-    // Verifica se o torneio pertence ao clube
+    // Verifica se o torneio pertence ao clube + pega total_rounds pra validar round_number
     const [tournamentCheck] = await db.execute(
-      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
-    
+
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    if (round_number > totalRounds) {
+      return res.status(400).json({
+        error: `Rodada inválida: torneio tem ${totalRounds} rodada(s), tentou gravar em R${round_number}.`,
+      });
     }
 
     // Autorização de posse (espelha TrainingController.saveScore): o user_id do
@@ -38,27 +52,26 @@ exports.saveScore = async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado. Você não participa deste torneio.' });
     }
 
-    // 1. PRIMEIRO PASSO: Deleta qualquer pontuação velha ou duplicada desse jogador nesse buraco
-    const deleteQuery =
-      "DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ?";
+    // UPSERT atômico via uk_score(tournament_id, user_id, hole_number, round_number).
+    // Substitui o antigo DELETE+INSERT — agora que o uk_score cobre round_number,
+    // ON DUPLICATE KEY UPDATE resolve nativamente e sem race.
+    await db.execute(
+      `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE strokes = VALUES(strokes)`,
+      [tournament_id, user_id, hole_number, round_number, strokes]
+    );
 
-    await db.execute(deleteQuery, [tournament_id, user_id, hole_number]);
-
-    // 2. SEGUNDO PASSO: Insere a pontuação nova e exata, garantindo que seja a ÚNICA!
-    const insertQuery =
-      "INSERT INTO scores (tournament_id, user_id, hole_number, strokes) VALUES (?, ?, ?, ?)";
-
-    await db.execute(insertQuery, [tournament_id, user_id, hole_number, strokes]);
-    
-    res.json({ 
-      message: "Score salvo limpo e sem duplicar!", 
+    res.json({
+      message: "Score salvo!",
       strokes,
-      hole: hole_number
+      hole: hole_number,
+      round_number,
     });
-    
+
   } catch (error) {
     console.error('Erro ao salvar score:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro interno no servidor.'
     });
   }
@@ -67,25 +80,44 @@ exports.saveScore = async (req, res) => {
 // Assinar cartão oficial do grupo: valida server-side que todos os group_players têm
 // score em TODOS os buracos do course, e grava assinatura em tournament_scorecard_signatures.
 // Antes, "Assinar Cartão" era só ação de UI — sem prova. Bug B — fix 2026-08-13.
+// Item 5 · commit 2 (2026-08-28): assinatura POR RODADA — cada round tem seu cartão.
+// round_number opcional (default 1). uk_sig 4-col permite N assinaturas por grupo.
 exports.signCard = async (req, res) => {
   try {
     const tournament_id = Number(req.body.tournament_id);
     const group_id      = Number(req.body.group_id);
+    const round_number  = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
     const caller_id     = req.user.id;
 
     if (!tournament_id || !group_id) {
       return res.status(400).json({ error: 'Dados incompletos. Envie tournament_id e group_id.' });
     }
+    if (!Number.isInteger(round_number) || round_number < 1) {
+      return res.status(400).json({ error: 'round_number inválido.' });
+    }
 
-    // Escopo do clube via tournament (impede assinar cartão de torneio alheio)
+    // Escopo do clube via tournament + pega total_rounds. Se rodada específica veio,
+    // usa o course_id da tournament_rounds daquela rodada (pra torneios multi que
+    // rodam em campos diferentes por dia).
     const [tournamentCheck] = await db.execute(
-      'SELECT id, course_id FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, course_id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
-    const courseId = tournamentCheck[0].course_id;
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    if (round_number > totalRounds) {
+      return res.status(400).json({ error: `Rodada inválida: torneio tem ${totalRounds} rodada(s).` });
+    }
+    let courseId = tournamentCheck[0].course_id;
+    if (totalRounds > 1) {
+      const [[roundRow]] = await db.execute(
+        'SELECT course_id FROM tournament_rounds WHERE tournament_id = ? AND round_number = ?',
+        [tournament_id, round_number]
+      );
+      if (roundRow) courseId = roundRow.course_id;
+    }
 
     // Caller precisa estar escalado no grupo (mesmo padrão do saveScore)
     const [membership] = await db.execute(
@@ -114,7 +146,7 @@ exports.signCard = async (req, res) => {
     );
     const expected = hole_count > 0 ? hole_count : 18;
 
-    // Jogadores do grupo + contagem de scores por jogador
+    // Jogadores do grupo + contagem de scores por jogador NESTA rodada
     const [players] = await db.execute(
       `SELECT gp.user_id, u.name,
               COUNT(s.hole_number) AS holes_played
@@ -123,20 +155,21 @@ exports.signCard = async (req, res) => {
          LEFT JOIN scores s
                 ON s.tournament_id = ?
                AND s.user_id       = gp.user_id
+               AND s.round_number  = ?
                AND s.hole_number BETWEEN 1 AND ?
         WHERE gp.group_id = ?
         GROUP BY gp.user_id, u.name`,
-      [tournament_id, expected, group_id]
+      [tournament_id, round_number, expected, group_id]
     );
 
-    // Detecta quem está incompleto e QUAIS buracos faltam (pra UI mostrar).
+    // Detecta quem está incompleto e QUAIS buracos faltam (pra UI mostrar) — nesta rodada
     const missing = [];
     for (const p of players) {
       if (Number(p.holes_played) < expected) {
         const [rows] = await db.execute(
           `SELECT hole_number FROM scores
-            WHERE tournament_id = ? AND user_id = ? AND hole_number BETWEEN 1 AND ?`,
-          [tournament_id, p.user_id, expected]
+            WHERE tournament_id = ? AND user_id = ? AND round_number = ? AND hole_number BETWEEN 1 AND ?`,
+          [tournament_id, p.user_id, round_number, expected]
         );
         const have = new Set(rows.map(r => Number(r.hole_number)));
         const holes = [];
@@ -153,42 +186,50 @@ exports.signCard = async (req, res) => {
       });
     }
 
-    // OK, tudo completo — grava assinatura (idempotente via UNIQUE KEY)
+    // OK, tudo completo — grava assinatura por (tournament, group, user, round).
+    // uk_sig 4-col garante idempotência: assinar 2x na mesma round → só atualiza signed_at.
     await db.execute(
-      `INSERT INTO tournament_scorecard_signatures (tournament_id, group_id, user_id)
-       VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE signed_at = CURRENT_TIMESTAMP`,
-      [tournament_id, group_id, caller_id]
+      `INSERT INTO tournament_scorecard_signatures (tournament_id, group_id, user_id, round_number)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE signed_at = CURRENT_TIMESTAMP,
+                               invalidated_at = NULL,
+                               invalidated_reason = NULL`,
+      [tournament_id, group_id, caller_id, round_number]
     );
 
     const [[sig]] = await db.execute(
       `SELECT signed_at FROM tournament_scorecard_signatures
-        WHERE tournament_id = ? AND group_id = ? AND user_id = ?`,
-      [tournament_id, group_id, caller_id]
+        WHERE tournament_id = ? AND group_id = ? AND user_id = ? AND round_number = ?`,
+      [tournament_id, group_id, caller_id, round_number]
     );
 
-    res.json({ ok: true, signed_at: sig.signed_at });
+    res.json({ ok: true, signed_at: sig.signed_at, round_number });
   } catch (error) {
     console.error('[signCard] Erro:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
 
-// Retorna se o grupo já foi assinado (por qualquer usuário) — usado pra UI mostrar
-// estado "Cartão Assinado em <data>" caso o usuário volte à tela depois de assinar.
+// Retorna se o grupo já foi assinado — usado pra UI mostrar estado "Cartão Assinado".
+// Item 5 · commit 2: query param ?round=N filtra a rodada (default 1). Formato
+// mantido igual (objeto único ou null) pra frontend antigo não quebrar.
 exports.getSignature = async (req, res) => {
   try {
     const groupId = Number(req.params.groupId);
+    const round_number = req.query.round !== undefined ? Number(req.query.round) : 1;
+    if (!Number.isInteger(round_number) || round_number < 1) {
+      return res.status(400).json({ error: 'round inválido.' });
+    }
     const [rows] = await db.execute(
       `SELECT s.signed_at, s.user_id, u.name AS signed_by_name,
-              s.invalidated_at, s.invalidated_reason
+              s.invalidated_at, s.invalidated_reason, s.round_number
          FROM tournament_scorecard_signatures s
          JOIN users u ON u.id = s.user_id
          JOIN tournament_groups tg ON tg.id = s.group_id
          JOIN tournaments t ON t.id = tg.tournament_id
-        WHERE s.group_id = ? AND t.club_id = ?
+        WHERE s.group_id = ? AND s.round_number = ? AND t.club_id = ?
         ORDER BY s.signed_at DESC LIMIT 1`,
-      [groupId, req.club.id]
+      [groupId, round_number, req.club.id]
     );
     res.json(rows[0] || null);
   } catch (error) {
@@ -218,11 +259,25 @@ exports.getScores = async (req, res) => {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
 
-    const query =
-      "SELECT user_id, hole_number, strokes FROM scores WHERE tournament_id = ?";
+    // Item 5 · commit 2: retorna round_number pra frontend novo distinguir.
+    // Frontend antigo ignora — comportamento inalterado pra torneio single-round
+    // (todas as linhas têm round_number=1). Opcional filtrar por ?round=N.
+    const round = req.query.round;
+    const params = [tournamentId];
+    let whereRound = '';
+    if (round !== undefined && round !== '' && round !== 'all') {
+      const rn = Number(round);
+      if (!Number.isInteger(rn) || rn < 1) {
+        return res.status(400).json({ error: 'round inválido.' });
+      }
+      whereRound = ' AND round_number = ?';
+      params.push(rn);
+    }
+    const [results] = await db.execute(
+      `SELECT user_id, hole_number, round_number, strokes FROM scores WHERE tournament_id = ?${whereRound}`,
+      params
+    );
 
-    const [results] = await db.execute(query, [tournamentId]);
-    
     res.json(results);
     
   } catch (error) {

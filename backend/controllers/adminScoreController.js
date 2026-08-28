@@ -45,7 +45,7 @@ function deriveAction(previous, next) {
 exports.listTournaments = async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT t.id, t.name, t.start_date, t.course_id, c.name AS course_name
+      `SELECT t.id, t.name, t.start_date, t.course_id, t.total_rounds, c.name AS course_name
          FROM tournaments t
          LEFT JOIN courses c ON c.id = t.course_id
         WHERE t.club_id = ?
@@ -65,7 +65,7 @@ exports.getTournamentMatrix = async (req, res) => {
     if (!tournamentId) return res.status(400).json({ error: "tournament_id inválido." });
 
     const [[tournament]] = await db.execute(
-      `SELECT id, name, start_date, course_id
+      `SELECT id, name, start_date, course_id, total_rounds
          FROM tournaments
         WHERE id = ? AND club_id = ?`,
       [tournamentId, req.club.id]
@@ -119,27 +119,44 @@ exports.getTournamentMatrix = async (req, res) => {
     }
 
     const [scores] = await db.execute(
-      `SELECT user_id, hole_number, strokes
+      `SELECT user_id, hole_number, round_number, strokes
          FROM scores
         WHERE tournament_id = ?`,
       [tournamentId]
     );
 
-    res.json({ tournament, holes, groups, scores });
+    // Item 5 · commit 2: expõe total_rounds + rounds[] pra tela editor decidir
+    // se mostra seletor de round e valida contra a lista.
+    const [roundRows] = await db.execute(
+      `SELECT round_number, round_date, course_id
+         FROM tournament_rounds
+        WHERE tournament_id = ?
+        ORDER BY round_number ASC`,
+      [tournamentId]
+    );
+
+    res.json({ tournament, holes, groups, scores, rounds: roundRows });
   } catch (error) {
     console.error("[admin getTournamentMatrix] Erro:", error);
     res.status(500).json({ error: "Erro interno no servidor." });
   }
 };
 
+// Item 5 · commit 2 (2026-08-28): aceita round_number no payload (default 1).
+// Valida contra total_rounds. Toda leitura/escrita/audit/invalidação filtra por
+// round — assinatura de R1 continua válida mesmo se admin editar R2 e vice-versa.
 exports.upsertTournamentScore = async (req, res) => {
   const tournament_id = Number(req.body.tournament_id);
   const user_id       = Number(req.body.user_id);
   const hole_number   = Number(req.body.hole_number);
+  const round_number  = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
   const strokesRaw    = req.body.strokes;
 
   if (!tournament_id || !user_id || !hole_number) {
     return res.status(400).json({ error: "Dados incompletos." });
+  }
+  if (!Number.isInteger(round_number) || round_number < 1) {
+    return res.status(400).json({ error: "round_number inválido." });
   }
 
   const reasonCheck = validateReason(req.body.reason);
@@ -156,9 +173,9 @@ exports.upsertTournamentScore = async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Escopo do clube + nome do jogador (pra compor invalidated_reason)
+    // Escopo do clube + total_rounds + nome do jogador (pra compor invalidated_reason)
     const [tRows] = await conn.execute(
-      `SELECT t.id, u.name AS target_name
+      `SELECT t.id, t.total_rounds, u.name AS target_name
          FROM tournaments t
          JOIN users u ON u.id = ?
         WHERE t.id = ? AND t.club_id = ?`,
@@ -167,6 +184,13 @@ exports.upsertTournamentScore = async (req, res) => {
     if (tRows.length === 0) {
       await conn.rollback();
       return res.status(404).json({ error: "Torneio não encontrado." });
+    }
+    const totalRounds = Number(tRows[0].total_rounds) || 1;
+    if (round_number > totalRounds) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Rodada inválida: torneio tem ${totalRounds} rodada(s), tentou editar R${round_number}.`,
+      });
     }
     const targetName = tRows[0].target_name;
 
@@ -184,11 +208,11 @@ exports.upsertTournamentScore = async (req, res) => {
     }
     const affectedGroupIds = membership.map(r => r.group_id);
 
-    // Valor anterior (pra audit)
+    // Valor anterior POR ROUND (pra audit — R1 e R2 são scores independentes)
     const [prevRows] = await conn.execute(
       `SELECT strokes FROM scores
-        WHERE tournament_id = ? AND user_id = ? AND hole_number = ?`,
-      [tournament_id, user_id, hole_number]
+        WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
+      [tournament_id, user_id, hole_number, round_number]
     );
     const previousStrokes = prevRows.length ? Number(prevRows[0].strokes) : null;
 
@@ -198,40 +222,43 @@ exports.upsertTournamentScore = async (req, res) => {
       return res.status(200).json({ ok: true, noop: true });
     }
 
-    // Mutação
+    // Mutação — DELETE ou UPSERT via uk_score 4-col
     if (willDelete) {
       await conn.execute(
-        `DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ?`,
-        [tournament_id, user_id, hole_number]
+        `DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
+        [tournament_id, user_id, hole_number, round_number]
       );
     } else {
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, hole_number, strokes)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes)
+         VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE strokes = VALUES(strokes)`,
-        [tournament_id, user_id, hole_number, newStrokes]
+        [tournament_id, user_id, hole_number, round_number, newStrokes]
       );
     }
 
-    // Audit
+    // Audit — inclui round_number (coluna NULLABLE; envio null pra torneios legados
+    // ainda pra manter o comportamento antigo? Não: agora todo torneio tem >=1 round,
+    // então sempre gravo o número. NULL fica reservado a treinos onde não se aplica.)
     const [auditResult] = await conn.execute(
       `INSERT INTO admin_score_audit
          (club_id, admin_user_id, context, tournament_id, training_group_id,
-          target_user_id, hole_number, previous_strokes, new_strokes, action, reason)
-       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?)`,
+          target_user_id, hole_number, round_number, previous_strokes, new_strokes, action, reason)
+       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.club.id, req.user.id, tournament_id,
-        user_id, hole_number, previousStrokes, newStrokes, action, reason,
+        user_id, hole_number, round_number, previousStrokes, newStrokes, action, reason,
       ]
     );
     const auditId = auditResult.insertId;
 
-    // Invalidar assinaturas ativas do(s) grupo(s) afetado(s)
-    // (linha por grupo — em geral 1, mas suporta caso o jogador esteja em >1)
+    // Invalidar assinaturas ativas SÓ desta rodada — R1 continua válida se admin
+    // editar R2. Sem esse filtro por round, uma correção em R3 invalidaria R1 e R2
+    // que já estavam legitimamente assinadas.
     let invalidatedCount = 0;
     if (affectedGroupIds.length > 0) {
       const invalidatedReason =
-        `Score do jogador ${targetName} (id=${user_id}) buraco ${hole_number} ` +
+        `Score R${round_number} do jogador ${targetName} (id=${user_id}) buraco ${hole_number} ` +
         `alterado por admin (id=${req.user.id}) em ${new Date().toISOString()} ` +
         `(audit #${auditId}). Motivo: ${reason}`;
       const truncatedReason = invalidatedReason.slice(0, 500);
@@ -241,9 +268,10 @@ exports.upsertTournamentScore = async (req, res) => {
             SET invalidated_at = NOW(),
                 invalidated_reason = ?
           WHERE tournament_id = ?
+            AND round_number = ?
             AND group_id IN (${placeholders})
             AND invalidated_at IS NULL`,
-        [truncatedReason, tournament_id, ...affectedGroupIds]
+        [truncatedReason, tournament_id, round_number, ...affectedGroupIds]
       );
       invalidatedCount = invRes.affectedRows || 0;
     }
@@ -252,6 +280,7 @@ exports.upsertTournamentScore = async (req, res) => {
     res.json({
       ok: true,
       action,
+      round_number,
       previous_strokes: previousStrokes,
       new_strokes: newStrokes,
       audit_id: auditId,

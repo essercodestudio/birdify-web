@@ -2,98 +2,150 @@
 const db = require("../db");
 
 /// 1. LISTA GERAL (Ranking Automático Birdify com Par Dinâmico REAL e Matemática Exata)
+// Item 5 · commit 2 (2026-08-28): aceita query param ?round=all|1|2|3 pra multi-rodada.
+//   - all  (default): soma tacadas de TODAS as rodadas (mantém comportamento antigo pra single-round)
+//   - N:  filtra só a rodada N (usa course_id daquela rodada pro par)
+// Response passa a incluir { ranking, total_rounds, rounds[], filter_round } pra
+// frontend renderizar o seletor. Frontend antigo (que não usa esses campos) pode
+// continuar consumindo a resposta como array via ranking (ver retrocompat abaixo).
 exports.getTournamentLeaderboard = async (req, res) => {
   try {
     const { tournamentId } = req.params;
 
-    // Verifica se o torneio pertence ao clube
+    // Verifica se o torneio pertence ao clube + pega metadata multi-rodada
     const [tournamentCheck] = await db.execute(
-      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
       [tournamentId, req.club.id]
     );
-    
+
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
 
-    // A MÁGICA DA BLINDAGEM: Usamos uma subquery (ph) para pegar o handicap
-    // sem multiplicar as linhas de score pela quantidade de grupos no torneio!
+    // Parse do filtro. 'all' (ou ausente) = sem filtro; N inteiro = filtra por round.
+    const roundParam = req.query.round;
+    let filterRound = null;
+    if (roundParam !== undefined && roundParam !== '' && roundParam !== 'all') {
+      const rn = Number(roundParam);
+      if (!Number.isInteger(rn) || rn < 1 || rn > totalRounds) {
+        return res.status(400).json({ error: `round inválido — use 'all' ou 1..${totalRounds}.` });
+      }
+      filterRound = rn;
+    }
+
+    // Query principal — o par vem do course da RODADA (via tr.course_id), com
+    // fallback pro course do torneio pra torneios legados/single-round onde
+    // tournament_rounds ainda espelha t.course_id. Isso resolve o caso de rodadas
+    // em campos diferentes num torneio multi (o par muda por round).
+    const scoreRoundFilter = filterRound !== null ? 'AND s.round_number = ?' : '';
+    const scoreRoundParams = filterRound !== null ? [filterRound] : [];
+
     const query = `
-      SELECT 
-        u.id, 
-        u.name, 
-        u.gender, 
+      SELECT
+        u.id,
+        u.name,
+        u.gender,
         COALESCE(MAX(ph.handicap), 0) as handicap,
-        COALESCE(SUM(s.strokes), 0) as total_strokes, 
+        COALESCE(SUM(s.strokes), 0) as total_strokes,
         COALESCE(COUNT(s.hole_number), 0) as holes_played,
-        COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, 4)), 0) as score_to_par
+        COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, hf.par, chf.par, 4)), 0) as score_to_par
       FROM inscriptions i
       JOIN users u ON i.user_id = u.id
-      LEFT JOIN scores s ON s.user_id = u.id AND s.tournament_id = i.tournament_id
+      LEFT JOIN scores s
+        ON s.user_id = u.id
+       AND s.tournament_id = i.tournament_id
+       ${scoreRoundFilter}
       LEFT JOIN tournaments t ON t.id = i.tournament_id
-      LEFT JOIN holes h ON h.course_id = t.course_id AND h.hole_number = s.hole_number
-      LEFT JOIN course_holes ch ON ch.course_id = t.course_id AND ch.hole_number = s.hole_number
-      
-      -- Busca o handicap isoladamente, sem explodir as linhas
+      -- Curso da rodada específica (multi-round). Se não existir linha em
+      -- tournament_rounds pra esse round (dado antigo), cai no fallback do torneio.
+      LEFT JOIN tournament_rounds tr
+        ON tr.tournament_id = s.tournament_id AND tr.round_number = s.round_number
+      LEFT JOIN holes h        ON h.course_id  = tr.course_id AND h.hole_number  = s.hole_number
+      LEFT JOIN course_holes ch ON ch.course_id = tr.course_id AND ch.hole_number = s.hole_number
+      -- Fallback pro course do próprio torneio (single-round legado)
+      LEFT JOIN holes hf        ON hf.course_id  = t.course_id AND hf.hole_number  = s.hole_number
+      LEFT JOIN course_holes chf ON chf.course_id = t.course_id AND chf.hole_number = s.hole_number
+
       LEFT JOIN (
-        SELECT gp_inner.user_id, gp_inner.handicap 
+        SELECT gp_inner.user_id, gp_inner.handicap
         FROM group_players gp_inner
         JOIN tournament_groups tg_inner ON gp_inner.group_id = tg_inner.id
         WHERE tg_inner.tournament_id = ?
       ) ph ON ph.user_id = u.id
-      
+
       WHERE i.tournament_id = ? AND i.status = 'APPROVED'
       GROUP BY u.id, u.name, u.gender
     `;
 
-    // Note que passamos a variável tournamentId DUAS vezes no array
-    // (uma para a subquery 'ph' e outra para o 'WHERE' principal)
-    const [results] = await db.execute(query, [tournamentId, tournamentId]);
-    
+    const [results] = await db.execute(query, [...scoreRoundParams, tournamentId, tournamentId]);
+
+    // Retrocompat estrita: response continua array puro. Metadados multi-rodada
+    // (total_rounds, rounds[]) já vêm em GET /tournaments/:id — frontend faz as
+    // duas chamadas em paralelo e combina, mesmo padrão do Leaderboard.js atual.
     res.json(results);
-    
   } catch (error) {
     console.error('Erro ao buscar leaderboard:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro interno no servidor.'
     });
   }
 };
 
 // 2. DETALHES DO JOGADOR (Para o Modal do Cartão)
+// Item 5 · commit 2: retorna round_number em cada linha e suporta filtro ?round=N.
+// Par vem do course da rodada (via tournament_rounds), fallback pro course do torneio.
 exports.getPlayerScorecard = async (req, res) => {
   try {
     const { tournamentId, userId } = req.params;
+    const roundParam = req.query.round;
 
-    // Verifica se o torneio pertence ao clube
+    // Verifica se o torneio pertence ao clube + pega total_rounds pra validar
     const [tournamentCheck] = await db.execute(
-      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
       [tournamentId, req.club.id]
     );
-    
+
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+
+    let filterRound = null;
+    if (roundParam !== undefined && roundParam !== '' && roundParam !== 'all') {
+      const rn = Number(roundParam);
+      if (!Number.isInteger(rn) || rn < 1 || rn > totalRounds) {
+        return res.status(400).json({ error: `round inválido — use 'all' ou 1..${totalRounds}.` });
+      }
+      filterRound = rn;
+    }
+
+    const roundFilter = filterRound !== null ? 'AND s.round_number = ?' : '';
+    const params = filterRound !== null
+      ? [tournamentId, userId, filterRound]
+      : [tournamentId, userId];
 
     const query = `
-      SELECT 
-        s.hole_number, 
-        s.strokes, 
-        COALESCE(h.par, 4) as par 
+      SELECT
+        s.hole_number,
+        s.round_number,
+        s.strokes,
+        COALESCE(h.par, hf.par, 4) as par
       FROM scores s
       JOIN tournaments t ON s.tournament_id = t.id
-      LEFT JOIN holes h ON t.course_id = h.course_id AND s.hole_number = h.hole_number
-      WHERE s.tournament_id = ? AND s.user_id = ?
-      ORDER BY s.hole_number ASC
+      LEFT JOIN tournament_rounds tr
+        ON tr.tournament_id = s.tournament_id AND tr.round_number = s.round_number
+      LEFT JOIN holes h  ON h.course_id  = tr.course_id AND h.hole_number = s.hole_number
+      LEFT JOIN holes hf ON hf.course_id = t.course_id  AND hf.hole_number = s.hole_number
+      WHERE s.tournament_id = ? AND s.user_id = ? ${roundFilter}
+      ORDER BY s.round_number ASC, s.hole_number ASC
     `;
 
-    const [results] = await db.execute(query, [tournamentId, userId]);
-    
+    const [results] = await db.execute(query, params);
     res.json(results);
-    
   } catch (error) {
     console.error('Erro ao buscar scorecard do jogador:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Erro interno no servidor.'
     });
   }
