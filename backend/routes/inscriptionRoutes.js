@@ -8,10 +8,13 @@
 const express = require('express');
 const router = express.Router();
 const inscriptionController = require('../controllers/inscriptionController');
-const { requireAuth, requireAdmin } = require('../middlewares/authMiddleware');
+const { requireAuth, requireAdmin, blockAdmin } = require('../middlewares/authMiddleware');
 
+// Item 6 (2026-08-28): inscrever-se em torneio é ação de jogador → blockAdmin.
+// Leitura dos detalhes (getTournamentDetails) permanece requireAuth — admin
+// consulta pra fins de gerência.
 router.get('/tournament/:id',    requireAuth,  inscriptionController.getTournamentDetails);
-router.post('/create',           requireAuth,  inscriptionController.createInscription);
+router.post('/create',           blockAdmin,   inscriptionController.createInscription);
 router.get('/list/:tournamentId', requireAdmin, inscriptionController.getInscriptions);
 router.put('/update-status/:id', requireAdmin, inscriptionController.updateStatus);
 

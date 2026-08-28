@@ -165,17 +165,28 @@ exports.getMe = async (req, res) => {
     const clubId = req.club?.id || null;
     const clubInfo = clubId ? { id: clubId, name: req.club.name } : null;
 
+    // Item 6 (2026-08-28): PLAYER também recebe admin_of=[] pra o front (RootRoute)
+    // não ter que fazer branching por role. Só ADMIN chega a ter linhas em club_admins;
+    // pra outros roles a query retorna vazio de qualquer forma.
+    const [adminRows] = await db.query(
+      `SELECT c.id, c.name, c.domain
+         FROM club_admins ca
+         JOIN clubs c ON c.id = ca.club_id
+        WHERE ca.user_id = ?
+        ORDER BY c.name ASC`,
+      [req.user.id]
+    );
+    const adminOf = adminRows.map((r) => ({ id: r.id, name: r.name, domain: r.domain }));
+
     if (req.user.role !== "ADMIN" || !clubId) {
-      return res.json({ isAdminOfCurrentClub: false, club: clubInfo });
+      return res.json({ isAdminOfCurrentClub: false, club: clubInfo, admin_of: adminOf });
     }
 
-    const [rows] = await db.query(
-      "SELECT 1 FROM club_admins WHERE user_id = ? AND club_id = ? LIMIT 1",
-      [req.user.id, clubId]
-    );
+    const isAdminOfCurrentClub = adminOf.some((c) => c.id === clubId);
     return res.json({
-      isAdminOfCurrentClub: rows.length > 0,
+      isAdminOfCurrentClub,
       club: clubInfo,
+      admin_of: adminOf,
     });
   } catch (error) {
     console.error("Erro em GET /admin/me:", error);

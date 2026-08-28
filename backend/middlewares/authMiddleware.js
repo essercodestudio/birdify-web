@@ -50,4 +50,21 @@ const requireAdmin = (req, res, next) => {
   });
 };
 
-module.exports = { requireAuth, requireAdmin };
+// blockAdmin: fecha rotas de fluxo de jogador (marcar score, entrar em grupo,
+// se inscrever em torneio, reservar tee time) pra qualquer conta com role
+// ADMIN. Regra de produto (2026-08-28): conta admin nunca executa ação de
+// jogador em nenhum clube. Encadeia DEPOIS de requireAuth — sem token o 401
+// vem antes; com token de player passa transparente.
+const blockAdmin = (req, res, next) => {
+  requireAuth(req, res, () => {
+    if (req.user?.role === "ADMIN") {
+      return res.status(403).json({
+        message: "Contas administrativas não podem executar ações de jogador.",
+        code: "ADMIN_BLOCKED_FROM_PLAYER_ACTIONS",
+      });
+    }
+    next();
+  });
+};
+
+module.exports = { requireAuth, requireAdmin, blockAdmin };

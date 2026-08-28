@@ -33,6 +33,7 @@ import AdminScoreAuditLog from './pages/AdminScoreAuditLog';
 import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
+import AdminNoAccess from './pages/AdminNoAccess';
 
 // Importação da LGPD e Recuperação de Senha
 import LGPDBanner from "./pages/LGPDBanner";
@@ -63,27 +64,31 @@ export const ThemeContext = createContext();
 // club_admins pro clube do domínio atual se comporta como jogador comum.
 // AdminRoute e itens de menu admin consultam este contexto (que faz
 // preflight em GET /api/admin/me) em vez de olhar só o role local.
-const AdminMembershipContext = createContext({ loading: true, isAdmin: false, refresh: () => {} });
+// Item 6 (2026-08-28): adminOf lista os clubes em que o user tem vinculo em
+// club_admins (id/name/domain). Alimenta a tela AdminNoAccess (link direto
+// pro dominio correto do admin cross-tenant) e o RootRoute abaixo.
+const AdminMembershipContext = createContext({ loading: true, isAdmin: false, adminOf: [], refresh: () => {} });
 export const useAdminMembership = () => useContext(AdminMembershipContext);
 
 function AdminMembershipProvider({ isLoggedIn, children }) {
-  const [state, setState] = useState({ loading: true, isAdmin: false });
+  const [state, setState] = useState({ loading: true, isAdmin: false, adminOf: [] });
   // Ler o token direto do storage em cada refresh (nao via prop isLoggedIn),
   // porque isLoggedIn no App.js so re-inicializa em outras abas via
   // 'storage' event — mesma aba fica stale apos login/logout. Login.js chama
   // refresh() manualmente apos setSession pra atualizar o contexto.
   const refresh = useCallback(async () => {
-    if (!getToken()) { setState({ loading: false, isAdmin: false }); return false; }
+    if (!getToken()) { setState({ loading: false, isAdmin: false, adminOf: [] }); return false; }
     setState((s) => ({ ...s, loading: true }));
     try {
       const res = await api.get("/admin/me");
       const isAdmin = !!res.data?.isAdminOfCurrentClub;
-      setState({ loading: false, isAdmin });
+      const adminOf = Array.isArray(res.data?.admin_of) ? res.data.admin_of : [];
+      setState({ loading: false, isAdmin, adminOf });
       return isAdmin;
     } catch {
       // Falha de rede ou 401 (token expirado). Por seguranca, tratar como nao-admin;
       // AdminRoute vai redirecionar pro /login se o token realmente sumiu.
-      setState({ loading: false, isAdmin: false });
+      setState({ loading: false, isAdmin: false, adminOf: [] });
       return false;
     }
   }, []);
@@ -125,6 +130,48 @@ const AdminRoute = ({ children }) => {
     );
   }
   if (!isAdmin) return <Navigate to="/" replace />;
+  return children;
+};
+
+// Item 6 (2026-08-28): rota "/" decide destino conforme papel + vinculo.
+//   - sem token         → /login
+//   - PLAYER            → PlayerHome (como sempre)
+//   - ADMIN + vinculo   → /dashboard (nunca ve tela de jogador)
+//   - ADMIN sem vinculo → AdminNoAccess (com links pros clubes que administra)
+// Sem este wrapper, admin sem vinculo caia em PlayerHome se comportando como
+// jogador comum — exatamente o que a regra de produto quer proibir.
+const RootRoute = () => {
+  const { loading, isAdmin, adminOf } = useAdminMembership();
+  const token = getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  const user = getUser();
+  if (!user || !user.id) return <Navigate to="/login" replace />;
+  if (loading) {
+    return (
+      <div style={{ backgroundColor: "#0f172a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 13 }}>
+        Carregando…
+      </div>
+    );
+  }
+  if (user.role === "ADMIN") {
+    if (isAdmin) return <Navigate to="/dashboard" replace />;
+    // Admin sem vinculo NO CLUBE atual — mesmo que admin_of tenha outros.
+    // Renderiza AdminNoAccess (tela com lista de dominios corretos + Sair).
+    return <AdminNoAccess />;
+  }
+  return <PlayerHome />;
+};
+
+// PlayerRoute: rotas de fluxo de jogador (scorecard, treino, tee time, etc.).
+// Alem do requireAuth padrao, redireciona admin de volta pra "/" — que por sua
+// vez roteia pra /dashboard (se admin do clube) ou AdminNoAccess (se cross-tenant).
+// Nunca permite renderizar UI de jogador pra admin.
+const PlayerRoute = ({ children }) => {
+  const token = getToken();
+  if (!token) return <Navigate to="/login" replace />;
+  const user = getUser();
+  if (!user || !user.id) return <Navigate to="/login" replace />;
+  if (user.role === "ADMIN") return <Navigate to="/" replace />;
   return children;
 };
 
@@ -219,7 +266,7 @@ function App() {
 
         <div style={{ paddingBottom: showSponsorBar ? "65px" : 0 }}>
           <Routes>
-            <Route path="/" element={<ProtectedRoute><PlayerHome /></ProtectedRoute>} />
+            <Route path="/" element={<RootRoute />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -231,15 +278,15 @@ function App() {
                 dados do clube errado (fix 2026-08-27). */}
             <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
             <Route path="/tournament/:id" element={<AdminRoute><TournamentManager /></AdminRoute>} />
-            <Route path="/scorecard/:groupId" element={<ProtectedRoute><Scorecard /></ProtectedRoute>} />
+            <Route path="/scorecard/:groupId" element={<PlayerRoute><Scorecard /></PlayerRoute>} />
             <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
             <Route path="/courses" element={<AdminRoute><CourseManager /></AdminRoute>} />
             {/* Rota legada: PlayerDashboard foi unificado com JoinGame em PlayerHome ("/") */}
             <Route path="/player" element={<Navigate to="/" replace />} />
 
-            {/* ROTAS DE TREINO */}
-            <Route path="/daily-training" element={<ProtectedRoute><DailyTraining /></ProtectedRoute>} />
-            <Route path="/training-scorecard/:groupId" element={<ProtectedRoute><TrainingScorecard /></ProtectedRoute>} />
+            {/* ROTAS DE TREINO — sao fluxo de jogador, admin nao entra */}
+            <Route path="/daily-training" element={<PlayerRoute><DailyTraining /></PlayerRoute>} />
+            <Route path="/training-scorecard/:groupId" element={<PlayerRoute><TrainingScorecard /></PlayerRoute>} />
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
             <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
             <Route path="/treino/:groupId/ranking" element={<TrainingRankingPublic />} />
@@ -247,8 +294,8 @@ function App() {
                 Usada como fallback do botão de share quando o usuário não veio
                 do próprio scorecard (não tem returnGroupId no state). */}
             <Route path="/ranking/dia" element={<TrainingRankingPublic />} />
-            <Route path="/player-history" element={<ProtectedRoute><PlayerHistory /></ProtectedRoute>} />
-            <Route path="/my-performance" element={<ProtectedRoute><MyPerformance /></ProtectedRoute>} />
+            <Route path="/player-history" element={<PlayerRoute><PlayerHistory /></PlayerRoute>} />
+            <Route path="/my-performance" element={<PlayerRoute><MyPerformance /></PlayerRoute>} />
             <Route path="/circuits" element={<AdminRoute><CircuitManagement /></AdminRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
             <Route path="/admin/kpis" element={<AdminRoute><AdminKPIs /></AdminRoute>} />
@@ -258,8 +305,8 @@ function App() {
             <Route path="/admin/patrocinadores" element={<AdminRoute><AdminSponsors /></AdminRoute>} />
             <Route path="/admin/ajustar-scores" element={<AdminRoute><AdminScoreEditor /></AdminRoute>} />
             <Route path="/admin/scores-auditoria" element={<AdminRoute><AdminScoreAuditLog /></AdminRoute>} />
-            <Route path="/tee-times" element={<ProtectedRoute><TeeTimes /></ProtectedRoute>} />
-            <Route path="/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
+            <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />
+            <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />
 
             <Route path="/privacidade" element={<Privacidade />} />
