@@ -19,6 +19,7 @@ import {
   LuUndo2,
   LuShuffle,
   LuClock,
+  LuTrophy,
 } from "react-icons/lu";
 
 const TABS = [
@@ -47,16 +48,28 @@ function TournamentManager() {
   const [addPlayerByGroup, setAddPlayerByGroup] = useState({});
   const [teeTimeDraft, setTeeTimeDraft] = useState({}); // { [groupId]: "HH:MM" } enquanto edita
 
+  // Bloco D · commit 4: torneio multi-rodada — cada rodada tem seus proprios
+  // grupos e codigos. activeRound=1 por default (torneio single-round nunca
+  // mostra as pills). Fetch de grupos re-executa quando muda o round.
+  const [activeRound, setActiveRound] = useState(1);
+  const totalRounds = Number(tournament?.total_rounds) || 1;
+  const isMultiRound = totalRounds > 1;
+
   const isTeeTime = tournament?.format === "tee_time";
 
   const fetchGroups = useCallback(async () => {
     try {
-      const res = await api.get(`/groups/list/${id}`);
+      // Passa ?round=N so pra torneio multi-rodada. Single-round preserva
+      // o comportamento antigo (retorna tudo — na pratica so tem R1).
+      const path = isMultiRound
+        ? `/groups/list/${id}?round=${activeRound}`
+        : `/groups/list/${id}`;
+      const res = await api.get(path);
       setGroups(res.data);
     } catch (error) {
       console.error("Erro ao buscar grupos", error);
     }
-  }, [id]);
+  }, [id, activeRound, isMultiRound]);
 
   const fetchInscriptions = useCallback(async () => {
     try {
@@ -92,6 +105,7 @@ function TournamentManager() {
     try {
       await api.post("/groups/create", {
         tournament_id: id,
+        round_number: activeRound,
         group_name: newGroupName.trim(),
         starting_hole: isTeeTime ? 1 : startingHole,
         tee_time: isTeeTime ? newGroupTeeTime : null,
@@ -198,21 +212,59 @@ function TournamentManager() {
       intervalMinutes = parsed;
     }
 
+    const roundLabel = isMultiRound ? `da R${activeRound}` : "";
     const baseMsg = isTeeTime
-      ? `Sortear ${total} atleta(s) em ${nFlights} flight(s), com ${intervalMinutes} min entre cada um. Todos saem do buraco 1.`
-      : `Sortear ${total} atleta(s) em ${nFlights} flight(s) de até 4. Cada grupo em um buraco (1, 2, 3…).`;
+      ? `Sortear ${total} atleta(s) em ${nFlights} flight(s) ${roundLabel}, com ${intervalMinutes} min entre cada um. Todos saem do buraco 1.`
+      : `Sortear ${total} atleta(s) em ${nFlights} flight(s) ${roundLabel} de até 4. Cada grupo em um buraco (1, 2, 3…).`;
     const msg = groups.length > 0
-      ? `Isso vai APAGAR ${groups.length} flight(s) existente(s). ${baseMsg} Continuar?`
+      ? `Isso vai APAGAR ${groups.length} flight(s) existente(s)${isMultiRound ? ` da R${activeRound}` : ""}. ${baseMsg} Continuar?`
       : `${baseMsg} Continuar?`;
     if (!window.confirm(msg)) return;
 
     try {
-      const payload = { tournament_id: id };
+      const payload = { tournament_id: id, round_number: activeRound };
       if (isTeeTime) payload.interval_minutes = intervalMinutes;
       await api.post("/groups/auto-generate", payload);
       fetchGroups();
     } catch (error) {
       alert(error.response?.data?.error || "Erro ao gerar flights.");
+    }
+  };
+
+  // Bloco D · commit 4: re-seeding automatico da rodada atual pela
+  // classificacao da rodada anterior. So aparece se activeRound >= 2 —
+  // R1 nao tem "rodada anterior" pra rankear.
+  const handleGenerateFromStandings = async () => {
+    if (activeRound < 2) return;
+    const prev = activeRound - 1;
+
+    let intervalMinutes = null;
+    if (isTeeTime) {
+      const raw = window.prompt(`Intervalo entre grupos em minutos (padrão 10):`, "10");
+      if (raw === null) return;
+      const parsed = parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 60) {
+        alert("Intervalo inválido. Use um número entre 1 e 60.");
+        return;
+      }
+      intervalMinutes = parsed;
+    }
+
+    const warn = groups.length > 0
+      ? `Isso vai APAGAR ${groups.length} flight(s) da R${activeRound}. `
+      : "";
+    if (!window.confirm(
+      `${warn}Gerar grupos da R${activeRound} pela classificacao da R${prev} (melhor gross → grupo 1, proximos 4 → grupo 2...). So entra quem completou os buracos da R${prev}. Continuar?`
+    )) return;
+
+    try {
+      const payload = { tournament_id: id, round_number: activeRound };
+      if (isTeeTime) payload.interval_minutes = intervalMinutes;
+      const res = await api.post("/groups/generate-from-standings", payload);
+      alert(`R${activeRound} gerada: ${res.data.groups_created} flight(s) com ${res.data.players_seeded} jogador(es) que completaram R${prev}.`);
+      fetchGroups();
+    } catch (error) {
+      alert(error.response?.data?.error || "Erro no re-seeding.");
     }
   };
 
@@ -789,17 +841,63 @@ function TournamentManager() {
           </h3>
         </div>
 
-        {/* CTA principal — sorteio automático */}
+        {/* Bloco D · commit 4: pills de rodada — so em torneio multi-rodada.
+            Cada rodada tem seus proprios grupos e codigos (Opcao B do Item 4). */}
+        {isMultiRound && (
+          <div style={{ display: "flex", gap: theme.space[2], marginBottom: theme.space[4], flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ ...theme.text.caption, color: theme.textMuted, marginRight: theme.space[2] }}>RODADA:</span>
+            {Array.from({ length: totalRounds }, (_, i) => i + 1).map(rn => {
+              const active = rn === activeRound;
+              return (
+                <button
+                  key={rn}
+                  onClick={() => setActiveRound(rn)}
+                  className="tm-tap"
+                  style={{
+                    padding: `${theme.space[2]}px ${theme.space[4]}px`,
+                    borderRadius: theme.radius.pill,
+                    border: `1px solid ${active ? "transparent" : theme.border}`,
+                    backgroundColor: active ? theme.accent : "transparent",
+                    color: active ? theme.accentContrast : theme.textMuted,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  R{rn}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* CTA principal — sorteio automatico (aleatorio) da rodada atual.
+            Em torneios multi-rodada, esse botao SO faz sentido pra R1 —
+            R2+ deveria usar o re-seeding pela classificacao. Mantido em R2+
+            como fallback caso o admin queira sortear do zero mesmo assim. */}
         <button
           onClick={handleAutoGenerate}
           style={{ ...s.ctaFull, marginBottom: theme.space[3] }}
           className="tm-tap"
           disabled={approvedPlayers.length === 0}
-          title={approvedPlayers.length === 0 ? "Aprove atletas primeiro" : "Sortear aprovados em flights de 4"}
+          title={approvedPlayers.length === 0 ? "Aprove atletas primeiro" : `Sortear aprovados em flights de 4${isMultiRound ? ` na R${activeRound}` : ""}`}
         >
           <LuShuffle size={16} />
-          Gerar Flights Automáticos ({approvedPlayers.length})
+          Sortear Flights Aleatorios{isMultiRound ? ` (R${activeRound})` : ""} ({approvedPlayers.length})
         </button>
+
+        {/* CTA de re-seeding pela classificacao — so aparece em R2+ */}
+        {isMultiRound && activeRound >= 2 && (
+          <button
+            onClick={handleGenerateFromStandings}
+            style={{ ...s.ctaFull, backgroundColor: theme.gold, marginBottom: theme.space[3] }}
+            className="tm-tap"
+            title={`Gerar grupos da R${activeRound} pela classificacao da R${activeRound - 1}`}
+          >
+            <LuTrophy size={16} />
+            Re-seed R{activeRound} pela Classificacao da R{activeRound - 1}
+          </button>
+        )}
 
         {/* Toolbar (2 ações) */}
         <div style={s.toolbar}>
@@ -955,7 +1053,9 @@ function TournamentManager() {
         >
           <form style={s.modal} onSubmit={handleCreateGroup}>
             <div style={s.modalHeader}>
-              <h3 style={s.modalTitle}>Novo flight manual</h3>
+              <h3 style={s.modalTitle}>
+                Novo flight manual{isMultiRound ? ` — R${activeRound}` : ""}
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowManualModal(false)}
