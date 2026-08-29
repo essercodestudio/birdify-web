@@ -30,6 +30,7 @@ import AdminTeeBookings from './pages/AdminTeeBookings';
 import AdminSponsors from './pages/AdminSponsors';
 import AdminScoreEditor from './pages/AdminScoreEditor';
 import AdminScoreAuditLog from './pages/AdminScoreAuditLog';
+import AdminTrainings from './pages/AdminTrainings';
 import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
@@ -305,6 +306,7 @@ function App() {
             <Route path="/admin/patrocinadores" element={<AdminRoute><AdminSponsors /></AdminRoute>} />
             <Route path="/admin/ajustar-scores" element={<AdminRoute><AdminScoreEditor /></AdminRoute>} />
             <Route path="/admin/scores-auditoria" element={<AdminRoute><AdminScoreAuditLog /></AdminRoute>} />
+            <Route path="/admin/treinos" element={<AdminRoute><AdminTrainings /></AdminRoute>} />
             <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />
             <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />

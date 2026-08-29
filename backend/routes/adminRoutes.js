@@ -21,6 +21,10 @@ router.get("/onboarding", requireAdmin, adminController.getOnboardingChecklist);
 // metadados que o /admin/scores/trainings não expõe.
 router.get("/trainings", requireAdmin, adminController.listTrainings);
 
+// Item 1+2 (2026-08-28 tarde): tela AdminTrainings dedicada agrupa por DIA.
+// Endpoint agregado — 1 linha por DATE(created_at) com contagens/status.
+router.get("/trainings/by-date", requireAdmin, adminController.listTrainingsByDate);
+
 // Tee Times — admin
 router.get("/tee-settings",           requireAdmin, teeController.getSettings);
 router.put("/tee-settings",           requireAdmin, teeController.updateSettings);

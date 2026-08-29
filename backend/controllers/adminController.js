@@ -198,11 +198,67 @@ exports.getMe = async (req, res) => {
   }
 };
 
-// GET /api/admin/trainings — lista treinos do clube atual pro Dashboard admin.
-// Item 2 (2026-08-28): o Dashboard antes só listava torneios; agora tem abas
-// Torneios | Treinos, e esta rota alimenta a segunda aba. Retorna metadados
-// pra UI (nome do curso, criador, players_count) que o /admin/scores/trainings
-// não tem (aquele serve o editor de scores e é menos payload).
+// GET /api/admin/trainings/by-date — Item 1+2 (2026-08-28 tarde): tela
+// AdminTrainings agrupa treinos por DIA (não por criador). 1 linha por
+// DATE(created_at) com contagens agregadas. Substitui a aba "Treinos" que
+// existia no Dashboard admin — agora essa listagem tem tela propria.
+// Ordem: dia mais recente primeiro. Janela padrão 180 dias (?days=N ajusta).
+exports.listTrainingsByDate = async (req, res) => {
+  try {
+    const cid = req.club?.id;
+    if (!cid) return res.status(400).json({ error: "Clube não identificado." });
+
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 180, 1), 365);
+
+    // GROUP BY e ORDER BY usam a MESMA expressao do SELECT (DATE_FORMAT), senao
+    // MySQL 8 em only_full_group_by trata como colunas diferentes.
+    const [rows] = await db.query(
+      `SELECT
+         DATE_FORMAT(tg.created_at, '%Y-%m-%d')                                                 AS date,
+         COUNT(DISTINCT tg.id)                                                                  AS groups_count,
+         COUNT(DISTINCT tp.user_id)                                                             AS players_count,
+         SUM(CASE WHEN tg.status = 'ativo'       THEN 1 ELSE 0 END)                             AS status_ativo,
+         SUM(CASE WHEN tg.status = 'aguardando'  THEN 1 ELSE 0 END)                             AS status_aguardando,
+         SUM(CASE WHEN tg.status = 'finalizado'  THEN 1 ELSE 0 END)                             AS status_finalizado,
+         SUM(CASE WHEN tg.status = 'cancelado'   THEN 1 ELSE 0 END)                             AS status_cancelado,
+         (SELECT COUNT(*) FROM training_scores ts
+            JOIN training_groups tg2 ON tg2.id = ts.group_id
+           WHERE tg2.club_id = ?
+             AND DATE(tg2.created_at) = DATE(tg.created_at))                                    AS scores_recorded,
+         GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ' · ')                          AS courses
+       FROM training_groups tg
+       LEFT JOIN training_participants tp ON tp.group_id = tg.id
+       LEFT JOIN courses c ON c.id = tg.course_id
+       WHERE tg.club_id = ?
+         AND tg.created_at >= (NOW() - INTERVAL ? DAY)
+       GROUP BY DATE_FORMAT(tg.created_at, '%Y-%m-%d')
+       ORDER BY DATE_FORMAT(tg.created_at, '%Y-%m-%d') DESC`,
+      [cid, cid, days]
+    );
+
+    res.json(rows.map(r => ({
+      date: r.date,
+      groups_count: Number(r.groups_count || 0),
+      players_count: Number(r.players_count || 0),
+      scores_recorded: Number(r.scores_recorded || 0),
+      status: {
+        ativo:      Number(r.status_ativo || 0),
+        aguardando: Number(r.status_aguardando || 0),
+        finalizado: Number(r.status_finalizado || 0),
+        cancelado:  Number(r.status_cancelado || 0),
+      },
+      courses: r.courses || "",
+    })));
+  } catch (error) {
+    console.error("Erro ao listar treinos por data:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
+// GET /api/admin/trainings — lista treinos do clube atual (1 linha por training_group).
+// LEGADO: alimentava a aba "Treinos do Dia" no Dashboard admin (Item 2 sessão
+// anterior). Mantido pra retrocompatibilidade caso alguma consumer externa
+// ainda dependa; a UI oficial agora usa /admin/trainings/by-date (agregado).
 exports.listTrainings = async (req, res) => {
   try {
     const cid = req.club?.id;

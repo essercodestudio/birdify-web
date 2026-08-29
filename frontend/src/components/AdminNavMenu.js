@@ -38,6 +38,9 @@ const GROUPS = [
     label: "Jogo",
     items: [
       { icon: LuTrophy, label: "Torneios", path: "/dashboard" },
+      // Item 1 (2026-08-28 tarde): "Treino do Dia" ganha entrada propria no menu,
+      // separada de Torneios. A tela agrupa treinos por DIA (nao por criador).
+      { icon: LuFlag, label: "Treino do Dia", path: "/admin/treinos" },
       { icon: LuCalendarClock, label: "Tee Times", path: "/admin/tee-bookings", match: ["/admin/tee-bookings", "/admin/tee-settings"] },
       { icon: LuLink, label: "Circuitos / Ligas", path: "/circuits" },
       { icon: LuFlag, label: "Gerenciar Campos", path: "/courses" },

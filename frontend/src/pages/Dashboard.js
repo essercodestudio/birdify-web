@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import AdminNavMenu from '../components/AdminNavMenu';
 import { downloadFile } from '../services/download';
 import { mediaUrl } from '../services/media';
-import { LuCalendarDays, LuMapPin, LuLink, LuTrash2, LuTrophy, LuFlag, LuUsers, LuCopy, LuCheck, LuUpload, LuX } from 'react-icons/lu';
+import { LuCalendarDays, LuMapPin, LuLink, LuTrash2, LuUpload, LuX } from 'react-icons/lu';
 import { TOURNAMENT_CATEGORIES } from '../utils/categories';
 
 // ─── helpers de fuso horário (Brasília) ──────────────────────────────────────
@@ -51,31 +51,14 @@ const validYear = (dateStr) => {
   return y >= 2020 && y <= 2035;
 };
 
-// Item 2 (2026-08-28): Dashboard antes só listava torneios; agora tem abas
-// Torneios | Treinos, mesmo padrão visual do AdminScoreAuditLog. Aba Torneios
-// mantém tudo (formulário + lista + ações). Aba Treinos é listagem consulta
-// dos treinos do módulo real (training_groups) — sem editar/excluir (o
-// criador é jogador; admin não deve exercer função de jogador).
-const TABS = [
-  { id: "tournament", label: "Torneios",       icon: LuTrophy },
-  { id: "training",   label: "Treinos do Dia", icon: LuFlag },
-];
-
-const STATUS_LABEL = {
-  aguardando: { text: "Sala de espera", color: "#94a3b8" },
-  ativo:      { text: "Em andamento",   color: "#22d3ee" },
-  finalizado: { text: "Finalizado",     color: "#22c55e" },
-  cancelado:  { text: "Cancelado",      color: "#ef4444" },
-};
-
+// Item 1+2 (2026-08-28 tarde): a aba "Treinos do Dia" que existia aqui foi
+// EXTRAÍDA pra tela própria em /admin/treinos (AdminTrainings), agrupada por
+// dia. O Dashboard voltou a ser só de torneios, alinhado ao pedido "Meus
+// Torneios mostra SÓ torneios de verdade".
 function Dashboard() {
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState('tournament');
   const [tournaments, setTournaments] = useState([]);
-  const [trainings, setTrainings] = useState([]);
-  const [trainingsLoading, setTrainingsLoading] = useState(false);
-  const [copiedTrainingId, setCopiedTrainingId] = useState(null);
   const [courses, setCourses] = useState([]);
 
   const [newTournamentName, setNewTournamentName] = useState('');
@@ -142,33 +125,6 @@ function Dashboard() {
       setCourses(response.data);
     } catch (error) { console.error("Erro ao buscar campos:", error); }
   }, []);
-
-  const fetchTrainings = useCallback(async () => {
-    setTrainingsLoading(true);
-    try {
-      const res = await api.get('/admin/trainings');
-      setTrainings(res.data || []);
-    } catch (error) {
-      console.error("Erro ao buscar treinos (admin):", error);
-      setTrainings([]);
-    } finally {
-      setTrainingsLoading(false);
-    }
-  }, []);
-
-  // Carrega a lista da aba só quando ela é ativada — evita chamada extra pra
-  // admin que só vem pra aba Torneios (fluxo mais comum).
-  useEffect(() => {
-    if (activeTab === 'training' && trainings.length === 0) fetchTrainings();
-  }, [activeTab, trainings.length, fetchTrainings]);
-
-  const handleCopyTrainingLink = (groupId) => {
-    const link = `${window.location.origin}/treino/${groupId}/ranking`;
-    navigator.clipboard.writeText(link).then(() => {
-      setCopiedTrainingId(groupId);
-      setTimeout(() => setCopiedTrainingId((c) => (c === groupId ? null : c)), 1600);
-    }).catch(() => alert('Não consegui copiar o link.'));
-  };
 
   useEffect(() => {
     const parsedUser = getUser();
@@ -413,40 +369,6 @@ function Dashboard() {
       <AdminNavMenu />
       <h1 style={{fontSize: '24px', margin: '0 0 20px 0'}}>Painel do Organizador</h1>
 
-      {/* Tabs Torneios | Treinos — mesmo padrão do AdminScoreAuditLog */}
-      <div role="tablist" style={{ display: 'flex', gap: 8, marginBottom: 24, borderBottom: `1px solid ${theme.cardLight}` }}>
-        {TABS.map(t => {
-          const Icon = t.icon;
-          const active = t.id === activeTab;
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setActiveTab(t.id)}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: 'transparent',
-                color: active ? theme.accent : theme.textMuted,
-                border: 'none',
-                borderBottom: `2px solid ${active ? theme.accent : 'transparent'}`,
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <Icon size={16} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeTab === 'tournament' && (
-      <>
       <div style={styles.card}>
         <h2 style={{color: isEditing ? theme.info : theme.gold, marginTop: 0}}>
           {isEditing ? 'Editar Torneio' : 'Novo Torneio'}
@@ -753,77 +675,6 @@ function Dashboard() {
         </div>
         );
       })}
-      </>
-      )}
-
-      {activeTab === 'training' && (
-        <>
-          <h3 style={{color: theme.textMuted, fontSize: '14px', letterSpacing: '1px', marginBottom: '15px', display: 'flex', alignItems: 'center', gap: 8}}>
-            <LuFlag size={15} />
-            TREINOS DO DIA (últimos 200)
-          </h3>
-          {trainingsLoading && (
-            <p style={{textAlign: 'center', color: theme.textMuted, padding: 24}}>Carregando treinos...</p>
-          )}
-          {!trainingsLoading && trainings.length === 0 && (
-            <p style={{textAlign: 'center', color: theme.textMuted, padding: 30, backgroundColor: theme.card, borderRadius: 12}}>
-              Nenhum treino registrado ainda.
-            </p>
-          )}
-          {!trainingsLoading && trainings.map(tr => {
-            const status = STATUS_LABEL[tr.status] || { text: tr.status, color: theme.textMuted };
-            const copied = copiedTrainingId === tr.id;
-            return (
-              <div key={tr.id} style={{...styles.tournamentItem, borderLeft: `6px solid ${status.color}`}}>
-                <div>
-                  <div style={{fontSize: '17px', fontWeight: 'bold'}}>{tr.group_name || `Treino #${tr.id}`}</div>
-                  <div style={{fontSize: '13px', color: theme.textMuted, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6}}>
-                    <LuMapPin size={13} />
-                    {tr.course_name || 'Campo não informado'}
-                  </div>
-                  <div style={{fontSize: '12px', color: theme.textMuted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6}}>
-                    <LuCalendarDays size={13} />
-                    {fmtBR(tr.created_at)}
-                  </div>
-                  <div style={{fontSize: '12px', color: theme.textMuted, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6}}>
-                    <LuUsers size={13} />
-                    {tr.players_count} atleta(s) · criador: {tr.creator_name || '—'}
-                  </div>
-                  <div style={{marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap'}}>
-                    <span style={{backgroundColor: status.color, color: '#000', fontSize: 10, padding: '3px 8px', borderRadius: 10, fontWeight: 'bold', textTransform: 'uppercase'}}>
-                      {status.text}
-                    </span>
-                    <span style={{backgroundColor: theme.cardLight, color: theme.textMuted, fontSize: 10, padding: '3px 8px', borderRadius: 10, fontWeight: 'bold'}}>
-                      código {tr.access_code}
-                    </span>
-                    {tr.holes_played_total > 0 && (
-                      <span style={{backgroundColor: theme.cardLight, color: theme.textMuted, fontSize: 10, padding: '3px 8px', borderRadius: 10, fontWeight: 'bold'}}>
-                        {tr.holes_played_total} buracos anotados
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div style={{display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end'}}>
-                  <button
-                    onClick={() => handleCopyTrainingLink(tr.id)}
-                    style={{...styles.btnAction, backgroundColor: copied ? theme.accent : '#fff', color: '#000'}}
-                    aria-label="Copiar link público do ranking"
-                  >
-                    {copied ? <LuCheck size={12} /> : <LuCopy size={12} />}
-                    <span style={{marginLeft: 4}}>{copied ? 'COPIADO' : 'LINK'}</span>
-                  </button>
-                  <button
-                    onClick={() => navigate(`/treino/${tr.id}/ranking`)}
-                    style={{...styles.btnAction, backgroundColor: theme.gold, color: '#000'}}
-                  >
-                    RANKING
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </>
-      )}
     </div>
   );
 }
