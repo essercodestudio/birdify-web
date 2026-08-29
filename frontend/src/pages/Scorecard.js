@@ -223,7 +223,12 @@ function Scorecard() {
       const roundsList = Array.isArray(tourRes.data.rounds) ? tourRes.data.rounds : [];
       setTotalRounds(tr);
       setRounds(roundsList);
-      const autoRound = pickCurrentRound(roundsList);
+      // Bloco D · commit 5: Opcao B — cada grupo pertence a UMA rodada. Se o
+      // backend entregou group.round_number, usa direto (autoritativo). Fallback
+      // pra pickCurrentRound pela data BRT so quando o grupo nao declara round
+      // (torneio single-round pre-migration OU dado legado sem coluna).
+      const groupRound = myGroupData?.round_number ? Number(myGroupData.round_number) : null;
+      const autoRound = groupRound || pickCurrentRound(roundsList);
       setCurrentRound(autoRound);
       // Para multi-rodada, o CURSO relevante é o da RODADA (cada round pode ser
       // num campo diferente). Single-round cai no fallback do course do torneio.

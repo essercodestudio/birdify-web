@@ -166,6 +166,25 @@ function PlayerHome() {
           clearMatchSession(saved.id, saved.tournament_id);
           return;
         }
+        // Bloco D · commit 5: se o grupo salvo pertence a uma rodada cujo
+        // dia BRT ja passou (Opcao B), limpa a sessao — o sócio precisa
+        // entrar com o NOVO código da rodada de hoje. Sem isso, o banner
+        // "Continuar partida" levaria pra scorecard de rodada anterior.
+        const totalRounds = Number(tournament.total_rounds) || 1;
+        const savedRound = Number(saved.round_number) || 1;
+        if (totalRounds > 1 && Array.isArray(tournament.rounds)) {
+          const savedRoundInfo = tournament.rounds.find(r => Number(r.round_number) === savedRound);
+          if (savedRoundInfo?.round_date) {
+            const savedDayBRT = new Date(savedRoundInfo.round_date)
+              .toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+            const todayBRT = new Date()
+              .toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+            if (savedDayBRT < todayBRT) {
+              clearMatchSession(saved.id, saved.tournament_id);
+              return;
+            }
+          }
+        }
         setActiveSession({ group: saved, tournament });
       } catch (err) {
         // 404 = torneio deletado → limpa. Falha de rede → mantém e tenta de novo depois.
@@ -228,7 +247,14 @@ function PlayerHome() {
         setHandicaps(initialHandicaps);
         setShowHandicapModal(true);
       } else {
-        localStorage.setItem("activeGroup", JSON.stringify({ ...group, savedAt: Date.now() }));
+        // Bloco D · commit 5: preservar round_number (vem do backend commit 2)
+        // no localStorage — o Scorecard usa autoritativo e o effect abaixo
+        // invalida a sessao quando a rodada do grupo salvo ja passou.
+        localStorage.setItem("activeGroup", JSON.stringify({
+          ...group,
+          round_number: group.round_number ? Number(group.round_number) : 1,
+          savedAt: Date.now(),
+        }));
         navigate(`/scorecard/${group.id}`);
       }
     } catch (error) {
@@ -265,7 +291,11 @@ function PlayerHome() {
         players_data: playersData,
       });
 
-      localStorage.setItem("activeGroup", JSON.stringify({ ...pendingGroup, savedAt: Date.now() }));
+      localStorage.setItem("activeGroup", JSON.stringify({
+        ...pendingGroup,
+        round_number: pendingGroup.round_number ? Number(pendingGroup.round_number) : 1,
+        savedAt: Date.now(),
+      }));
       setShowHandicapModal(false);
       navigate(`/scorecard/${pendingGroup.id}`);
     } catch (error) {
