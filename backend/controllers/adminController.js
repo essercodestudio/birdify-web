@@ -41,9 +41,12 @@ exports.getDashboardKPIs = async (req, res) => {
       ),
 
       // 2. Torneios criados no mês corrente
+      // Filtro NOT REGEXP: exclui fantasmas "Treino AAAA-MM-DD" gerados pelo cron
+      // antigo (removido no Item 3). Sem o filtro, KPI infla com dados sujos.
       db.query(
         `SELECT COUNT(*) AS n FROM tournaments
           WHERE club_id = ?
+            AND name NOT REGEXP '^Treino [0-9]{4}-[0-9]{2}-[0-9]{2}$'
             AND YEAR(start_date)  = YEAR(NOW())
             AND MONTH(start_date) = MONTH(NOW())`,
         [cid]
@@ -52,7 +55,8 @@ exports.getDashboardKPIs = async (req, res) => {
       // 3. Torneios futuros ativos
       db.query(
         `SELECT COUNT(*) AS n FROM tournaments
-          WHERE club_id = ? AND start_date > NOW() AND status = 'ativo'`,
+          WHERE club_id = ? AND start_date > NOW() AND status = 'ativo'
+            AND name NOT REGEXP '^Treino [0-9]{4}-[0-9]{2}-[0-9]{2}$'`,
         [cid]
       ),
 
@@ -322,7 +326,12 @@ exports.getOnboardingChecklist = async (req, res) => {
       [cid]
     );
     const [[{ n: tournamentCount }]] = await db.query(
-      `SELECT COUNT(*) AS n FROM tournaments WHERE club_id = ?`,
+      // Filtro NOT REGEXP: fantasma "Treino AAAA-MM-DD" não conta como "torneio
+      // criado" — senão a etapa "Criar primeiro torneio" do onboarding aparece
+      // done pra clube que nunca criou nenhum real.
+      `SELECT COUNT(*) AS n FROM tournaments
+        WHERE club_id = ?
+          AND name NOT REGEXP '^Treino [0-9]{4}-[0-9]{2}-[0-9]{2}$'`,
       [cid]
     );
     const [[{ n: playerCount }]] = await db.query(

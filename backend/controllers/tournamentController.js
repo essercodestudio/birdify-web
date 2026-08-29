@@ -6,13 +6,18 @@ exports.listTournaments = async (req, res) => {
         // Pega o ID do jogador que a tela enviou para saber se ele já está inscrito
         const userId = req.query.user_id || 0; 
 
+        // Filtro NOT REGEXP: esconde registros legados "Treino AAAA-MM-DD" gerados
+        // pelo cron da meia-noite antes do fix do Item 3 (commit 67a5000). O cron
+        // foi removido, mas as linhas ficaram na base — sem esse filtro elas
+        // aparecem no PlayerHome como torneio aberto pra inscrição.
         const query = `
-            SELECT t.*, 
+            SELECT t.*,
                    c.name as course_name, c.city as course_city, c.state as course_state,
                    (SELECT COUNT(*) FROM inscriptions i WHERE i.tournament_id = t.id AND i.user_id = ?) as is_subscribed
             FROM tournaments t
             LEFT JOIN courses c ON t.course_id = c.id
             WHERE t.club_id = ?
+              AND t.name NOT REGEXP '^Treino [0-9]{4}-[0-9]{2}-[0-9]{2}$'
             ORDER BY t.start_date ASC
         `;
         

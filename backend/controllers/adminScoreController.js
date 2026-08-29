@@ -44,11 +44,14 @@ function deriveAction(previous, next) {
 
 exports.listTournaments = async (req, res) => {
   try {
+    // Filtro NOT REGEXP: ver comentário em tournamentController.listTournaments.
+    // Editor de tacadas nunca deve oferecer fantasma "Treino AAAA-MM-DD" pra edição.
     const [rows] = await db.execute(
       `SELECT t.id, t.name, t.start_date, t.course_id, t.total_rounds, c.name AS course_name
          FROM tournaments t
          LEFT JOIN courses c ON c.id = t.course_id
         WHERE t.club_id = ?
+          AND t.name NOT REGEXP '^Treino [0-9]{4}-[0-9]{2}-[0-9]{2}$'
         ORDER BY t.start_date DESC, t.id DESC`,
       [req.club.id]
     );
