@@ -4,6 +4,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { LuEye, LuEyeOff } from "react-icons/lu";
 import { ThemeContext } from "../App";
 import logoImg from "../assets/logo_birdify.png";
+import { mediaUrl } from "../services/media";
 
 function Register() {
   const navigate = useNavigate();
@@ -163,7 +164,7 @@ function Register() {
       <div style={styles.formBox}>
         <div style={styles.logoContainer}>
           <img
-            src={clubTheme?.logo_url || logoImg}
+            src={clubTheme?.logo_url ? mediaUrl(clubTheme.logo_url) : logoImg}
             alt={`${clubTheme?.name || "Birdify"} Logo`}
             style={styles.logoImage}
           />

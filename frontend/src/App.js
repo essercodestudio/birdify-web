@@ -197,7 +197,7 @@ function App() {
         if (data.logo_url) {
           const favicon = document.getElementById("favicon");
           if (favicon) {
-            favicon.href = data.logo_url;
+            favicon.href = mediaUrl(data.logo_url);
           }
         }
 

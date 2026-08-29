@@ -8,6 +8,7 @@ import { useContext, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { ThemeContext } from "../App";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
+import { mediaUrl } from "../services/media";
 import { logout } from "../services/session";
 import {
   LuChartBar,
@@ -100,7 +101,7 @@ export default function AdminNavMenu() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingBottom: 14, marginBottom: 20, borderBottom: `1px solid ${theme.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           {club?.logo_url && (
-            <img src={club.logo_url} alt="" style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6 }} />
+            <img src={mediaUrl(club.logo_url)} alt="" style={{ height: 32, width: 32, objectFit: "contain", borderRadius: 6 }} />
           )}
           <span style={{ fontSize: 17, fontWeight: 800, color: theme.textMain, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {club?.name || "Birdify"}

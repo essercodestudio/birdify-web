@@ -5,7 +5,8 @@ import { getUser } from '../services/authStorage';
 import { useNavigate } from 'react-router-dom';
 import AdminNavMenu from '../components/AdminNavMenu';
 import { downloadFile } from '../services/download';
-import { LuCalendarDays, LuMapPin, LuLink, LuTrash2, LuTrophy, LuFlag, LuUsers, LuCopy, LuCheck } from 'react-icons/lu';
+import { mediaUrl } from '../services/media';
+import { LuCalendarDays, LuMapPin, LuLink, LuTrash2, LuTrophy, LuFlag, LuUsers, LuCopy, LuCheck, LuUpload, LuX } from 'react-icons/lu';
 import { TOURNAMENT_CATEGORIES } from '../utils/categories';
 
 // ─── helpers de fuso horário (Brasília) ──────────────────────────────────────
@@ -99,6 +100,7 @@ function Dashboard() {
   const [sponsors, setSponsors] = useState([]);
   const [sponsorName, setSponsorName] = useState('');
   const [sponsorLogo, setSponsorLogo] = useState('');
+  const [sponsorUploading, setSponsorUploading] = useState(false);
 
   // Fonte única das categorias — utils/categories.js (compartilhada com os leaderboards)
   const defaultCategories = TOURNAMENT_CATEGORIES;
@@ -191,6 +193,28 @@ function Dashboard() {
     if(sponsorName) {
         setSponsors([...sponsors, { name: sponsorName, image_url: sponsorLogo }]);
         setSponsorName(''); setSponsorLogo('');
+    }
+  };
+
+  // Upload da logo do patrocinador — reaproveita /api/sponsors/upload.
+  // Não adiciona à lista sozinho: preenche sponsorLogo e o admin clica em
+  // "ADICIONAR" quando o nome + logo estiverem prontos.
+  const handleSponsorLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setSponsorUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('logo', file);
+      const res = await api.post('/sponsors/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setSponsorLogo(res.data.url);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Falha no upload da logo.');
+    } finally {
+      setSponsorUploading(false);
     }
   };
 
@@ -627,15 +651,40 @@ function Dashboard() {
           </div>
 
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>4. PATROCINADORES</div>
-          <div style={styles.formGrid}>
-            <input style={styles.input} placeholder="Nome do Patrocinador" value={sponsorName} onChange={e => setSponsorName(e.target.value)} />
-            <input style={styles.input} placeholder="URL do Logo (https://...)" value={sponsorLogo} onChange={e => setSponsorLogo(e.target.value)} />
-            <button type="button" onClick={handleAddSponsor} style={{...styles.btnAction, backgroundColor: theme.info, height: '45px'}}>+ ADICIONAR</button>
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '15px', alignItems: 'end'}}>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>NOME</label>
+              <input style={styles.input} placeholder="Nome do Patrocinador" value={sponsorName} onChange={e => setSponsorName(e.target.value)} />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>LOGO (PNG/JPG até 3MB)</label>
+              <div style={{display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap'}}>
+                <label style={{display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 14px', backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: sponsorUploading ? 'wait' : 'pointer', fontWeight: 700, fontSize: 12}}>
+                  <LuUpload size={13} />
+                  {sponsorUploading ? 'Enviando...' : (sponsorLogo ? 'Trocar' : 'Escolher arquivo')}
+                  <input type="file" accept="image/*" onChange={handleSponsorLogoUpload} disabled={sponsorUploading} style={{display: 'none'}} />
+                </label>
+                {sponsorLogo && (
+                  <div style={{display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', backgroundColor: '#fff', borderRadius: 6}}>
+                    <img src={mediaUrl(sponsorLogo)} alt="preview" style={{maxHeight: 32, maxWidth: 80, objectFit: 'contain'}} />
+                    <button type="button" onClick={() => setSponsorLogo('')} title="Remover logo escolhido" style={{background: 'transparent', border: 'none', color: theme.danger, cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center'}}>
+                      <LuX size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+            <button type="button" onClick={handleAddSponsor} disabled={!sponsorName.trim()} style={{...styles.btnAction, backgroundColor: sponsorName.trim() ? theme.info : theme.cardLight, height: '45px', cursor: sponsorName.trim() ? 'pointer' : 'not-allowed', opacity: sponsorName.trim() ? 1 : 0.6}}>+ ADICIONAR</button>
           </div>
           {sponsors.length > 0 && (
             <div style={{display: 'flex', gap: '10px', marginTop: '15px', flexWrap: 'wrap'}}>
               {sponsors.map((s, idx) => (
-                <div key={idx} style={{backgroundColor: theme.bg, padding: '5px 15px', borderRadius: '20px', border: `1px solid ${theme.cardLight}`, display: 'flex', alignItems: 'center', gap: '10px'}}>
+                <div key={idx} style={{backgroundColor: theme.bg, padding: '5px 10px 5px 5px', borderRadius: '20px', border: `1px solid ${theme.cardLight}`, display: 'flex', alignItems: 'center', gap: '8px'}}>
+                  {s.image_url && (
+                    <div style={{width: 26, height: 26, borderRadius: '50%', backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0}}>
+                      <img src={mediaUrl(s.image_url)} alt={s.name} style={{maxWidth: '100%', maxHeight: '100%', objectFit: 'contain'}} />
+                    </div>
+                  )}
                   <span style={{fontSize: '12px'}}>{s.name}</span>
                   <button type="button" onClick={() => setSponsors(sponsors.filter((_, i) => i !== idx))} style={{background: 'none', border: 'none', color: theme.danger, cursor: 'pointer', fontWeight: 'bold'}}>X</button>
                 </div>

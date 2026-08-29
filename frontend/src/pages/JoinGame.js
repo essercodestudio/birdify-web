@@ -6,6 +6,7 @@ import { logout } from '../services/session';
 import { useNavigate } from 'react-router-dom';
 import logoImg from '../assets/logo_birdify.png';
 import { ThemeContext } from '../App';
+import { mediaUrl } from '../services/media';
 import TeeSuggestionChip from '../components/TeeSuggestionChip';
 
 function JoinGame() {
@@ -152,9 +153,9 @@ function JoinGame() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <img 
-          src={clubTheme.logo_url || logoImg} 
-          alt={`Logo ${clubTheme.name || 'Birdify'}`} 
+        <img
+          src={clubTheme.logo_url ? mediaUrl(clubTheme.logo_url) : logoImg}
+          alt={`Logo ${clubTheme.name || 'Birdify'}`}
           style={{ width: '180px', height: 'auto', marginBottom: '20px', objectFit: 'contain' }}
         />
         

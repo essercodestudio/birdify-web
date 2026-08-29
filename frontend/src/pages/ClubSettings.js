@@ -4,9 +4,10 @@ import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 import { getUser } from "../services/authStorage";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
+import { mediaUrl } from "../services/media";
 import AdminNavMenu from "../components/AdminNavMenu";
 import { useIsMobile } from "../hooks/useIsMobile";
-import { LuSettings, LuSave, LuEye } from "react-icons/lu";
+import { LuSettings, LuSave, LuEye, LuUpload, LuX } from "react-icons/lu";
 
 const isHex = (s) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s || "");
 
@@ -28,6 +29,7 @@ function ClubSettings() {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [ok, setOk] = useState(null);
 
@@ -72,6 +74,31 @@ function ClubSettings() {
   }, [navigate, load]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Upload de imagem — reaproveita /api/sponsors/upload (endpoint multi-uso pra
+  // qualquer imagem admin). Retorna path relativo /uploads/sponsors/... que
+  // mediaUrl() serve corretamente em dev e prod. NÃO chama /admin/club — só
+  // atualiza o form; o save final é pelo botão SALVAR.
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite reescolher o mesmo arquivo
+    if (!file) return;
+    setError(null);
+    setOk(null);
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("logo", file);
+      const res = await api.post("/sponsors/upload", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      set("logo_url", res.data.url);
+    } catch (err) {
+      setError(err.response?.data?.error || "Falha no upload da logo.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSave = async () => {
     setOk(null);
@@ -197,14 +224,34 @@ function ClubSettings() {
               </div>
             </Field>
 
-            <Field theme={theme} label="URL do logo" hint="Cole uma URL pública (https://…) ou o caminho retornado pelo upload.">
-              <input
-                type="text"
-                value={form.logo_url}
-                onChange={(e) => set("logo_url", e.target.value)}
-                placeholder="https://.../logo.png"
-                style={{ width: "100%", padding: 12, borderRadius: 8, border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg, color: theme.textMain, boxSizing: "border-box" }}
-              />
+            <Field theme={theme} label="Logo do clube" hint="PNG/JPG/SVG até 3MB. Fundo transparente fica melhor.">
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 16px", backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: uploading ? "wait" : "pointer", fontWeight: 700, fontSize: 13 }}>
+                  <LuUpload size={14} />
+                  {uploading ? "Enviando..." : (form.logo_url ? "Trocar logo" : "Escolher arquivo")}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    disabled={uploading}
+                    style={{ display: "none" }}
+                  />
+                </label>
+                {form.logo_url && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", backgroundColor: "#fff", borderRadius: 6 }}>
+                    <img src={mediaUrl(form.logo_url)} alt="Logo atual" style={{ maxHeight: 40, maxWidth: 120, objectFit: "contain" }} />
+                    <button
+                      type="button"
+                      onClick={() => set("logo_url", "")}
+                      title="Remover logo"
+                      aria-label="Remover logo"
+                      style={{ background: "transparent", border: "none", color: theme.danger, cursor: "pointer", padding: 2, display: "flex", alignItems: "center" }}
+                    >
+                      <LuX size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
             </Field>
 
             <Field theme={theme} label="Domínio">
@@ -249,7 +296,7 @@ function ClubSettings() {
             }}>
               {form.logo_url ? (
                 <img
-                  src={form.logo_url}
+                  src={mediaUrl(form.logo_url)}
                   alt="Logo"
                   style={{ maxHeight: 80, maxWidth: "100%", objectFit: "contain", marginBottom: 16 }}
                   onError={(e) => { e.currentTarget.style.display = "none"; }}

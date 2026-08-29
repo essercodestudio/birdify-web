@@ -4,6 +4,7 @@ import api from "../services/api";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { LuArrowLeft, LuFlag } from "react-icons/lu";
 import { applyCategoryFilter, isNetCategory } from "../utils/categories";
+import { mediaUrl } from "../services/media";
 
 const theme = {
   bg:        "#0f172a",
@@ -293,7 +294,7 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
         <div style={{ textAlign: "center", paddingBottom: "20px" }}>
           <p style={{ fontSize: "11px", color: theme.textMuted, marginBottom: "15px", letterSpacing: "2px", fontWeight: "bold" }}>PATROCÍNIO OFICIAL</p>
           <div style={{ height: "90px", display: "flex", justifyContent: "center", alignItems: "center" }}>
-            <img key={currentSponsorIndex} src={sponsors[currentSponsorIndex].image_url} alt="Patrocinador" style={{ maxHeight: "100%", maxWidth: "250px", objectFit: "contain", animation: "fadeIn 0.5s ease-in" }} />
+            <img key={currentSponsorIndex} src={mediaUrl(sponsors[currentSponsorIndex].image_url)} alt="Patrocinador" style={{ maxHeight: "100%", maxWidth: "250px", objectFit: "contain", animation: "fadeIn 0.5s ease-in" }} />
           </div>
           {sponsors.length > 1 && (
             <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginTop: "15px" }}>

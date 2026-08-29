@@ -1329,7 +1329,7 @@ function PlayerHome() {
                 <div style={{ height: 90, display: "flex", justifyContent: "center", alignItems: "center" }}>
                   <img
                     key={currentSponsorIndex}
-                    src={selectedTournament.sponsors[currentSponsorIndex].image_url}
+                    src={mediaUrl(selectedTournament.sponsors[currentSponsorIndex].image_url)}
                     alt={selectedTournament.sponsors[currentSponsorIndex].name || "Patrocinador"}
                     style={{ maxHeight: "100%", maxWidth: 250, objectFit: "contain", animation: "fadeIn 0.5s ease-in" }}
                   />

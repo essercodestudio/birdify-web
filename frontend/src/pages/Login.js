@@ -5,6 +5,7 @@ import { setSession } from "../services/authStorage";
 import { useNavigate, Link } from "react-router-dom";
 import { LuEye, LuEyeOff } from "react-icons/lu";
 import logoImg from "../assets/logo_birdify.png";
+import { mediaUrl } from "../services/media";
 
 // 2. Importando a Memória Global do Camaleão
 import { ThemeContext, useAdminMembership } from "../App";
@@ -157,10 +158,10 @@ function Login() {
       <div style={styles.formBox}>
         <div style={styles.logoContainer}>
           {/* 5. A MÁGICA DA LOGO: Usa a do banco, ou a do Birdify se não tiver */}
-          <img 
-            src={clubTheme.logo_url || logoImg} 
-            alt={`${clubTheme.name || 'Birdify'} Logo`} 
-            style={styles.logoImage} 
+          <img
+            src={clubTheme.logo_url ? mediaUrl(clubTheme.logo_url) : logoImg}
+            alt={`${clubTheme.name || 'Birdify'} Logo`}
+            style={styles.logoImage}
           />
         </div>
 
