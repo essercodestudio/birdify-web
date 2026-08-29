@@ -16,15 +16,25 @@ function generateAccessCode(length = 4) {
 exports.createGroup = async (req, res) => {
   try {
     const { tournament_id, group_name, starting_hole, tee_time } = req.body;
+    // Bloco D · commit 2: round_number opcional (default 1 = comportamento antigo).
+    // Frontend antigo que nao envia continua funcionando exatamente como antes.
+    const roundNumber = Number(req.body.round_number) || 1;
 
-    // Verifica se o torneio pertence ao clube antes de criar o grupo, e já pega o formato
+    // Pega format + total_rounds pra validar o round contra o teto do torneio
     const [tournamentCheck] = await db.execute(
-      'SELECT id, format FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, format, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
 
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
+    }
+
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    if (!Number.isInteger(roundNumber) || roundNumber < 1 || roundNumber > totalRounds) {
+      return res.status(400).json({
+        error: `Rodada invalida: torneio tem ${totalRounds} rodada(s), tentou criar grupo na R${roundNumber}.`,
+      });
     }
 
     const format = tournamentCheck[0].format || 'shotgun';
@@ -43,14 +53,20 @@ exports.createGroup = async (req, res) => {
       const candidate = generateAccessCode();
       try {
         const [result] = await db.execute(
-          "INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time) VALUES (?, ?, ?, ?, ?)",
-          [tournament_id, group_name, candidate, hole, time]
+          "INSERT INTO tournament_groups (tournament_id, round_number, group_name, access_code, starting_hole, tee_time) VALUES (?, ?, ?, ?, ?, ?)",
+          [tournament_id, roundNumber, group_name, candidate, hole, time]
         );
         access_code = candidate;
         insertId = result.insertId;
         break;
       } catch (e) {
-        if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+        // UNIQUE em access_code OU em (tournament_id, round_number, group_name)
+        if (e.code === "ER_DUP_ENTRY") {
+          if (String(e.message).includes('uk_tgroup_round_name')) {
+            return res.status(409).json({ error: `Ja existe um grupo com esse nome na R${roundNumber}.` });
+          }
+          attempts++; continue;
+        }
         throw e;
       }
     }
@@ -61,7 +77,8 @@ exports.createGroup = async (req, res) => {
     res.status(201).json({
       message: "Grupo criado!",
       groupId: insertId,
-      access_code
+      access_code,
+      round_number: roundNumber,
     });
   } catch (error) {
     console.error('Erro ao criar grupo:', error);
@@ -122,23 +139,39 @@ exports.updateGroup = async (req, res) => {
 };
 
 // Listar Grupos COM Jogadores, Categoria, Sexo e Handicap
+// Bloco D · commit 2: aceita ?round=N opcional (filtra por rodada).
+// Sem o param retorna todos os rounds (compat com callers antigos).
+// SEMPRE inclui round_number no response — frontend novo usa pra saber
+// em qual rodada esta o grupo (Scorecard.js currentRound).
 exports.getGroupsByTournament = async (req, res) => {
   try {
     const { tournamentId } = req.params;
+    const roundFilter = req.query.round ? Number(req.query.round) : null;
+    if (roundFilter !== null && (!Number.isInteger(roundFilter) || roundFilter < 1)) {
+      return res.status(400).json({ error: 'round invalido.' });
+    }
 
     // Verifica se o torneio pertence ao clube
     const [tournamentCheck] = await db.execute(
       'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
       [tournamentId, req.club.id]
     );
-    
+
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
 
+    const params = [tournamentId];
+    let roundWhere = '';
+    if (roundFilter !== null) {
+      roundWhere = ' AND g.round_number = ?';
+      params.push(roundFilter);
+    }
+
     const query = `
       SELECT
-        g.id as group_id, g.group_name, g.access_code, g.starting_hole, g.tee_time,
+        g.id as group_id, g.round_number, g.group_name, g.access_code,
+        g.starting_hole, g.tee_time,
         u.id as user_id, u.name as user_name, u.email, u.gender,
         gp.handicap,
         c.name as category_name
@@ -147,11 +180,11 @@ exports.getGroupsByTournament = async (req, res) => {
       LEFT JOIN users u ON gp.user_id = u.id
       LEFT JOIN inscriptions i ON i.user_id = u.id AND i.tournament_id = g.tournament_id AND i.status = 'APPROVED'
       LEFT JOIN tournament_categories c ON i.category_id = c.id
-      WHERE g.tournament_id = ?
-      ORDER BY g.tee_time IS NULL, g.tee_time ASC, g.starting_hole ASC, g.group_name ASC, u.name
+      WHERE g.tournament_id = ?${roundWhere}
+      ORDER BY g.round_number ASC, g.tee_time IS NULL, g.tee_time ASC, g.starting_hole ASC, g.group_name ASC, u.name
     `;
 
-    const [results] = await db.execute(query, [tournamentId]);
+    const [results] = await db.execute(query, params);
 
     const groupsMap = {};
 
@@ -159,6 +192,7 @@ exports.getGroupsByTournament = async (req, res) => {
       if (!groupsMap[row.group_id]) {
         groupsMap[row.group_id] = {
           id: row.group_id,
+          round_number: Number(row.round_number) || 1,
           group_name: row.group_name,
           access_code: row.access_code,
           starting_hole: row.starting_hole,
@@ -169,11 +203,11 @@ exports.getGroupsByTournament = async (req, res) => {
 
       if (row.user_id) {
         groupsMap[row.group_id].players.push({
-          id: row.user_id, 
-          name: row.user_name, 
-          email: row.email, 
+          id: row.user_id,
+          name: row.user_name,
+          email: row.email,
           gender: row.gender || "M",
-          handicap: row.handicap, 
+          handicap: row.handicap,
           category: row.category_name || "Sem Categoria"
         });
       }
@@ -187,47 +221,52 @@ exports.getGroupsByTournament = async (req, res) => {
 };
 
 // Adicionar Jogador com Verificação
+// Bloco D · commit 2: duplicata agora e verificada POR RODADA — o mesmo
+// jogador pode estar em grupos diferentes em rodadas diferentes (essencial
+// pro re-seeding entre R1 e R2). Continua bloqueado 2 grupos na MESMA
+// rodada porque uma rodada = 1 partida por atleta.
 exports.addPlayerToGroup = async (req, res) => {
   try {
     const { group_id, user_id } = req.body;
 
-    // 1. Verificar se o grupo existe, pegar o tournament_id E verificar se pertence ao clube
-    const findTournamentQuery = `
-      SELECT tg.tournament_id 
-      FROM tournament_groups tg
-      JOIN tournaments t ON tg.tournament_id = t.id
-      WHERE tg.id = ? AND t.club_id = ?
-    `;
-    const [groupResults] = await db.execute(findTournamentQuery, [group_id, req.club.id]);
-    
+    // 1. Pega tournament_id + round_number do grupo alvo (com validacao de clube)
+    const [groupResults] = await db.execute(
+      `SELECT tg.tournament_id, tg.round_number
+         FROM tournament_groups tg
+         JOIN tournaments t ON tg.tournament_id = t.id
+        WHERE tg.id = ? AND t.club_id = ?`,
+      [group_id, req.club.id]
+    );
+
     if (groupResults.length === 0) {
       return res.status(404).json({ message: "Grupo não encontrado ou acesso negado." });
     }
 
-    const tournamentId = groupResults[0].tournament_id;
+    const { tournament_id: tournamentId, round_number: roundNumber } = groupResults[0];
 
-    // 2. Verificar se o jogador já está em outro grupo neste torneio
-    const checkPlayerQuery = `
-      SELECT gp.user_id 
-      FROM group_players gp
-      JOIN tournament_groups tg ON gp.group_id = tg.id
-      WHERE tg.tournament_id = ? AND gp.user_id = ?
-    `;
-
-    const [checkResults] = await db.execute(checkPlayerQuery, [tournamentId, user_id]);
+    // 2. Duplicata SO na mesma rodada
+    const [checkResults] = await db.execute(
+      `SELECT gp.user_id
+         FROM group_players gp
+         JOIN tournament_groups tg ON gp.group_id = tg.id
+        WHERE tg.tournament_id = ? AND tg.round_number = ? AND gp.user_id = ?`,
+      [tournamentId, roundNumber, user_id]
+    );
 
     if (checkResults.length > 0) {
-      return res.status(400).json({ 
-        message: "⚠️ Este jogador já está inscrito em outro grupo deste torneio!" 
+      return res.status(400).json({
+        message: `Este jogador ja esta em outro grupo da R${roundNumber} deste torneio.`
       });
     }
 
     // 3. Adicionar jogador ao grupo
-    const insertQuery = "INSERT INTO group_players (group_id, user_id) VALUES (?, ?)";
-    await db.execute(insertQuery, [group_id, user_id]);
-    
+    await db.execute(
+      "INSERT INTO group_players (group_id, user_id) VALUES (?, ?)",
+      [group_id, user_id]
+    );
+
     res.status(200).json({ message: "Jogador adicionado com sucesso!" });
-    
+
   } catch (error) {
     console.error('Erro ao adicionar jogador:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
@@ -235,6 +274,9 @@ exports.addPlayerToGroup = async (req, res) => {
 };
 
 // --- FAXINA 1: Remover jogador do grupo E apagar seus scores fantasmas ---
+// Bloco D · commit 2: apaga scores SO da rodada do grupo removido. Se o
+// jogador esta em R1 e R2 e o admin remove ele do grupo da R2, os scores
+// da R1 continuam preservados.
 exports.removePlayer = async (req, res) => {
   try {
     const { groupId, userId } = req.params;
@@ -243,38 +285,38 @@ exports.removePlayer = async (req, res) => {
       return res.status(400).json({ error: "ID do grupo ou do jogador não informados." });
     }
 
-    // Descobre o ID do torneio antes de apagar o jogador E verifica se pertence ao clube
     const [tResults] = await db.execute(
-      `SELECT tg.tournament_id 
-       FROM tournament_groups tg
-       JOIN tournaments t ON tg.tournament_id = t.id
-       WHERE tg.id = ? AND t.club_id = ?`, 
+      `SELECT tg.tournament_id, tg.round_number
+         FROM tournament_groups tg
+         JOIN tournaments t ON tg.tournament_id = t.id
+        WHERE tg.id = ? AND t.club_id = ?`,
       [groupId, req.club.id]
     );
-    
+
     if (tResults.length === 0) {
       return res.status(404).json({ error: "Grupo não encontrado ou acesso negado." });
     }
-    
-    const tId = tResults[0]?.tournament_id;
+
+    const tId = tResults[0].tournament_id;
+    const round = tResults[0].round_number;
 
     // 1. Remove o jogador do grupo
     await db.execute(
-      "DELETE FROM group_players WHERE group_id = ? AND user_id = ?", 
+      "DELETE FROM group_players WHERE group_id = ? AND user_id = ?",
       [groupId, userId]
     );
-    
-    // 2. Apaga os scores antigos dele (Se existir o ID do torneio)
+
+    // 2. Apaga scores DESSA RODADA especifica (nao mais do torneio inteiro)
     if (tId) {
       await db.execute(
-        "DELETE FROM scores WHERE tournament_id = ? AND user_id = ?", 
-        [tId, userId]
+        "DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND round_number = ?",
+        [tId, userId, round]
       );
-      res.status(200).json({ message: "Jogador e scores removidos com sucesso!" });
+      res.status(200).json({ message: "Jogador e scores da rodada removidos com sucesso!" });
     } else {
       res.status(200).json({ message: "Jogador removido com sucesso!" });
     }
-    
+
   } catch (error) {
     console.error('Erro ao remover jogador:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
@@ -282,31 +324,34 @@ exports.removePlayer = async (req, res) => {
 };
 
 // --- FAXINA 2: Excluir grupo inteiro E apagar TODOS os scores daquele grupo ---
+// Bloco D · commit 2: apaga scores SO da rodada do grupo (nao mais do torneio
+// inteiro). Sem isso, apagar grupo da R2 apagaria scores da R1 dos mesmos
+// jogadores por engano.
 exports.deleteGroup = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Descobre o Torneio e quem estava no grupo antes de apagar tudo E verifica se pertence ao clube
     const [tResults] = await db.execute(
-      `SELECT tg.tournament_id 
-       FROM tournament_groups tg
-       JOIN tournaments t ON tg.tournament_id = t.id
-       WHERE tg.id = ? AND t.club_id = ?`, 
+      `SELECT tg.tournament_id, tg.round_number
+         FROM tournament_groups tg
+         JOIN tournaments t ON tg.tournament_id = t.id
+        WHERE tg.id = ? AND t.club_id = ?`,
       [id, req.club.id]
     );
-    
+
     if (tResults.length === 0) {
       return res.status(404).json({ error: "Grupo não encontrado ou acesso negado." });
     }
-    
-    const tId = tResults[0]?.tournament_id;
+
+    const tId = tResults[0].tournament_id;
+    const round = tResults[0].round_number;
 
     // Busca os jogadores do grupo
     const [pResults] = await db.execute(
-      "SELECT user_id FROM group_players WHERE group_id = ?", 
+      "SELECT user_id FROM group_players WHERE group_id = ?",
       [id]
     );
-    
+
     const userIds = pResults.map(p => p.user_id);
 
     // 1. Apaga as ligações dos jogadores com o grupo
@@ -314,27 +359,23 @@ exports.deleteGroup = async (req, res) => {
 
     // 2. Apaga o grupo em si
     const [result] = await db.execute("DELETE FROM tournament_groups WHERE id = ?", [id]);
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Grupo não encontrado.' });
     }
 
-    // 3. Efeito Cascata: Apaga os scores velhos de todos os jogadores do grupo deletado.
-    // Placeholders expandidos manualmente porque db.execute (prepared statement) NÃO
-    // aceita array em cláusula IN(?) — passaria o array como parâmetro literal e
-    // quebraria. Só era invisível antes porque grupos manuais nasciam vazios;
-    // com auto-generate os grupos já vêm cheios e o DELETE dispara sempre.
+    // 3. Apaga scores DESSA RODADA especifica pros jogadores que estavam no grupo.
     if (tId && userIds.length > 0) {
       const placeholders = userIds.map(() => "?").join(",");
       await db.execute(
-        `DELETE FROM scores WHERE tournament_id = ? AND user_id IN (${placeholders})`,
-        [tId, ...userIds]
+        `DELETE FROM scores WHERE tournament_id = ? AND round_number = ? AND user_id IN (${placeholders})`,
+        [tId, round, ...userIds]
       );
-      res.json({ message: "Grupo e scores excluídos!" });
+      res.json({ message: "Grupo e scores da rodada excluídos!" });
     } else {
       res.json({ message: "Grupo excluído!" });
     }
-    
+
   } catch (error) {
     console.error('Erro ao excluir grupo:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
@@ -402,6 +443,9 @@ exports.joinGroup = async (req, res) => {
 
     // NOTA: joinGroup NÃO recebe req.club.id porque o jogador está acessando via código público
     // Esta rota é pública por natureza (jogadores entrando com código)
+    // Bloco D · commit 2: g.round_number ja vem via g.* — Scorecard.js usa isso
+    // pra saber em qual rodada esta o grupo (fim do autodescoberta por data BRT
+    // pra grupos que declaram round explicitamente).
     const groupQuery = `
       SELECT g.*, t.name as tournament_name, c.name as course_name, c.id as course_id
       FROM tournament_groups g
@@ -411,7 +455,7 @@ exports.joinGroup = async (req, res) => {
     `;
 
     const [groupResults] = await db.execute(groupQuery, [cleanCode]);
-    
+
     if (groupResults.length === 0) {
       return res.status(404).json({ message: "Código inválido ou não encontrado." });
     }
@@ -419,16 +463,16 @@ exports.joinGroup = async (req, res) => {
     const group = groupResults[0];
 
     const [playerResults] = await db.execute(
-      "SELECT * FROM group_players WHERE group_id = ? AND user_id = ?", 
+      "SELECT * FROM group_players WHERE group_id = ? AND user_id = ?",
       [group.id, user_id]
     );
-    
+
     if (playerResults.length === 0) {
-      return res.status(403).json({ 
-        message: `Você não está escalado no grupo "${group.group_name}".` 
+      return res.status(403).json({
+        message: `Você não está escalado no grupo "${group.group_name}".`
       });
     }
-    
+
     res.json({ group });
     
   } catch (error) {
@@ -488,13 +532,18 @@ exports.saveGroupHandicaps = async (req, res) => {
 exports.autoGenerateGroups = async (req, res) => {
   try {
     const { tournament_id, interval_minutes } = req.body;
+    // Bloco D · commit 2: round_number opcional (default 1). Torneio single-round
+    // continua funcionando exatamente igual. Multi-round: admin gera SO os
+    // grupos daquela rodada — R2 nao apaga R1.
+    const roundNumber = Number(req.body.round_number) || 1;
+
     if (!tournament_id) {
       return res.status(400).json({ error: "tournament_id obrigatório." });
     }
 
-    // 1. Torneio pertence ao clube? (pega format + start_date já pra usar depois)
+    // 1. Torneio pertence ao clube? (pega format + start_date + total_rounds)
     const [tCheck] = await db.execute(
-      "SELECT id, format, start_date FROM tournaments WHERE id = ? AND club_id = ?",
+      "SELECT id, format, start_date, total_rounds FROM tournaments WHERE id = ? AND club_id = ?",
       [tournament_id, req.club.id]
     );
     if (tCheck.length === 0) {
@@ -502,6 +551,13 @@ exports.autoGenerateGroups = async (req, res) => {
     }
     const format = tCheck[0].format || 'shotgun';
     const startDate = tCheck[0].start_date; // Date ou string
+    const totalRounds = Number(tCheck[0].total_rounds) || 1;
+
+    if (!Number.isInteger(roundNumber) || roundNumber < 1 || roundNumber > totalRounds) {
+      return res.status(400).json({
+        error: `Rodada invalida: torneio tem ${totalRounds} rodada(s), tentou gerar grupos na R${roundNumber}.`,
+      });
+    }
 
     let intervalMin = 10;
     if (format === 'tee_time') {
@@ -522,19 +578,23 @@ exports.autoGenerateGroups = async (req, res) => {
       return res.status(400).json({ error: "Não há inscritos aprovados para sortear." });
     }
 
-    // 3. Limpar scores antigos dos jogadores atualmente escalados (mesmo padrão do deleteGroup)
+    // 3. Limpar scores DA RODADA especificada, so pros jogadores escalados nela.
+    // Isso preserva scores de outras rodadas (R2 auto-generate nao apaga R1).
     await db.execute(
       `DELETE s FROM scores s
-       JOIN group_players gp ON gp.user_id = s.user_id
-       JOIN tournament_groups tg ON tg.id = gp.group_id
-       WHERE tg.tournament_id = ? AND s.tournament_id = ?`,
-      [tournament_id, tournament_id]
+         JOIN group_players gp ON gp.user_id = s.user_id
+         JOIN tournament_groups tg ON tg.id = gp.group_id
+        WHERE tg.tournament_id = ?
+          AND tg.round_number = ?
+          AND s.tournament_id = ?
+          AND s.round_number = ?`,
+      [tournament_id, roundNumber, tournament_id, roundNumber]
     );
 
-    // 4. Apagar grupos existentes (FK group_players tem ON DELETE CASCADE)
+    // 4. Apagar grupos existentes DESSA RODADA (FK group_players CASCADE)
     await db.execute(
-      "DELETE FROM tournament_groups WHERE tournament_id = ?",
-      [tournament_id]
+      "DELETE FROM tournament_groups WHERE tournament_id = ? AND round_number = ?",
+      [tournament_id, roundNumber]
     );
 
     // 5. Shuffle Fisher-Yates com crypto (mesmo RNG do generateAccessCode)
@@ -579,14 +639,20 @@ exports.autoGenerateGroups = async (req, res) => {
       }
 
       // Retry contra colisão do UNIQUE access_code
+      // Nome do flight: single-round mantem "Flight N" (compat); multi-round
+      // prefixa "R{N} · Flight N" pra tornar visualmente distinto entre rodadas
+      // (imprescindivel pra passar o UNIQUE uk_tgroup_round_name se o mesmo
+      // "Flight 1" existir em R1 e R2... espera, o UNIQUE ja permite pq inclui
+      // round_number. O prefixo e cosmetico — leitura mais facil pro admin).
+      const flightName = totalRounds > 1 ? `R${roundNumber} · Flight ${i + 1}` : `Flight ${i + 1}`;
       let groupId = null, attempts = 0;
       while (attempts < 20) {
         const candidate = generateAccessCode();
         try {
           const [ins] = await db.execute(
-            `INSERT INTO tournament_groups (tournament_id, group_name, access_code, starting_hole, tee_time)
-             VALUES (?, ?, ?, ?, ?)`,
-            [tournament_id, `Flight ${i + 1}`, candidate, hole, teeTime]
+            `INSERT INTO tournament_groups (tournament_id, round_number, group_name, access_code, starting_hole, tee_time)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [tournament_id, roundNumber, flightName, candidate, hole, teeTime]
           );
           groupId = ins.insertId;
           break;
@@ -613,6 +679,7 @@ exports.autoGenerateGroups = async (req, res) => {
       message: "Flights gerados com sucesso!",
       groupsCreated: nFlights,
       playersDistributed: userIds.length,
+      round_number: roundNumber,
     });
   } catch (error) {
     console.error("Erro ao gerar flights automáticos:", error);
@@ -637,15 +704,19 @@ exports.exportGroupsToExcel = async (req, res) => {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
 
+    // Bloco D · commit 2: inclui round_number no SELECT + ORDER BY, e prefixa
+    // colunas do Excel com Rodada. Torneio single-round mostra apenas "R1".
     const query = `
-      SELECT 
-        g.starting_hole as hole, 
-        g.group_name as time_or_group, 
+      SELECT
+        g.round_number,
+        g.starting_hole as hole,
+        g.group_name as time_or_group,
         g.access_code,
-        u.name as player_name, 
-        u.gender, 
+        u.name as player_name,
+        u.gender,
         c.name as category_name,
-        t.name as tournament_name
+        t.name as tournament_name,
+        t.total_rounds
       FROM tournament_groups g
       JOIN tournaments t ON g.tournament_id = t.id
       JOIN group_players gp ON g.id = gp.group_id
@@ -653,7 +724,7 @@ exports.exportGroupsToExcel = async (req, res) => {
       LEFT JOIN inscriptions i ON i.user_id = u.id AND i.tournament_id = g.tournament_id AND i.status = 'APPROVED'
       LEFT JOIN tournament_categories c ON i.category_id = c.id
       WHERE g.tournament_id = ?
-      ORDER BY CAST(g.starting_hole AS UNSIGNED) ASC, g.group_name ASC, u.name ASC
+      ORDER BY g.round_number ASC, CAST(g.starting_hole AS UNSIGNED) ASC, g.group_name ASC, u.name ASC
     `;
 
     const [results] = await db.execute(query, [tournamentId]);
@@ -668,7 +739,9 @@ exports.exportGroupsToExcel = async (req, res) => {
     const sheet = workbook.addWorksheet('Saídas - Draw');
 
     // Configura as colunas
+    const totalRounds = Number(results[0].total_rounds) || 1;
     sheet.columns = [
+      ...(totalRounds > 1 ? [{ header: 'Rodada', key: 'round', width: 8 }] : []),
       { header: 'Buraco', key: 'hole', width: 10 },
       { header: 'Horário / Grupo', key: 'time', width: 20 },
       { header: 'Cód. Acesso', key: 'code', width: 15 },
@@ -686,25 +759,29 @@ exports.exportGroupsToExcel = async (req, res) => {
     };
     sheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
-    let currentHoleAndGroup = null;
+    let currentGroupKey = null;
 
     results.forEach(row => {
-      let holeGroupCombo = `${row.hole}-${row.time_or_group}`;
-      
-      // A MÁGICA DE PULAR LINHA: Se o grupo mudou, insere uma linha vazia!
-      if (currentHoleAndGroup !== null && currentHoleAndGroup !== holeGroupCombo) {
-        sheet.addRow([]); 
-      }
-      currentHoleAndGroup = holeGroupCombo;
+      // Chave inclui round pra separar visualmente grupos de rodadas distintas
+      const groupKey = `${row.round_number}-${row.hole}-${row.time_or_group}`;
 
-      const newRow = sheet.addRow({
+      // A MÁGICA DE PULAR LINHA: Se o grupo mudou, insere uma linha vazia!
+      if (currentGroupKey !== null && currentGroupKey !== groupKey) {
+        sheet.addRow([]);
+      }
+      currentGroupKey = groupKey;
+
+      const rowData = {
         hole: row.hole || '-',
         time: row.time_or_group || '-',
         code: row.access_code || '-',
         player: row.player_name || 'Desconhecido',
         cat: row.category_name || 'Sem Categoria',
         gender: row.gender === 'M' || row.gender === 'Masculino' ? 'Masc' : 'Fem'
-      });
+      };
+      if (totalRounds > 1) rowData.round = `R${row.round_number}`;
+
+      const newRow = sheet.addRow(rowData);
 
       // Centraliza tudo, exceto o nome do jogador
       newRow.alignment = { horizontal: 'center', vertical: 'middle' };
