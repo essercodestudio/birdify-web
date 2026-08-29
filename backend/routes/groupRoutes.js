@@ -15,6 +15,10 @@ router.get('/export/:tournamentId',              requireAdmin, groupController.e
 router.get("/list/:tournamentId",                requireAuth,  groupController.getGroupsByTournament);
 router.post("/create",          requireAdmin,    groupController.createGroup);
 router.post("/auto-generate",   requireAdmin,    groupController.autoGenerateGroups);
+// Bloco D · commit 3: re-seeding automatico pela classificacao de R(N-1).
+// Rota separada de /auto-generate pra deixar explicito que o comportamento
+// e diferente (usa scores existentes em vez de shuffle aleatorio).
+router.post("/generate-from-standings", requireAdmin, groupController.generateFromStandings);
 router.post("/add-player",      requireAdmin,    groupController.addPlayerToGroup);
 router.delete('/remove-player/:groupId/:userId', requireAdmin, groupController.removePlayer);
 router.delete("/delete/:id",    requireAdmin,    groupController.deleteGroup);

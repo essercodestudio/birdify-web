@@ -688,6 +688,201 @@ exports.autoGenerateGroups = async (req, res) => {
 };
 
 // ==========================================
+// RE-SEEDING AUTOMATICO ENTRE RODADAS (Bloco D · commit 3)
+// ==========================================
+// POST /groups/generate-from-standings
+// Body: { tournament_id, round_number, interval_minutes? }
+//
+// Regra: gera grupos da rodada N pela classificacao ABSOLUTA de R(N-1).
+// Melhor gross (menor soma) → grupo 1, proximos 4 → grupo 2, e assim por diante.
+// Aprovados que NAO completaram R(N-1) (buracos faltando) sao excluidos do
+// re-seeding — nao dando pra rankear quem nao jogou.
+//
+// D3 aprovado: nao considera categorias — so posicao geral no ABSOLUTO.
+//
+// Substitui grupos + scores DA RODADA N atual, preserva rodadas anteriores.
+exports.generateFromStandings = async (req, res) => {
+  try {
+    const { tournament_id, interval_minutes } = req.body;
+    const roundNumber = Number(req.body.round_number);
+
+    if (!tournament_id || !Number.isInteger(roundNumber) || roundNumber < 2) {
+      return res.status(400).json({ error: "round_number deve ser inteiro >= 2 (rodada 1 usa /groups/auto-generate)." });
+    }
+
+    // 1. Torneio + total_rounds do clube
+    const [tCheck] = await db.execute(
+      "SELECT id, format, total_rounds FROM tournaments WHERE id = ? AND club_id = ?",
+      [tournament_id, req.club.id]
+    );
+    if (tCheck.length === 0) {
+      return res.status(403).json({ error: "Torneio não encontrado ou acesso negado." });
+    }
+    const totalRounds = Number(tCheck[0].total_rounds) || 1;
+    if (roundNumber > totalRounds) {
+      return res.status(400).json({
+        error: `Rodada invalida: torneio tem ${totalRounds} rodada(s), tentou re-seed R${roundNumber}.`,
+      });
+    }
+    const format = tCheck[0].format || 'shotgun';
+
+    // 2. course_id + round_date de R(N-1) e da propria N (via tournament_rounds)
+    const prevRound = roundNumber - 1;
+    const [prevRoundRow] = await db.execute(
+      "SELECT round_number, round_date, course_id FROM tournament_rounds WHERE tournament_id = ? AND round_number = ?",
+      [tournament_id, prevRound]
+    );
+    if (prevRoundRow.length === 0) {
+      return res.status(400).json({ error: `Rodada anterior (R${prevRound}) nao cadastrada em tournament_rounds.` });
+    }
+    const prevCourseId = prevRoundRow[0].course_id;
+
+    const [thisRoundRow] = await db.execute(
+      "SELECT round_number, round_date, course_id FROM tournament_rounds WHERE tournament_id = ? AND round_number = ?",
+      [tournament_id, roundNumber]
+    );
+    if (thisRoundRow.length === 0) {
+      return res.status(400).json({ error: `Rodada alvo (R${roundNumber}) nao cadastrada em tournament_rounds.` });
+    }
+    const thisRoundDate = thisRoundRow[0].round_date;
+
+    // 3. Descobrir quantos buracos tem o curso da R(N-1) — pra determinar completude
+    const [holesRaw] = await db.execute(
+      "SELECT COUNT(*) AS n FROM holes WHERE course_id = ?", [prevCourseId]
+    );
+    let expectedHoles = Number(holesRaw[0]?.n || 0);
+    if (expectedHoles === 0) {
+      const [ch] = await db.execute("SELECT COUNT(*) AS n FROM course_holes WHERE course_id = ?", [prevCourseId]);
+      expectedHoles = Number(ch[0]?.n || 0);
+    }
+    if (expectedHoles === 0) expectedHoles = 18; // fallback padrao
+
+    let intervalMin = 10;
+    if (format === 'tee_time') {
+      const raw = Number(interval_minutes);
+      if (!Number.isFinite(raw) || raw < 1 || raw > 60) {
+        return res.status(400).json({ error: "Intervalo entre grupos deve estar entre 1 e 60 minutos." });
+      }
+      intervalMin = raw;
+    }
+
+    // 4. Aprovados que COMPLETARAM R(N-1), ordenados por soma de strokes ASC
+    const [standings] = await db.execute(
+      `SELECT s.user_id,
+              SUM(s.strokes)                                             AS gross,
+              COUNT(DISTINCT s.hole_number)                              AS holes_played
+         FROM scores s
+         JOIN inscriptions i
+           ON i.tournament_id = s.tournament_id AND i.user_id = s.user_id AND i.status = 'APPROVED'
+        WHERE s.tournament_id = ?
+          AND s.round_number  = ?
+          AND s.hole_number BETWEEN 1 AND ?
+        GROUP BY s.user_id
+       HAVING holes_played = ?
+        ORDER BY gross ASC, s.user_id ASC`,
+      [tournament_id, prevRound, expectedHoles, expectedHoles]
+    );
+
+    if (standings.length === 0) {
+      return res.status(400).json({
+        error: `Nenhum jogador aprovado completou R${prevRound} (${expectedHoles} buracos). Re-seeding automatico exige classificacao completa.`,
+      });
+    }
+
+    // 5. Apagar grupos + scores da R(N) atual (auto-generate estilo por rodada)
+    await db.execute(
+      `DELETE s FROM scores s
+         JOIN group_players gp ON gp.user_id = s.user_id
+         JOIN tournament_groups tg ON tg.id = gp.group_id
+        WHERE tg.tournament_id = ?
+          AND tg.round_number = ?
+          AND s.tournament_id = ?
+          AND s.round_number = ?`,
+      [tournament_id, roundNumber, tournament_id, roundNumber]
+    );
+    await db.execute(
+      "DELETE FROM tournament_groups WHERE tournament_id = ? AND round_number = ?",
+      [tournament_id, roundNumber]
+    );
+
+    // 6. Agrupa de 4 em 4 sequencialmente na ordem do standings
+    const FLIGHT_SIZE = 4;
+    const nFlights = Math.ceil(standings.length / FLIGHT_SIZE);
+    const flights = Array.from({ length: nFlights }, () => []);
+    standings.forEach((s, idx) => {
+      flights[Math.floor(idx / FLIGHT_SIZE)].push(s.user_id);
+    });
+
+    // 7. Pre-calcular hora inicial da rodada N pro modo tee_time (BRT)
+    let baseTeeHour = 8, baseTeeMin = 0;
+    if (format === 'tee_time' && thisRoundDate) {
+      const brt = new Date(thisRoundDate).toLocaleString('en-GB', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      });
+      const [h, m] = brt.split(':').map(Number);
+      if (Number.isFinite(h) && Number.isFinite(m)) { baseTeeHour = h; baseTeeMin = m; }
+    }
+
+    // 8. Criar grupos + escalar jogadores
+    for (let i = 0; i < flights.length; i++) {
+      let hole = 1;
+      let teeTime = null;
+      if (format === 'tee_time') {
+        const totalMin = baseTeeHour * 60 + baseTeeMin + i * intervalMin;
+        const hh = String(Math.floor(totalMin / 60) % 24).padStart(2, '0');
+        const mm = String(totalMin % 60).padStart(2, '0');
+        teeTime = `${hh}:${mm}:00`;
+      } else {
+        hole = ((i) % 18) + 1;
+      }
+
+      const flightName = `R${roundNumber} · Flight ${i + 1}`;
+      let groupId = null, attempts = 0;
+      while (attempts < 20) {
+        const candidate = generateAccessCode();
+        try {
+          const [ins] = await db.execute(
+            `INSERT INTO tournament_groups (tournament_id, round_number, group_name, access_code, starting_hole, tee_time)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [tournament_id, roundNumber, flightName, candidate, hole, teeTime]
+          );
+          groupId = ins.insertId;
+          break;
+        } catch (e) {
+          if (e.code === "ER_DUP_ENTRY") { attempts++; continue; }
+          throw e;
+        }
+      }
+      if (!groupId) {
+        return res.status(503).json({ error: "Não foi possível gerar códigos únicos pra todos os flights." });
+      }
+
+      if (flights[i].length > 0) {
+        const placeholders = flights[i].map(() => "(?, ?)").join(", ");
+        const values = flights[i].flatMap((uid) => [groupId, uid]);
+        await db.execute(
+          `INSERT INTO group_players (group_id, user_id) VALUES ${placeholders}`,
+          values
+        );
+      }
+    }
+
+    res.json({
+      message: `Re-seeding R${roundNumber} concluido.`,
+      round_number: roundNumber,
+      groups_created: nFlights,
+      players_seeded: standings.length,
+      based_on_round: prevRound,
+      expected_holes: expectedHoles,
+    });
+  } catch (error) {
+    console.error("Erro no re-seeding:", error);
+    res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
+// ==========================================
 // MÁGICA DO EXCEL: EXPORTAR TEE SHEET (DRAW)
 // ==========================================
 exports.exportGroupsToExcel = async (req, res) => {
