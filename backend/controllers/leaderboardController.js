@@ -67,11 +67,18 @@ exports.getTournamentLeaderboard = async (req, res) => {
       LEFT JOIN holes hf        ON hf.course_id  = t.course_id AND hf.hole_number  = s.hole_number
       LEFT JOIN course_holes chf ON chf.course_id = t.course_id AND chf.hole_number = s.hole_number
 
+      -- Handicap por jogador. GROUP BY user_id e MAX(handicap) sao OBRIGATORIOS
+      -- pos-Bloco D (2026-08-28): grupos passaram a ser por rodada, entao o
+      -- mesmo user pode estar em N grupos do mesmo torneio. Sem o GROUP BY, esta
+      -- subquery devolvia N linhas por user, e cada linha de scores era contada
+      -- N vezes no LEFT JOIN — inflando holes_played, total_strokes e score_to_par
+      -- na proporcao do numero de grupos (ver hotfix 2026-08-29, torneio ASPIRANTES 116).
       LEFT JOIN (
-        SELECT gp_inner.user_id, gp_inner.handicap
+        SELECT gp_inner.user_id, MAX(gp_inner.handicap) AS handicap
         FROM group_players gp_inner
         JOIN tournament_groups tg_inner ON gp_inner.group_id = tg_inner.id
         WHERE tg_inner.tournament_id = ?
+        GROUP BY gp_inner.user_id
       ) ph ON ph.user_id = u.id
 
       WHERE i.tournament_id = ? AND i.status = 'APPROVED'

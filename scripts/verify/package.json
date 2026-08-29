@@ -11,7 +11,8 @@
     "tee-rules-multitenant": "node tee_rules_multitenant.js",
     "tee-suggestion-flow": "node tee_suggestion_flow.js",
     "course-tees-multitenant": "node course_tees_multitenant.js",
-    "round-boundary": "node verify-round-boundary.js"
+    "round-boundary": "node verify-round-boundary.js",
+    "leaderboard-multi-round-count": "node verify-leaderboard-multi-round-count.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
