@@ -39,17 +39,26 @@ exports.saveScore = async (req, res) => {
 
     // Autorização de posse (espelha TrainingController.saveScore): o user_id do
     // body é o jogador alvo (colega no cartão), mas quem CHAMA precisa estar
-    // escalado num grupo deste torneio. Impede lançar score em torneio alheio.
+    // escalado num grupo deste torneio.
+    //
+    // Bloco D · hotfix 2026-08-29: agora o membership inclui tg.round_number.
+    // Um jogador do grupo de R1 nao pode gravar em R2 (mesmo com curl direto),
+    // pois grupos por rodada podem ser DIFERENTES apos re-seeding. Se o caller
+    // esta num grupo com round_number = payload.round_number, permite; senao
+    // 403. Torneio single-round: todos os grupos tem round=1, comportamento
+    // antigo preservado.
     const caller_id = req.user.id;
     const [membership] = await db.execute(
       `SELECT 1 FROM group_players gp
          JOIN tournament_groups tg ON gp.group_id = tg.id
-        WHERE tg.tournament_id = ? AND gp.user_id = ?
+        WHERE tg.tournament_id = ? AND gp.user_id = ? AND tg.round_number = ?
         LIMIT 1`,
-      [tournament_id, caller_id]
+      [tournament_id, caller_id, round_number]
     );
     if (membership.length === 0) {
-      return res.status(403).json({ error: 'Acesso negado. Você não participa deste torneio.' });
+      return res.status(403).json({
+        error: `Acesso negado. Você não pertence a um grupo da rodada ${round_number} deste torneio.`,
+      });
     }
 
     // UPSERT atômico via uk_score(tournament_id, user_id, hole_number, round_number).
@@ -129,13 +138,20 @@ exports.signCard = async (req, res) => {
       return res.status(403).json({ error: 'Acesso negado. Você não participa deste grupo.' });
     }
 
-    // Confirma que o grupo pertence ao torneio recebido
+    // Confirma que o grupo pertence ao torneio recebido E que a rodada bate.
+    // Bloco D · hotfix 2026-08-29: se payload.round_number != tg.round_number,
+    // 403 — impede assinar cartao "de outra rodada" via requisicao forcada.
     const [groupCheck] = await db.execute(
-      'SELECT id FROM tournament_groups WHERE id = ? AND tournament_id = ?',
+      'SELECT id, round_number FROM tournament_groups WHERE id = ? AND tournament_id = ?',
       [group_id, tournament_id]
     );
     if (groupCheck.length === 0) {
       return res.status(400).json({ error: 'Grupo não pertence ao torneio informado.' });
+    }
+    if (Number(groupCheck[0].round_number) !== round_number) {
+      return res.status(403).json({
+        error: `Rodada divergente: grupo pertence a R${groupCheck[0].round_number}, tentou assinar em R${round_number}.`,
+      });
     }
 
     // Quantidade real de buracos do course. Fallback 18 caso o course não tenha
