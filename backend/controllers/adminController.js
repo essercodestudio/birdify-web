@@ -222,10 +222,16 @@ exports.listTrainingsByDate = async (req, res) => {
          SUM(CASE WHEN tg.status = 'aguardando'  THEN 1 ELSE 0 END)                             AS status_aguardando,
          SUM(CASE WHEN tg.status = 'finalizado'  THEN 1 ELSE 0 END)                             AS status_finalizado,
          SUM(CASE WHEN tg.status = 'cancelado'   THEN 1 ELSE 0 END)                             AS status_cancelado,
+         -- MIN(tg.created_at) em vez de tg.created_at cru: satisfaz
+         -- only_full_group_by (MySQL 8 default). Todas as rows deste grupo
+         -- ja compartilham o mesmo DATE(created_at) por conta do GROUP BY
+         -- DATE_FORMAT(...), entao MIN devolve um timestamp do mesmo dia.
+         -- Bug corrigido 2026-08-29: sem isso a query inteira retorna
+         -- ERROR 1055 e o endpoint devolve 500 — UI mostra "nenhum treino".
          (SELECT COUNT(*) FROM training_scores ts
             JOIN training_groups tg2 ON tg2.id = ts.group_id
            WHERE tg2.club_id = ?
-             AND DATE(tg2.created_at) = DATE(tg.created_at))                                    AS scores_recorded,
+             AND DATE(tg2.created_at) = DATE(MIN(tg.created_at)))                               AS scores_recorded,
          GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ' · ')                          AS courses
        FROM training_groups tg
        LEFT JOIN training_participants tp ON tp.group_id = tg.id
