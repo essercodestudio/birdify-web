@@ -304,15 +304,30 @@ exports.upsertTournamentScore = async (req, res) => {
 
 exports.listTrainings = async (req, res) => {
   try {
+    // ?date=YYYY-MM-DD (opcional): quando presente, ignora a janela de 30 dias e
+    // filtra por DATE(created_at) exato. Usado pelo botao "Ajustar Tacadas" no
+    // AdminTrainings (cards por data) — abre o editor ja pre-filtrado.
+    const dateFilter = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : null;
+
+    const params = [req.club.id];
+    let where = "tg.club_id = ?";
+    if (dateFilter) {
+      where += " AND DATE(tg.created_at) = ?";
+      params.push(dateFilter);
+    } else {
+      where += " AND tg.created_at >= (NOW() - INTERVAL 30 DAY)";
+    }
+
     const [rows] = await db.execute(
       `SELECT tg.id, tg.group_name, tg.status, tg.starting_hole,
               tg.course_id, tg.created_at, c.name AS course_name
          FROM training_groups tg
          LEFT JOIN courses c ON c.id = tg.course_id
-        WHERE tg.club_id = ?
-          AND tg.created_at >= (NOW() - INTERVAL 30 DAY)
+        WHERE ${where}
         ORDER BY tg.created_at DESC, tg.id DESC`,
-      [req.club.id]
+      params
     );
     res.json(rows);
   } catch (error) {

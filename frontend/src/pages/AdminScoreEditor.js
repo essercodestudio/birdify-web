@@ -3,12 +3,12 @@
 // Fluxo: escolhe aba → escolhe evento → renderiza matriz (jogador × buraco) editável.
 // Cada célula edita on-blur — vazio deleta o score, número entre 1 e 20 UPSERT.
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import { getUser } from "../services/authStorage";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
 import AdminNavMenu from "../components/AdminNavMenu";
-import { LuPencilLine, LuTrophy, LuFlag, LuSave, LuCheck, LuTriangleAlert, LuHistory } from "react-icons/lu";
+import { LuPencilLine, LuTrophy, LuFlag, LuSave, LuCheck, LuTriangleAlert, LuHistory, LuCalendar, LuX } from "react-icons/lu";
 
 const TABS = [
   { id: "tournament", label: "Torneios",       icon: LuTrophy },
@@ -35,8 +35,16 @@ function scoreColor(theme, strokes, par) {
 export default function AdminScoreEditor() {
   const navigate = useNavigate();
   const theme = useBirdifyTheme();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [tab, setTab] = useState("tournament");
+  // Query params opcionais — quando presente, forca tab=training e filtra a
+  // lista de treinos por essa data exata. Usado pelo card "Treino DD/MM/YYYY"
+  // do AdminTrainings, que abre o editor ja pre-focado no dia.
+  const dateParam = searchParams.get("date");
+  const dateFilter = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
+  const tabParam = searchParams.get("tab") === "training" ? "training" : null;
+
+  const [tab, setTab] = useState(tabParam || (dateFilter ? "training" : "tournament"));
   const [events, setEvents] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [matrix, setMatrix] = useState(null);
@@ -60,20 +68,46 @@ export default function AdminScoreEditor() {
     setSelectedId("");
     setMatrix(null);
     try {
-      const path = which === "tournament"
+      let path = which === "tournament"
         ? "/admin/scores/tournaments"
         : "/admin/scores/trainings";
+      // Filtro por data so vale pra treinos (torneios sao por evento nomeado, nao por dia)
+      if (which === "training" && dateFilter) {
+        path += `?date=${encodeURIComponent(dateFilter)}`;
+      }
       const res = await api.get(path);
       setEvents(res.data || []);
+      // Auto-seleciona quando ha apenas 1 treino no dia — economiza 1 clique
+      if (which === "training" && dateFilter && Array.isArray(res.data) && res.data.length === 1) {
+        setSelectedId(String(res.data[0].id));
+      }
     } catch (e) {
       console.error(e);
       setEvents([]);
     } finally {
       setLoadingList(false);
     }
-  }, []);
+  }, [dateFilter]);
 
   useEffect(() => { loadEvents(tab); }, [tab, loadEvents]);
+
+  // Se admin trocar de aba pra tournament, limpa o filtro de data da URL
+  // (nao faz sentido manter ?date= com tab=tournament).
+  const handleTabChange = (nextTab) => {
+    setTab(nextTab);
+    if (nextTab === "tournament" && dateFilter) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("date");
+      next.delete("tab");
+      setSearchParams(next, { replace: true });
+    }
+  };
+
+  const clearDateFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("date");
+    setSearchParams(next, { replace: true });
+  };
 
   const loadMatrix = useCallback(async (which, id) => {
     if (!id) { setMatrix(null); return; }
@@ -244,7 +278,7 @@ export default function AdminScoreEditor() {
             return (
               <button
                 key={t.id}
-                onClick={() => setTab(t.id)}
+                onClick={() => handleTabChange(t.id)}
                 style={{
                   padding: "10px 16px",
                   backgroundColor: "transparent",
@@ -266,10 +300,31 @@ export default function AdminScoreEditor() {
           })}
         </div>
 
+        {/* Chip do filtro por data (só quando ativo) */}
+        {tab === "training" && dateFilter && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", backgroundColor: theme.accentSoft, border: `1px solid ${theme.accent}`, borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+            <LuCalendar size={14} color={theme.accent} />
+            <span style={{ color: theme.textMain }}>
+              Filtrando treinos do dia <strong>{fmtDate(dateFilter)}</strong>
+            </span>
+            <button
+              onClick={clearDateFilter}
+              title="Remover filtro de data"
+              style={{ marginLeft: "auto", background: "transparent", border: "none", color: theme.textMuted, cursor: "pointer", display: "inline-flex", alignItems: "center", padding: 4 }}
+            >
+              <LuX size={14} />
+            </button>
+          </div>
+        )}
+
         {/* Seletor de evento */}
         <div style={{ backgroundColor: theme.card, padding: 16, borderRadius: 12, marginBottom: 16 }}>
           <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-            {tab === "tournament" ? "Torneio" : "Treino (últimos 30 dias)"}
+            {tab === "tournament"
+              ? "Torneio"
+              : dateFilter
+                ? `Treino do dia ${fmtDate(dateFilter)}`
+                : "Treino (últimos 30 dias)"}
           </label>
           <select
             value={selectedId}
