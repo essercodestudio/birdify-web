@@ -222,16 +222,26 @@ CREATE TABLE IF NOT EXISTS tournament_categories (
 );
 
 -- ─── 10. tournament_groups (grupos/mesas de jogo do torneio) ─────────
+-- round_number: adicionado em 2026_08_28 (tarde, Item 4 · commit 1). Desacopla
+-- grupos por rodada — um grupo pertence a UMA rodada especifica. Torneios
+-- single-round tem tudo em round=1 (default). Multi-rodada (Opção B) permite
+-- reagrupamento entre rodadas (re-seeding).
+--
+-- uk_tgroup_round_name: bloqueia admin criar "Flight 1" duas vezes na mesma
+-- rodada, mas permite "Flight 1" repetido entre rodadas diferentes.
 CREATE TABLE IF NOT EXISTS tournament_groups (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id  INT NOT NULL,
+  round_number   TINYINT UNSIGNED NOT NULL DEFAULT 1,
   group_name     VARCHAR(100) DEFAULT NULL,
   access_code    VARCHAR(20)  NOT NULL,
   starting_hole  INT NOT NULL DEFAULT 1,
   tee_time       TIME DEFAULT NULL,
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tgroup_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
-  UNIQUE KEY uk_tgroup_code (access_code)
+  UNIQUE KEY uk_tgroup_code (access_code),
+  UNIQUE KEY uk_tgroup_round_name (tournament_id, round_number, group_name),
+  INDEX idx_tgroup_round (tournament_id, round_number)
 );
 
 -- ─── 11. group_players (jogadores de cada grupo do torneio) ──────────
