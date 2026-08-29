@@ -5,10 +5,11 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { downloadFile } from "../services/download";
 import { getUser } from "../services/authStorage";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
 import AdminNavMenu from "../components/AdminNavMenu";
-import { LuFlag, LuCalendarDays, LuUsers, LuMapPin, LuPencilLine, LuTrophy } from "react-icons/lu";
+import { LuFlag, LuCalendarDays, LuUsers, LuMapPin, LuPencilLine, LuTrophy, LuFileSpreadsheet } from "react-icons/lu";
 
 // Formata "YYYY-MM-DD" → "DD/MM/YYYY" (fonte do backend ja normalizada BRT
 // via DATE_FORMAT no MySQL).
@@ -51,6 +52,14 @@ export default function AdminTrainings() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleExport = async (date) => {
+    try {
+      await downloadFile(`/admin/trainings/${date}/export`, `treinos_${date}.xlsx`);
+    } catch (e) {
+      alert(e.response?.data?.error || "Erro ao exportar. Confira se voce esta logado como admin do clube.");
+    }
+  };
 
   const today = todayBRT();
 
@@ -188,6 +197,14 @@ export default function AdminTrainings() {
               </div>
 
               <div style={styles.actions}>
+                <button
+                  onClick={() => handleExport(day.date)}
+                  style={styles.btn("#10b981", "#fff")}
+                  title="Baixar Excel com todos os treinos deste dia"
+                >
+                  <LuFileSpreadsheet size={12} />
+                  EXCEL
+                </button>
                 <button
                   onClick={() => navigate(`/admin/ajustar-scores?tab=training&date=${day.date}`)}
                   style={styles.btn(theme.info, "#fff")}

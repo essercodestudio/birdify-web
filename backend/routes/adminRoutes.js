@@ -25,6 +25,10 @@ router.get("/trainings", requireAdmin, adminController.listTrainings);
 // Endpoint agregado — 1 linha por DATE(created_at) com contagens/status.
 router.get("/trainings/by-date", requireAdmin, adminController.listTrainingsByDate);
 
+// Item 2c (Task #7): Excel com todos os treinos daquele dia (1 sheet, jogadores
+// x buracos, agrupados por training_group).
+router.get("/trainings/:date/export", requireAdmin, adminController.exportTrainingsByDate);
+
 // Tee Times — admin
 router.get("/tee-settings",           requireAdmin, teeController.getSettings);
 router.put("/tee-settings",           requireAdmin, teeController.updateSettings);

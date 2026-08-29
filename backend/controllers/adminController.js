@@ -1,5 +1,6 @@
 // backend/controllers/adminController.js
 const db = require("../db");
+const ExcelJS = require("exceljs");
 
 // Validador simples de cor hex (#RGB ou #RRGGBB)
 const isHex = (s) => typeof s === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s);
@@ -252,6 +253,187 @@ exports.listTrainingsByDate = async (req, res) => {
   } catch (error) {
     console.error("Erro ao listar treinos por data:", error);
     res.status(500).json({ error: "Erro interno no servidor." });
+  }
+};
+
+// GET /api/admin/trainings/:date/export — Task #7 (2026-08-28 tarde): gera Excel
+// com todos os treinos do clube naquele dia. 1 sheet por dia. Colunas Grupo |
+// Jogador | HCP | B1-B18 | 1a Volta | 2a Volta | Total | vs Par. Grupos
+// separados por linha vazia. Baseado no padrao do exportController mas
+// simplificado — treino do dia nao tem categoria/desempate.
+exports.exportTrainingsByDate = async (req, res) => {
+  try {
+    const cid = req.club?.id;
+    if (!cid) return res.status(400).json({ error: "Clube não identificado." });
+
+    const date = req.params.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) {
+      return res.status(400).json({ error: "Data invalida. Use YYYY-MM-DD." });
+    }
+
+    // 1. Treinos do dia (todos os cursos)
+    const [groups] = await db.execute(
+      `SELECT tg.id, tg.group_name, tg.access_code, tg.status, tg.course_id,
+              c.name AS course_name
+         FROM training_groups tg
+         LEFT JOIN courses c ON c.id = tg.course_id
+        WHERE tg.club_id = ?
+          AND DATE(tg.created_at) = ?
+        ORDER BY tg.course_id, tg.group_name, tg.id`,
+      [cid, date]
+    );
+
+    if (groups.length === 0) {
+      return res.status(404).json({ error: "Nenhum treino nessa data." });
+    }
+
+    // 2. Pra cada grupo, participantes + scores + pares do curso
+    // Faz UMA query grande com todos os group_ids pra minimizar RTT.
+    const groupIds = groups.map(g => g.id);
+    const placeholders = groupIds.map(() => "?").join(",");
+
+    const [participants] = await db.execute(
+      `SELECT tp.group_id, tp.user_id, tp.handicap, u.name
+         FROM training_participants tp
+         JOIN users u ON u.id = tp.user_id
+        WHERE tp.group_id IN (${placeholders})
+        ORDER BY tp.group_id, u.name`,
+      groupIds
+    );
+
+    const [scores] = await db.execute(
+      `SELECT ts.group_id, ts.user_id, ts.hole_number, ts.strokes
+         FROM training_scores ts
+        WHERE ts.group_id IN (${placeholders})`,
+      groupIds
+    );
+
+    // Pars por curso (pode ter cursos diferentes no mesmo dia — cada grupo usa
+    // o seu). COALESCE holes -> course_holes -> 4 (mesmo padrao do ranking).
+    const courseIds = [...new Set(groups.map(g => g.course_id).filter(Boolean))];
+    const parsByCourse = {};
+    for (const cid2 of courseIds) {
+      const [rows] = await db.execute(
+        `SELECT hole_number, par FROM holes WHERE course_id = ?`, [cid2]
+      );
+      let arr = rows;
+      if (arr.length === 0) {
+        const [rows2] = await db.execute(
+          `SELECT hole_number, par FROM course_holes WHERE course_id = ?`, [cid2]
+        );
+        arr = rows2;
+      }
+      const map = Array(19).fill(4);
+      arr.forEach(r => {
+        const n = Number(r.hole_number);
+        if (n >= 1 && n <= 18) map[n] = Number(r.par) || 4;
+      });
+      parsByCourse[cid2] = map;
+    }
+
+    // Indexa scores {group_id: {user_id: [null, s1, s2, ...s18]}}
+    const scoreIdx = {};
+    scores.forEach(s => {
+      const gid = s.group_id, uid = s.user_id, hn = Number(s.hole_number);
+      if (!scoreIdx[gid]) scoreIdx[gid] = {};
+      if (!scoreIdx[gid][uid]) scoreIdx[gid][uid] = Array(19).fill(null);
+      if (hn >= 1 && hn <= 18) scoreIdx[gid][uid][hn] = Number(s.strokes);
+    });
+
+    // Indexa participantes {group_id: [{user_id, name, handicap}...]}
+    const partIdx = {};
+    participants.forEach(p => {
+      if (!partIdx[p.group_id]) partIdx[p.group_id] = [];
+      partIdx[p.group_id].push(p);
+    });
+
+    // 3. Monta workbook
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Birdify";
+    const sheet = workbook.addWorksheet(`Treinos ${date}`);
+
+    sheet.columns = [
+      { header: "Grupo",    width: 24 },
+      { header: "Campo",    width: 24 },
+      { header: "Jogador",  width: 28 },
+      { header: "HDC",      width: 6 },
+      ...Array.from({ length: 9 }, (_, i) => ({ header: `B${i + 1}`, width: 5 })),
+      { header: "1a Volta", width: 10 },
+      ...Array.from({ length: 9 }, (_, i) => ({ header: `B${i + 10}`, width: 5 })),
+      { header: "2a Volta", width: 10 },
+      { header: "GROSS",    width: 8 },
+      { header: "NET",      width: 8 },
+      { header: "vs Par",   width: 8 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+    headerRow.alignment = { horizontal: "center", vertical: "middle" };
+
+    for (const g of groups) {
+      const pars = parsByCourse[g.course_id] || Array(19).fill(4);
+      const parOut = pars.slice(1, 10).reduce((a, b) => a + b, 0);
+      const parIn = pars.slice(10, 19).reduce((a, b) => a + b, 0);
+
+      // Linha PAR do grupo
+      const parRow = sheet.addRow([
+        `${g.group_name || `Treino #${g.id}`} (${g.access_code})`,
+        g.course_name || "-",
+        "PAR",
+        "",
+        ...pars.slice(1, 10),
+        parOut,
+        ...pars.slice(10, 19),
+        parIn,
+        parOut + parIn,
+        parOut + parIn,
+        0,
+      ]);
+      parRow.font = { bold: true };
+      parRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDDDDD" } };
+      parRow.alignment = { horizontal: "center" };
+
+      const players = partIdx[g.id] || [];
+      for (const p of players) {
+        const scoresArr = scoreIdx[g.id]?.[p.user_id] || Array(19).fill(null);
+        let outSum = 0, inSum = 0;
+        for (let i = 1; i <= 9; i++) outSum += Number(scoresArr[i] || 0);
+        for (let i = 10; i <= 18; i++) inSum += Number(scoresArr[i] || 0);
+        const gross = outSum + inSum;
+        const hc = Number(p.handicap || 0);
+
+        sheet.addRow([
+          g.group_name || `Treino #${g.id}`,
+          g.course_name || "-",
+          p.name,
+          hc,
+          ...scoresArr.slice(1, 10).map(v => v ?? "-"),
+          outSum || "-",
+          ...scoresArr.slice(10, 19).map(v => v ?? "-"),
+          inSum || "-",
+          gross || "-",
+          gross ? gross - hc : "-",
+          gross ? gross - (parOut + parIn) : "-",
+        ]).alignment = { horizontal: "center" };
+      }
+
+      sheet.addRow([]); // separador visual entre grupos
+    }
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="treinos_${date}.xlsx"`
+    );
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Erro ao exportar treinos por data:", error);
+    res.status(500).json({ error: "Erro ao gerar Excel." });
   }
 };
 
