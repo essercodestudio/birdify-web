@@ -8,6 +8,42 @@ import { LuClipboardList, LuCheck, LuPencil, LuTrophy } from "react-icons/lu";
 import HolePhotoBadge from "../components/HolePhotoBadge";
 import HoleDistanceBadge from "../components/HoleDistanceBadge";
 
+// ─── Pontuação por Resultado (Onda A · commit 6 · 2026-08-31) ────────────────
+// Bate 1:1 com backend RESULT_KINDS + DEFAULT_RESULT_POINTS. Client-side deriva
+// strokes na hora do clique só pra exibir imediato; server é fonte da verdade
+// (re-deriva e valida antes de gravar).
+const RESULT_KINDS = ['hio', 'albatross', 'eagle', 'birdie', 'par', 'bogey', 'double_bogey', 'triple_bogey'];
+const RESULT_LABELS = {
+  hio: 'HiO', albatross: 'Albatross', eagle: 'Eagle', birdie: 'Birdie',
+  par: 'Par', bogey: 'Bogey', double_bogey: 'Dbl Bogey', triple_bogey: 'Tpl Bogey',
+};
+// Cor por resultado — segue paleta do design system (verde=abaixo do par,
+// cinza=par, vermelho=acima, amarelo=eagle/HiO).
+const RESULT_COLORS = {
+  hio: '#eab308', albatross: '#eab308', eagle: '#eab308',
+  birdie: '#22c55e',
+  par: '#94a3b8',
+  bogey: '#ef4444', double_bogey: '#ef4444', triple_bogey: '#ef4444',
+};
+// Deriva strokes a partir do resultado + par. Espelho de resultKindHelpers.js
+// no backend — MANTER SINCRONIZADO. Null quando resultado é impossível pro par
+// (ex: Albatross em par 3).
+const deriveStrokesFromResult = (par, kind) => {
+  const p = Number(par);
+  if (!Number.isInteger(p) || p < 3) return null;
+  switch (kind) {
+    case 'hio': return 1;
+    case 'albatross': return p - 3 >= 1 ? p - 3 : null;
+    case 'eagle':     return p - 2 >= 1 ? p - 2 : null;
+    case 'birdie':    return p - 1;
+    case 'par':       return p;
+    case 'bogey':     return p + 1;
+    case 'double_bogey': return p + 2;
+    case 'triple_bogey': return p + 3;
+    default: return null;
+  }
+};
+
 // Data de hoje em BRT no formato YYYY-MM-DD.
 // Item 5 · commit 4 (2026-08-28): NÃO usar toISOString — converte pra UTC e
 // perto da meia-noite BRT retorna o dia errado (bug idêntico ao do Item 3).
@@ -85,7 +121,20 @@ function Scorecard() {
 
   const [currentHole, setCurrentHole] = useState(1);
   const [scores, setScores] = useState({});
+  // Onda A · commit 6: resultKinds paralelo aos scores — só relevante quando
+  // inputMode='result'. Mapa `${userId}-${hole}` → 'birdie'|'par'|etc.
+  // Fonte da verdade nominal no modo result_points (strokes vira derivado).
+  const [resultKinds, setResultKinds] = useState({});
   const [playedHoles, setPlayedHoles] = useState([]);
+
+  // Onda A · commit 6: bifurcação em dois eixos independentes.
+  //   inputMode: 'strokes' (comportamento antigo, +/-) ou 'result' (ResultPicker)
+  //   ownerKind: 'user' (Onda A sempre) ou 'dupla' (Onda B, ainda não usado)
+  // Derivados de tournament.scoring_type e tournament.modality respectivamente
+  // no fetchData. Setados 1x quando carrega o torneio.
+  const [inputMode, setInputMode] = useState('strokes');
+  const [ownerKind, setOwnerKind] = useState('user'); // eslint-disable-line no-unused-vars
+  const [resultPointsMap, setResultPointsMap] = useState({}); // {kind: points}
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
@@ -168,6 +217,7 @@ function Scorecard() {
         groupId: Number(groupId),
         currentHole: next.currentHole,
         scores: next.scores,
+        resultKinds: next.resultKinds || {},
         playedHoles: next.playedHoles,
         savedAt: Date.now(),
       }));
@@ -203,6 +253,7 @@ function Scorecard() {
       const hasPersisted = persisted && persisted.tournament_id === savedGroup.tournament_id;
       if (hasPersisted) {
         if (persisted.scores) setScores(persisted.scores);
+        if (persisted.resultKinds) setResultKinds(persisted.resultKinds);
         if (Array.isArray(persisted.playedHoles) && persisted.playedHoles.length) {
           setPlayedHoles(persisted.playedHoles);
         }
@@ -223,6 +274,18 @@ function Scorecard() {
       const roundsList = Array.isArray(tourRes.data.rounds) ? tourRes.data.rounds : [];
       setTotalRounds(tr);
       setRounds(roundsList);
+      // Onda A · commit 6: hidrata inputMode + resultPointsMap. Onda B hidratará ownerKind.
+      const st = tourRes.data.scoring_type === 'result_points' ? 'result' : 'strokes';
+      setInputMode(st);
+      // ownerKind: sempre 'user' na Onda A. Quando Onda B chegar, deriva de tourRes.data.modality.
+      setOwnerKind(tourRes.data.modality === 'doubles' ? 'dupla' : 'user');
+      if (st === 'result' && Array.isArray(tourRes.data.result_points)) {
+        const rpMap = {};
+        tourRes.data.result_points.forEach(({ result_kind, points }) => { rpMap[result_kind] = Number(points); });
+        setResultPointsMap(rpMap);
+      } else {
+        setResultPointsMap({});
+      }
       // Bloco D · commit 5: Opcao B — cada grupo pertence a UMA rodada. Se o
       // backend entregou group.round_number, usa direto (autoritativo). Fallback
       // pra pickCurrentRound pela data BRT so quando o grupo nao declara round
@@ -252,8 +315,12 @@ function Scorecard() {
         `/scores/list/${savedGroup.tournament_id}${tr > 1 ? `?round=${autoRound}` : ''}`
       );
       const scoresMap = {};
+      const kindsMap = {};
       scoresRes.data.forEach((s) => {
         scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
+        // Onda A · commit 6: preenche resultKinds a partir do backend. Torneio
+        // strokes vem com result_kind NULL — kindsMap fica vazio, sem ruído.
+        if (s.result_kind) kindsMap[`${s.user_id}-${s.hole_number}`] = s.result_kind;
       });
       // Overlay offline-first: itens na fila do syncService ainda não confirmados
       // pelo servidor (pending/syncing/failed) sobrepõem o que veio do GET. Sem
@@ -271,6 +338,18 @@ function Scorecard() {
       });
       // prev vem por último pra preservar cliques ainda no debounce.
       setScores((prev) => ({ ...scoresMap, ...pendingOverlay, ...prev }));
+      // Onda A · commit 6: mesmo padrão pra resultKinds (só relevante em inputMode='result').
+      const pendingKindsOverlay = {};
+      syncService.getPendingItems((item) =>
+        item.endpoint === "/scores/save"
+        && Number(item.payload?.tournament_id) === Number(savedGroup.tournament_id)
+        && Number(item.payload?.round_number || 1) === autoRound
+        && item.payload?.result_kind
+      ).forEach((item) => {
+        const p = item.payload;
+        pendingKindsOverlay[`${p.user_id}-${p.hole_number}`] = p.result_kind;
+      });
+      setResultKinds((prev) => ({ ...kindsMap, ...pendingKindsOverlay, ...prev }));
       
       // Encontrar o primeiro buraco sem pontuação
       let finalCurrentHole = savedGroup.starting_hole;
@@ -369,9 +448,10 @@ function Scorecard() {
       tournament_id: group.tournament_id,
       currentHole,
       scores,
+      resultKinds,
       playedHoles,
     });
-  }, [isInitialLoading, group, currentHole, scores, playedHoles, persistState]);
+  }, [isInitialLoading, group, currentHole, scores, resultKinds, playedHoles, persistState]);
 
   // Inscreve no syncService para mostrar indicador "Aguardando Conexão"
   useEffect(() => {
@@ -410,22 +490,50 @@ function Scorecard() {
   // offline, fica em PENDING e reenvia ao voltar. `dedupKey` garante que
   // cliques em sequência no mesmo (tournament, user, hole) substituam a
   // pendência anterior em vez de empilhar duplicatas.
-  const enqueueScore = (userId, hole, strokes) => {
+  const enqueueScore = (userId, hole, strokes, resultKind = null) => {
     if (!group?.tournament_id) return;
     // Item 5 · commit 4: round_number no payload. dedupKey inclui round pra que
     // scores da mesma (user,hole) em rounds diferentes NÃO substituam um ao outro
     // na fila (bug potencial se dedupKey ignorasse round).
+    // Onda A · commit 6: result_kind opcional. Em torneio strokes fica null e
+    // o backend ignora; em torneio result_points é obrigatório (backend rejeita
+    // sem kind e re-deriva strokes autoritativamente).
+    const payload = {
+      tournament_id: group.tournament_id,
+      user_id: Number(userId),
+      hole_number: Number(hole),
+      round_number: Number(currentRound),
+      strokes: Number(strokes),
+    };
+    if (resultKind) payload.result_kind = resultKind;
     syncService.enqueue({
       endpoint: "/scores/save",
-      payload: {
-        tournament_id: group.tournament_id,
-        user_id: Number(userId),
-        hole_number: Number(hole),
-        round_number: Number(currentRound),
-        strokes: Number(strokes),
-      },
+      payload,
       dedupKey: `score:${group.tournament_id}:${currentRound}:${userId}:${hole}`,
     });
+  };
+
+  // Onda A · commit 6: handler pro ResultPicker (inputMode='result'). Diferente
+  // do +/-, aqui o clique é DISCRETO — não há sequência de toques, então
+  // enqueue imediato sem debounce. Deriva strokes client-side pra exibir no
+  // ato (o backend re-deriva e é a fonte da verdade final).
+  const handleResultPick = (userId, resultKind, hole) => {
+    if (busyRef.current) return;
+    if (Number(hole) !== Number(currentHole)) {
+      console.warn("[Scorecard] Pick descartado — hole visual difere do state.", { holeClicked: hole, currentHole, userId, resultKind });
+      return;
+    }
+    const par = currentHoleData.par || 4;
+    const derivedStrokes = deriveStrokesFromResult(par, resultKind);
+    if (derivedStrokes === null) {
+      alert(`Resultado ${RESULT_LABELS[resultKind]} impossível em par ${par}.`);
+      return;
+    }
+    const key = `${userId}-${hole}`;
+    setScores(prev => ({ ...prev, [key]: derivedStrokes }));
+    setResultKinds(prev => ({ ...prev, [key]: resultKind }));
+    // Sem debounce — enqueue imediato.
+    enqueueScore(userId, hole, derivedStrokes, resultKind);
   };
 
   // REGRA 1: handleScoreChange com anotação livre offline e bônus do PAR.
@@ -494,7 +602,10 @@ function Scorecard() {
         clearTimeout(saveTimers.current[key]);
         const s = scores[key];
         delete saveTimers.current[key];
-        if (s > 0) enqueueScore(p.id, hole, s);
+        // Onda A · commit 6: modo result não gera timer (enqueue imediato),
+        // então esse flush só cobre modo strokes. resultKinds[key] será undefined
+        // no fluxo normal — mas passamos por consistência caso haja edge case.
+        if (s > 0) enqueueScore(p.id, hole, s, resultKinds[key] || null);
       }
     });
     // Rascunho do buraco pode ser limpo: syncService é o source-of-truth
@@ -576,18 +687,26 @@ function Scorecard() {
   const calculateTotal = (userId, handicap) => {
     let totalGross = 0;
     let totalPar = 0;
+    let totalPoints = 0;
 
     for (let h = 1; h <= 18; h++) {
       const score = scores[`${userId}-${h}`];
       if (score > 0) {
         totalGross += score;
-        
+
         const hole = holesData.find(hd => (hd.hole_number || hd.hole) === h);
         if (hole) totalPar += hole.par;
+
+        // Onda A · commit 6: em modo result, soma pontos do resultKind gravado.
+        // Modo strokes: resultKinds vazio → totalPoints=0 (não exibido).
+        const kind = resultKinds[`${userId}-${h}`];
+        if (kind && resultPointsMap[kind] !== undefined) {
+          totalPoints += Number(resultPointsMap[kind]);
+        }
       }
     }
 
-    if (totalGross === 0) return { gross: 0, netVsPar: "E" };
+    if (totalGross === 0) return { gross: 0, netVsPar: "E", points: 0 };
 
     const grossVsPar = totalGross - totalPar;
     const netVsPar = grossVsPar - parseFloat(handicap || 0);
@@ -597,7 +716,7 @@ function Scorecard() {
       formattedNet = netVsPar > 0 ? `+${netVsPar.toFixed(1)}` : netVsPar.toFixed(1);
     }
 
-    return { gross: totalGross, netVsPar: formattedNet };
+    return { gross: totalGross, netVsPar: formattedNet, points: totalPoints };
   };
 
   // Bug B — 2026-08-13: validação de completude antes de assinar.
@@ -728,12 +847,18 @@ function Scorecard() {
                   <div style={{ ...styles.totalScore, color: "white" }}>
                     {totals.gross} tacadas
                   </div>
-                  <div style={{ 
-                    fontSize: "14px", fontWeight: "bold",
-                    color: totals.netVsPar.toString().includes("-") ? theme.accent : (totals.netVsPar === "E" ? theme.textMuted : theme.danger) 
-                  }}>
-                    NET: {totals.netVsPar}
-                  </div>
+                  {inputMode === 'result' ? (
+                    <div style={{ fontSize: "14px", fontWeight: "bold", color: theme.gold }}>
+                      {totals.points} ponto{totals.points === 1 ? '' : 's'}
+                    </div>
+                  ) : (
+                    <div style={{
+                      fontSize: "14px", fontWeight: "bold",
+                      color: totals.netVsPar.toString().includes("-") ? theme.accent : (totals.netVsPar === "E" ? theme.textMuted : theme.danger)
+                    }}>
+                      NET: {totals.netVsPar}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -895,29 +1020,80 @@ function Scorecard() {
       <div>
         {players.map((p) => {
           const score = scores[`${p.id}-${currentHole}`];
+          const kind = resultKinds[`${p.id}-${currentHole}`];
           const perfil = calcularPerfilGolfista(p.gender, p.handicap);
+          const par = currentHoleData.par || 4;
+
+          // Onda A · commit 6: em modo 'result', card vira coluna (info em cima,
+          // ResultPicker embaixo) pra caber os 8 botões sem apertar. Em modo
+          // 'strokes' mantém layout horizontal antigo (info | +/-).
+          const cardStyle = inputMode === 'result'
+            ? { ...styles.playerCard, flexDirection: 'column', alignItems: 'stretch', gap: 12 }
+            : styles.playerCard;
 
           return (
-            <div key={p.id} style={styles.playerCard}>
+            <div key={p.id} style={cardStyle}>
               <div style={styles.playerName}>
                 <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
-                  <span style={{ 
-                    width: "10px", height: "10px", borderRadius: "50%", 
+                  <span style={{
+                    width: "10px", height: "10px", borderRadius: "50%",
                     backgroundColor: perfil.tee.cor,
-                    border: perfil.tee.nome === "Branco" ? "1px solid #94a3b8" : "none" 
+                    border: perfil.tee.nome === "Branco" ? "1px solid #94a3b8" : "none"
                   }}></span>
                   TEE {perfil.tee.nome.toUpperCase()} • {perfil.cat} • HDCP {p.handicap || 0}
                 </div>
               </div>
 
-              <div style={styles.scoreControl}>
-                <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1, currentHole)}>-</button>
-                <span style={{ ...styles.scoreValue, color: score ? (score < currentHoleData.par ? theme.accent : score > currentHoleData.par ? theme.danger : "white") : theme.cardLight }}>
-                  {score ? score : "0"}
-                </span>
-                <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1, currentHole)}>+</button>
-              </div>
+              {inputMode === 'strokes' ? (
+                <div style={styles.scoreControl}>
+                  <button style={{ ...styles.scoreBtn, ...styles.minus }} onClick={() => handleScoreChange(p.id, -1, currentHole)}>-</button>
+                  <span style={{ ...styles.scoreValue, color: score ? (score < par ? theme.accent : score > par ? theme.danger : "white") : theme.cardLight }}>
+                    {score ? score : "0"}
+                  </span>
+                  <button style={{ ...styles.scoreBtn, ...styles.plus }} onClick={() => handleScoreChange(p.id, 1, currentHole)}>+</button>
+                </div>
+              ) : (
+                // ResultPicker: um chip por resultKind válido pro par. Kind
+                // selecionado ganha borda accent + fundo pigmentado da própria
+                // cor (verde/cinza/vermelho/amarelo). O clique dispara
+                // handleResultPick (sem debounce, enqueue imediato).
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                  {RESULT_KINDS.map(k => {
+                    const derived = deriveStrokesFromResult(par, k);
+                    const impossible = derived === null;
+                    const active = kind === k;
+                    const baseColor = RESULT_COLORS[k];
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        disabled={impossible}
+                        onClick={() => handleResultPick(p.id, k, currentHole)}
+                        title={impossible ? `Impossível em par ${par}` : `${RESULT_LABELS[k]} — ${derived} tacada(s) · ${resultPointsMap[k] ?? '?'} pt(s)`}
+                        style={{
+                          padding: '10px 6px',
+                          borderRadius: 8,
+                          border: `1px solid ${active ? baseColor : theme.cardLight}`,
+                          backgroundColor: active ? `${baseColor}33` : theme.bg,
+                          color: impossible ? theme.cardLight : (active ? baseColor : theme.textMain),
+                          cursor: impossible ? 'not-allowed' : 'pointer',
+                          opacity: impossible ? 0.4 : 1,
+                          fontSize: 12,
+                          fontWeight: active ? 800 : 600,
+                          textAlign: 'center',
+                          lineHeight: 1.1,
+                        }}
+                      >
+                        <div>{RESULT_LABELS[k]}</div>
+                        <div style={{ fontSize: 10, opacity: 0.75, marginTop: 2 }}>
+                          {impossible ? '—' : `${resultPointsMap[k] ?? '?'}pt`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
