@@ -1,6 +1,61 @@
 // backend/controllers/tournamentController.js
 const db = require('../db');
 
+// ─── Pontuação por Resultado (Onda A · Commit 2 · 2026-08-31) ────────────────
+// Lista canônica dos resultados aceitos, na ordem "melhor → pior" (útil pra UI).
+// Bate 1:1 com o ENUM de scores.result_kind e tournament_result_points.result_kind.
+const RESULT_KINDS = ['hio', 'albatross', 'eagle', 'birdie', 'par', 'bogey', 'double_bogey', 'triple_bogey'];
+
+// Defaults sugeridos (padrão Stableford básico). Aplicados apenas quando o admin
+// liga scoring_type='result_points' e NÃO envia result_points no payload — assim
+// o torneio já nasce com config válida e admin pode ajustar depois.
+const DEFAULT_RESULT_POINTS = {
+  hio: 8, albatross: 6, eagle: 5, birdie: 3, par: 2, bogey: 1, double_bogey: 0, triple_bogey: -1,
+};
+
+// Normaliza scoring_type — só aceita os 2 valores do ENUM. Qualquer outra coisa
+// (undefined, null, string maliciosa) vira 'strokes', o default seguro.
+function normalizeScoringType(raw) {
+  return raw === 'result_points' ? 'result_points' : 'strokes';
+}
+
+// Valida payload result_points do admin e devolve o mapa {kind: points} ou erro.
+// Aceita:
+//   - undefined/null → aplica DEFAULT_RESULT_POINTS
+//   - array [{result_kind, points}] com todos os 8 kinds válidos e points inteiro
+// Rejeita: kinds fora da lista canônica; points não-inteiro; entradas duplicadas.
+// A tabela é "tudo-ou-nada" — todos os 8 kinds precisam ter valor, pra Scorecard
+// nunca cair num result sem pontos configurados.
+function buildResultPointsMap(raw) {
+  if (raw === undefined || raw === null) return { map: { ...DEFAULT_RESULT_POINTS } };
+  if (!Array.isArray(raw)) return { error: 'result_points deve ser um array [{result_kind, points}].' };
+
+  const map = {};
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') {
+      return { error: 'Cada entrada de result_points deve ser um objeto {result_kind, points}.' };
+    }
+    const kind = entry.result_kind;
+    if (!RESULT_KINDS.includes(kind)) {
+      return { error: `result_kind inválido: '${kind}'. Aceitos: ${RESULT_KINDS.join(', ')}.` };
+    }
+    if (kind in map) {
+      return { error: `result_kind duplicado: '${kind}'.` };
+    }
+    const points = Number(entry.points);
+    if (!Number.isInteger(points)) {
+      return { error: `points de '${kind}' deve ser um inteiro.` };
+    }
+    map[kind] = points;
+  }
+  // Exige todos os 8 kinds — evita ScoreCard com botão "Birdie" sem pontos configurados.
+  const missing = RESULT_KINDS.filter(k => !(k in map));
+  if (missing.length > 0) {
+    return { error: `result_points incompleto — faltam: ${missing.join(', ')}.` };
+  }
+  return { map };
+}
+
 exports.listTournaments = async (req, res) => {
     try {
         // Pega o ID do jogador que a tela enviou para saber se ele já está inscrito
@@ -68,6 +123,19 @@ exports.getTournament = async (req, res) => {
             [id]
         );
         tournament.rounds = roundRows;
+
+        // Onda A · commit 2: sempre expõe result_points[] no response. Torneio
+        // 'strokes' vem com array vazio (Scorecard/Leaderboard ignoram); torneio
+        // 'result_points' vem com 8 entradas na ordem canônica RESULT_KINDS pra
+        // a UI de config renderizar sem se preocupar com faltas.
+        const [rpRows] = await db.execute(
+            `SELECT result_kind, points FROM tournament_result_points WHERE tournament_id = ?`,
+            [id]
+        );
+        const rpMap = Object.fromEntries(rpRows.map(r => [r.result_kind, Number(r.points)]));
+        tournament.result_points = RESULT_KINDS
+            .filter(k => k in rpMap)
+            .map(k => ({ result_kind: k, points: rpMap[k] }));
 
         res.json(tournament);
         
@@ -172,6 +240,12 @@ exports.createTournament = async (req, res) => {
             whatsapp_contact, registration_deadline, categories, sponsors, format, rounds
         } = req.body;
         const total_rounds = normalizeTotalRounds(req.body.total_rounds);
+        // Onda A · commit 2: scoring_type ('strokes' | 'result_points') + result_points[]
+        const scoring_type = normalizeScoringType(req.body.scoring_type);
+        const rpParse = scoring_type === 'result_points'
+            ? buildResultPointsMap(req.body.result_points)
+            : { map: null };
+        if (rpParse.error) return res.status(400).json({ error: rpParse.error });
 
         if (!validateYear(start_date)) {
             return res.status(400).json({ error: 'Data do torneio inválida.' });
@@ -225,11 +299,21 @@ exports.createTournament = async (req, res) => {
         const nn = (v) => (v === undefined || v === '' ? null : v);
         const [result] = await conn.execute(
             `INSERT INTO tournaments
-             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, club_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, req.club.id]
+             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, club_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, req.club.id]
         );
         const tournamentId = result.insertId;
+
+        // Onda A · commit 2: se result_points, insere config. Se strokes, ignora
+        // qualquer result_points que tenha vindo no payload — mantém a tabela limpa.
+        if (scoring_type === 'result_points' && rpParse.map) {
+            const rpRows = RESULT_KINDS.map(k => [tournamentId, k, rpParse.map[k]]);
+            await conn.query(
+                'INSERT INTO tournament_result_points (tournament_id, result_kind, points) VALUES ?',
+                [rpRows]
+            );
+        }
 
         // tournament_rounds: se rounds veio, insere N; se não veio (single-round),
         // insere 1 R1 default (mesmo padrão do backfill da migration).
@@ -251,7 +335,7 @@ exports.createTournament = async (req, res) => {
         }
 
         await conn.commit();
-        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds });
+        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds, scoring_type });
     } catch (error) {
         try { await conn.rollback(); } catch (_) {}
         console.error('Erro ao criar torneio:', error);
@@ -274,6 +358,15 @@ exports.updateTournament = async (req, res) => {
         // torneio multi-rodada existente por acidente quando o admin só edita descrição).
         const rawTR = req.body.total_rounds;
         const total_rounds_input = rawTR === undefined ? undefined : normalizeTotalRounds(rawTR);
+        // Onda A · commit 2: scoring_type — mesma lógica de total_rounds. Se veio
+        // no body, respeita; senão mantém o atual. Assim admin editando outro campo
+        // não flipa acidentalmente o torneio de 'result_points' pra 'strokes'.
+        const scoring_type_input = req.body.scoring_type !== undefined
+            ? normalizeScoringType(req.body.scoring_type)
+            : undefined;
+        // result_points: só interpretamos se scoring_type EFETIVO for 'result_points'
+        // — resolução final abaixo depois de saber o valor efetivo.
+        const rawRP = req.body.result_points;
 
         if (!validateYear(start_date)) {
             return res.status(400).json({ error: 'Data do torneio inválida.' });
@@ -290,7 +383,7 @@ exports.updateTournament = async (req, res) => {
 
         // Escopo do clube + estado atual
         const [tRows] = await conn.execute(
-            'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
+            'SELECT id, total_rounds, scoring_type FROM tournaments WHERE id = ? AND club_id = ?',
             [id, req.club.id]
         );
         if (tRows.length === 0) {
@@ -298,6 +391,33 @@ exports.updateTournament = async (req, res) => {
         }
         const currentTotalRounds = Number(tRows[0].total_rounds);
         const total_rounds = total_rounds_input !== undefined ? total_rounds_input : currentTotalRounds;
+        // scoring_type efetivo: preferência ao input; senão mantém o atual.
+        const scoring_type = scoring_type_input !== undefined ? scoring_type_input : (tRows[0].scoring_type || 'strokes');
+        // Onda A · commit 2: interpreta result_points condicionalmente.
+        //   - scoring_type efetivo é 'result_points':
+        //       - se rawRP veio, valida e usa pra REPLACE
+        //       - se rawRP NÃO veio E scoring_type mudou de 'strokes' pra 'result_points' agora,
+        //         aplica defaults (torneio nasce com config válida)
+        //       - se rawRP NÃO veio E scoring_type já era 'result_points', preserva config atual
+        //         (não faz replace)
+        //   - scoring_type efetivo é 'strokes': ignora rawRP; se veio, será limpo abaixo
+        //     (admin trocou de 'result_points' pra 'strokes' — apagamos config antiga).
+        let rpMapForReplace = null;         // se != null, faz DELETE+INSERT
+        let clearResultPoints = false;      // se true, faz só DELETE
+        if (scoring_type === 'result_points') {
+            if (rawRP !== undefined) {
+                const rpParse = buildResultPointsMap(rawRP);
+                if (rpParse.error) return res.status(400).json({ error: rpParse.error });
+                rpMapForReplace = rpParse.map;
+            } else if (tRows[0].scoring_type !== 'result_points') {
+                // Torneio virou result_points AGORA sem admin mandar config — aplica defaults.
+                rpMapForReplace = { ...DEFAULT_RESULT_POINTS };
+            }
+            // else: mantém config atual, não toca
+        } else {
+            // scoring_type virou 'strokes' — se antes era 'result_points', limpa config órfã.
+            if (tRows[0].scoring_type === 'result_points') clearResultPoints = true;
+        }
 
         // Verifica se o campo (do torneio single-round) pertence ao clube.
         // Pra multi-rodada, cada round é validado individualmente em validateRoundsPayload.
@@ -323,11 +443,25 @@ exports.updateTournament = async (req, res) => {
         await conn.execute(
             `UPDATE tournaments SET
              name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?,
-             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?
+             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?
              WHERE id=? AND club_id=?`,
             [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type),
-             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, id, req.club.id]
+             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, id, req.club.id]
         );
+
+        // Onda A · commit 2: replace atômico da config de pontos, quando aplicável.
+        // Se rpMapForReplace veio, DELETE + INSERT dos 8 kinds. Se clearResultPoints,
+        // só DELETE (torneio voltou pra 'strokes' e config antiga vira lixo).
+        if (rpMapForReplace) {
+            await conn.execute('DELETE FROM tournament_result_points WHERE tournament_id = ?', [id]);
+            const rpRows = RESULT_KINDS.map(k => [id, k, rpMapForReplace[k]]);
+            await conn.query(
+                'INSERT INTO tournament_result_points (tournament_id, result_kind, points) VALUES ?',
+                [rpRows]
+            );
+        } else if (clearResultPoints) {
+            await conn.execute('DELETE FROM tournament_result_points WHERE tournament_id = ?', [id]);
+        }
 
         if (willReplaceRounds) {
             // Replace atômico. NOTA: se já existirem scores gravados em rounds diferentes,
@@ -366,7 +500,7 @@ exports.updateTournament = async (req, res) => {
         }
 
         await conn.commit();
-        res.json({ message: 'Torneio atualizado com sucesso!', total_rounds });
+        res.json({ message: 'Torneio atualizado com sucesso!', total_rounds, scoring_type });
     } catch (error) {
         try { await conn.rollback(); } catch (_) {}
         console.error('Erro ao atualizar torneio:', error);
