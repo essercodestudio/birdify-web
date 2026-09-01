@@ -49,8 +49,12 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   // pra multi). Números filtram a rodada específica. rounds[] vem do backend
   // via GET /tournaments/:id — segunda faixa de tabs só aparece se total_rounds>1.
   const [totalRounds,         setTotalRounds]         = useState(1);
-  const [rounds,              setRounds]              = useState([]);
+  const [rounds,              setRounds]              = useState([]); // eslint-disable-line no-unused-vars
   const [activeRound,         setActiveRound]         = useState('all');
+  // Onda A · commit 7 (2026-08-31): scoring_type do torneio.
+  // 'strokes' (default) — ranking por menor tacadas + relPar (comportamento antigo).
+  // 'result_points' — ranking por MAIOR total_points (ordenação inversa; sem NET).
+  const [scoringType,         setScoringType]         = useState('strokes');
 
   const fetchInfo = useCallback(async () => {
     if (!tournamentId) return;
@@ -62,6 +66,8 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       // Item 5 · commit 5: metadados multi-rodada
       setTotalRounds(Number(res.data.total_rounds || 1));
       setRounds(Array.isArray(res.data.rounds) ? res.data.rounds : []);
+      // Onda A · commit 7: scoring_type do torneio
+      setScoringType(res.data.scoring_type === 'result_points' ? 'result_points' : 'strokes');
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
@@ -82,6 +88,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
         ...p,
         handicap:      parseFloat(p.handicap || 0),
         total_strokes: parseInt(p.total_strokes || 0),
+        // Onda A · commit 7: total_points vem do backend (SUM via LEFT JOIN
+        // em tournament_result_points). 0 em torneios strokes (JOIN vazio).
+        total_points:  parseInt(p.total_points  || 0),
         holes_played:  parseInt(p.holes_played  || 0),
         gross_to_par:  parseInt(p.score_to_par  || 0),
         net_to_par:    parseInt(p.score_to_par  || 0) - parseFloat(p.handicap || 0),
@@ -122,12 +131,21 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
     }
   };
 
-  const net = isNet(activeTab);
+  // Onda A · commit 7: em result_points a decisão de produto é gross puro sem
+  // handicap — ignora o filtro Net do nome da categoria (não existe "net por
+  // pontos" nesta versão). Em strokes, comportamento antigo preservado.
+  const isResultPoints = scoringType === 'result_points';
+  const net = !isResultPoints && isNet(activeTab);
   const filtered = applyFilter(ranking, activeTab).sort((a, b) => {
     const ha = a.holes_played, hb = b.holes_played;
     if (!ha && !hb) return a.name.localeCompare(b.name);
     if (ha && !hb) return -1;
     if (!ha && hb) return 1;
+    if (isResultPoints) {
+      // Ranking inverso — MAIOR pontuação vence. Desempate: mais buracos jogados.
+      const pa = a.total_points, pb = b.total_points;
+      return pa !== pb ? pb - pa : hb - ha;
+    }
     const sa = net ? a.net_to_par : a.gross_to_par;
     const sb = net ? b.net_to_par : b.gross_to_par;
     return sa !== sb ? sa - sb : ha - hb;
@@ -243,12 +261,14 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
 
       {/* Tabela */}
       <div style={{ backgroundColor: theme.card, borderRadius: embedded ? "0" : "12px", overflow: "hidden", flex: 1, marginBottom: embedded ? "0" : "30px" }}>
-        {/* Header */}
+        {/* Header — em result_points, a coluna final vira PONTOS (ordenação
+            inversa) e substitui "PAR". Tacadas continuam visíveis na coluna
+            TOTAL pra referência (são derivadas do resultado escolhido). */}
         <div style={{ display: "grid", gridTemplateColumns: "35px 1fr 50px 50px 60px", padding: "10px 16px", backgroundColor: theme.cardLight, color: theme.textMuted, fontSize: "10px", fontWeight: "bold", textTransform: "uppercase", alignItems: "center", gap: "5px" }}>
           <div>POS</div><div>JOGADOR</div>
           <div style={{ textAlign: "center" }}>HLS</div>
-          <div style={{ textAlign: "center" }}>TOTAL</div>
-          <div style={{ textAlign: "center" }}>PAR</div>
+          <div style={{ textAlign: "center" }}>{isResultPoints ? 'TAC.' : 'TOTAL'}</div>
+          <div style={{ textAlign: "center" }}>{isResultPoints ? 'PTS' : 'PAR'}</div>
         </div>
 
         {filtered.length === 0 && (
@@ -276,14 +296,27 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
               </div>
               <div style={{ textAlign: "center", fontSize: "13px", color: theme.textMuted }}>{row.holes_played || 0}</div>
               <div style={{ textAlign: "center", fontSize: "14px", fontWeight: "bold", color: theme.textMain }}>{row.holes_played ? row.total_strokes : "--"}</div>
-              <div style={{
-                textAlign: "center", padding: "4px 0", borderRadius: "6px",
-                fontSize: "13px", fontWeight: "800",
-                backgroundColor: !row.holes_played ? "transparent" : relPar < 0 ? "rgba(34,197,94,0.15)" : relPar > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
-                color: !row.holes_played ? theme.textMuted : relPar < 0 ? theme.accent : relPar > 0 ? theme.danger : theme.textMuted,
-              }}>
-                {parLabel}
-              </div>
+              {isResultPoints ? (
+                // Coluna PONTOS — ordenação por MAIOR. Cor gold pra destacar
+                // que é o critério de classificação neste modo.
+                <div style={{
+                  textAlign: "center", padding: "4px 0", borderRadius: "6px",
+                  fontSize: "13px", fontWeight: "800",
+                  backgroundColor: row.holes_played ? "rgba(234,179,8,0.15)" : "transparent",
+                  color: row.holes_played ? theme.gold : theme.textMuted,
+                }}>
+                  {row.holes_played ? row.total_points : '--'}
+                </div>
+              ) : (
+                <div style={{
+                  textAlign: "center", padding: "4px 0", borderRadius: "6px",
+                  fontSize: "13px", fontWeight: "800",
+                  backgroundColor: !row.holes_played ? "transparent" : relPar < 0 ? "rgba(34,197,94,0.15)" : relPar > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
+                  color: !row.holes_played ? theme.textMuted : relPar < 0 ? theme.accent : relPar > 0 ? theme.danger : theme.textMuted,
+                }}>
+                  {parLabel}
+                </div>
+              )}
             </div>
           );
         })}
@@ -352,6 +385,11 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
                 {activeRound === 'all' && totalRounds > 1 ? 'Total Gross (todas): ' : 'Total Gross: '}
                 <strong>{selectedPlayer.total_strokes}</strong>
               </span>
+              {isResultPoints && (
+                <div style={{ marginTop: 8, fontSize: "17px", color: theme.gold }}>
+                  Total de Pontos: <strong>{selectedPlayer.total_points}</strong>
+                </div>
+              )}
             </div>
           </div>
         </div>
