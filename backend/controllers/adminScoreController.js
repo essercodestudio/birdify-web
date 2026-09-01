@@ -11,6 +11,7 @@
 // Se qualquer passo falhar, ROLLBACK. Assim score e audit nunca ficam
 // dessincronizados e a assinatura invalidada sempre reflete uma edição real.
 const db = require("../db");
+const { deriveStrokesFromResult, fetchPar, RESULT_KINDS } = require("../services/resultKindHelpers");
 
 const REASON_MIN = 5;
 const REASON_MAX = 255;
@@ -68,7 +69,7 @@ exports.getTournamentMatrix = async (req, res) => {
     if (!tournamentId) return res.status(400).json({ error: "tournament_id inválido." });
 
     const [[tournament]] = await db.execute(
-      `SELECT id, name, start_date, course_id, total_rounds
+      `SELECT id, name, start_date, course_id, total_rounds, scoring_type
          FROM tournaments
         WHERE id = ? AND club_id = ?`,
       [tournamentId, req.club.id]
@@ -122,7 +123,7 @@ exports.getTournamentMatrix = async (req, res) => {
     }
 
     const [scores] = await db.execute(
-      `SELECT user_id, hole_number, round_number, strokes
+      `SELECT user_id, hole_number, round_number, strokes, result_kind
          FROM scores
         WHERE tournament_id = ?`,
       [tournamentId]
@@ -138,7 +139,15 @@ exports.getTournamentMatrix = async (req, res) => {
       [tournamentId]
     );
 
-    res.json({ tournament, holes, groups, scores, rounds: roundRows });
+    // Onda A · commit 3: expõe result_points[] pra AdminScoreEditor renderizar
+    // dropdown de resultados quando scoring_type='result_points'. Torneio strokes
+    // vem com array vazio — editor ignora.
+    const [rpRows] = await db.execute(
+      `SELECT result_kind, points FROM tournament_result_points WHERE tournament_id = ?`,
+      [tournamentId]
+    );
+
+    res.json({ tournament, holes, groups, scores, rounds: roundRows, result_points: rpRows });
   } catch (error) {
     console.error("[admin getTournamentMatrix] Erro:", error);
     res.status(500).json({ error: "Erro interno no servidor." });
@@ -154,6 +163,10 @@ exports.upsertTournamentScore = async (req, res) => {
   const hole_number   = Number(req.body.hole_number);
   const round_number  = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
   const strokesRaw    = req.body.strokes;
+  // Onda A · commit 3: em torneios result_points o admin edita o RESULTADO;
+  // strokes é derivado server-side. Se for delete (limpar célula), aceita
+  // strokes vazio OU result_kind vazio — ambos indicam "apaga a linha".
+  const resultKindRaw = req.body.result_kind;
 
   if (!tournament_id || !user_id || !hole_number) {
     return res.status(400).json({ error: "Dados incompletos." });
@@ -166,19 +179,19 @@ exports.upsertTournamentScore = async (req, res) => {
   if (reasonCheck.error) return res.status(reasonCheck.status).json({ error: reasonCheck.error });
   const reason = reasonCheck.reason;
 
-  const willDelete = (strokesRaw === null || strokesRaw === undefined || strokesRaw === "");
-  const newStrokes = willDelete ? null : Number(strokesRaw);
-  if (!willDelete && (!Number.isInteger(newStrokes) || newStrokes < 1 || newStrokes > 20)) {
-    return res.status(400).json({ error: "Tacadas devem ser inteiro entre 1 e 20." });
-  }
+  // willDelete unificado: strokes vazio OU result_kind vazio (quando aplicável)
+  // significam limpar a célula. A validação por modo acontece depois de saber
+  // o scoring_type do torneio (dentro da transação, já com conn).
+  const strokesEmpty = (strokesRaw === null || strokesRaw === undefined || strokesRaw === "");
+  const resultKindEmpty = (resultKindRaw === null || resultKindRaw === undefined || resultKindRaw === "");
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Escopo do clube + total_rounds + nome do jogador (pra compor invalidated_reason)
+    // Escopo do clube + total_rounds + scoring_type + nome do jogador (pra compor invalidated_reason)
     const [tRows] = await conn.execute(
-      `SELECT t.id, t.total_rounds, u.name AS target_name
+      `SELECT t.id, t.total_rounds, t.scoring_type, u.name AS target_name
          FROM tournaments t
          JOIN users u ON u.id = ?
         WHERE t.id = ? AND t.club_id = ?`,
@@ -189,6 +202,7 @@ exports.upsertTournamentScore = async (req, res) => {
       return res.status(404).json({ error: "Torneio não encontrado." });
     }
     const totalRounds = Number(tRows[0].total_rounds) || 1;
+    const scoringType = tRows[0].scoring_type || 'strokes';
     if (round_number > totalRounds) {
       await conn.rollback();
       return res.status(400).json({
@@ -196,6 +210,42 @@ exports.upsertTournamentScore = async (req, res) => {
       });
     }
     const targetName = tRows[0].target_name;
+
+    // Onda A · commit 3: valida payload por modo E deriva newStrokes/newResultKind.
+    // Delete unificado: nos dois modos, campo vazio = limpar célula.
+    let willDelete;
+    let newStrokes = null;
+    let newResultKind = null;
+    if (scoringType === 'result_points') {
+      willDelete = resultKindEmpty;
+      if (!willDelete) {
+        if (!RESULT_KINDS.includes(resultKindRaw)) {
+          await conn.rollback();
+          return res.status(400).json({
+            error: `Torneio em Pontuação por Resultado — envie result_kind (${RESULT_KINDS.join(', ')}) ou vazio pra apagar.`,
+          });
+        }
+        const par = await fetchPar(conn, tournament_id, round_number, hole_number);
+        const derived = deriveStrokesFromResult(par, resultKindRaw);
+        if (derived.error) {
+          await conn.rollback();
+          return res.status(400).json({ error: derived.error });
+        }
+        newStrokes = derived.strokes;
+        newResultKind = resultKindRaw;
+      }
+    } else {
+      // Modo strokes — comportamento antigo (ignora result_kind).
+      willDelete = strokesEmpty;
+      if (!willDelete) {
+        const s = Number(strokesRaw);
+        if (!Number.isInteger(s) || s < 1 || s > 20) {
+          await conn.rollback();
+          return res.status(400).json({ error: "Tacadas devem ser inteiro entre 1 e 20." });
+        }
+        newStrokes = s;
+      }
+    }
 
     // Jogador precisa estar escalado em algum grupo do torneio
     const [membership] = await conn.execute(
@@ -212,20 +262,29 @@ exports.upsertTournamentScore = async (req, res) => {
     const affectedGroupIds = membership.map(r => r.group_id);
 
     // Valor anterior POR ROUND (pra audit — R1 e R2 são scores independentes)
+    // Onda A · commit 3: também busca previous_result_kind pro audit em torneio result_points.
     const [prevRows] = await conn.execute(
-      `SELECT strokes FROM scores
+      `SELECT strokes, result_kind FROM scores
         WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
       [tournament_id, user_id, hole_number, round_number]
     );
     const previousStrokes = prevRows.length ? Number(prevRows[0].strokes) : null;
+    const previousResultKind = prevRows.length ? (prevRows[0].result_kind || null) : null;
 
     const action = deriveAction(previousStrokes, newStrokes);
-    if (previousStrokes === newStrokes) {
+    // No-op agora considera os dois campos por modo. Em torneio strokes o
+    // result_kind é sempre NULL, então basta comparar strokes (comportamento
+    // antigo). Em torneio result_points, comparação por kind é o que importa
+    // — se admin re-seleciona o mesmo resultado, é no-op.
+    const isNoop = scoringType === 'result_points'
+      ? (previousResultKind === newResultKind && previousStrokes === newStrokes)
+      : (previousStrokes === newStrokes);
+    if (isNoop) {
       await conn.rollback();
       return res.status(200).json({ ok: true, noop: true });
     }
 
-    // Mutação — DELETE ou UPSERT via uk_score 4-col
+    // Mutação — DELETE ou UPSERT via uk_score 4-col. Grava result_kind (NULL em strokes).
     if (willDelete) {
       await conn.execute(
         `DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
@@ -233,24 +292,28 @@ exports.upsertTournamentScore = async (req, res) => {
       );
     } else {
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes)
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE strokes = VALUES(strokes)`,
-        [tournament_id, user_id, hole_number, round_number, newStrokes]
+        `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes, result_kind)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
+        [tournament_id, user_id, hole_number, round_number, newStrokes, newResultKind]
       );
     }
 
-    // Audit — inclui round_number (coluna NULLABLE; envio null pra torneios legados
-    // ainda pra manter o comportamento antigo? Não: agora todo torneio tem >=1 round,
-    // então sempre gravo o número. NULL fica reservado a treinos onde não se aplica.)
+    // Audit — inclui round_number + previous_result_kind + new_result_kind.
+    // Em torneio strokes os dois kinds ficam NULL (comportamento antigo preservado
+    // porque as colunas foram adicionadas como NULLABLE em 2026_08_31).
     const [auditResult] = await conn.execute(
       `INSERT INTO admin_score_audit
          (club_id, admin_user_id, context, tournament_id, training_group_id,
-          target_user_id, hole_number, round_number, previous_strokes, new_strokes, action, reason)
-       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+          target_user_id, hole_number, round_number,
+          previous_strokes, previous_result_kind, new_strokes, new_result_kind,
+          action, reason)
+       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.club.id, req.user.id, tournament_id,
-        user_id, hole_number, round_number, previousStrokes, newStrokes, action, reason,
+        user_id, hole_number, round_number,
+        previousStrokes, previousResultKind, newStrokes, newResultKind,
+        action, reason,
       ]
     );
     const auditId = auditResult.insertId;
@@ -285,7 +348,9 @@ exports.upsertTournamentScore = async (req, res) => {
       action,
       round_number,
       previous_strokes: previousStrokes,
+      previous_result_kind: previousResultKind,
       new_strokes: newStrokes,
+      new_result_kind: newResultKind,
       audit_id: auditId,
       invalidated_signatures: invalidatedCount,
     });
@@ -511,7 +576,9 @@ exports.listAudit = async (req, res) => {
       `SELECT a.id, a.context, a.tournament_id, a.training_group_id,
               a.target_user_id, tu.name AS target_name,
               a.admin_user_id, au.name AS admin_name,
-              a.hole_number, a.previous_strokes, a.new_strokes,
+              a.hole_number, a.round_number,
+              a.previous_strokes, a.previous_result_kind,
+              a.new_strokes, a.new_result_kind,
               a.action, a.reason, a.created_at,
               t.name AS tournament_name,
               tg.group_name AS training_group_name

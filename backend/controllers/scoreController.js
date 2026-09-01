@@ -1,5 +1,6 @@
 // backend/controllers/scoreController.js
 const db = require("../db");
+const { deriveStrokesFromResult, fetchPar, RESULT_KINDS } = require("../services/resultKindHelpers");
 
 // Salvar (ou atualizar) o score de um buraco.
 // Item 5 · commit 2 (2026-08-28): aceita round_number no payload (default 1).
@@ -8,22 +9,27 @@ const db = require("../db");
 // o UPSERT resolve tanto single-round (round=1) quanto multi-rodada corretamente.
 exports.saveScore = async (req, res) => {
   try {
-    const { tournament_id, user_id, hole_number, strokes } = req.body;
+    const { tournament_id, user_id, hole_number } = req.body;
     const round_number = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
+    // Onda A · commit 3: em torneios strokes o payload traz strokes; em torneios
+    // result_points traz result_kind (strokes é DERIVADO server-side pra evitar
+    // qualquer chance de o client mandar strokes divergente do resultado escolhido).
+    const strokesRaw = req.body.strokes;
+    const resultKindRaw = req.body.result_kind;
 
-    // Validação básica dos dados
-    if (!tournament_id || !user_id || !hole_number || strokes === undefined) {
+    // Validação básica dos dados (strokes/result_kind checados abaixo por modo)
+    if (!tournament_id || !user_id || !hole_number) {
       return res.status(400).json({
-        error: 'Dados incompletos. Envie tournament_id, user_id, hole_number e strokes.'
+        error: 'Dados incompletos. Envie tournament_id, user_id e hole_number.'
       });
     }
     if (!Number.isInteger(round_number) || round_number < 1) {
       return res.status(400).json({ error: 'round_number inválido.' });
     }
 
-    // Verifica se o torneio pertence ao clube + pega total_rounds pra validar round_number
+    // Verifica se o torneio pertence ao clube + pega total_rounds e scoring_type
     const [tournamentCheck] = await db.execute(
-      'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds, scoring_type FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
 
@@ -31,10 +37,36 @@ exports.saveScore = async (req, res) => {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
     const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    const scoringType = tournamentCheck[0].scoring_type || 'strokes';
     if (round_number > totalRounds) {
       return res.status(400).json({
         error: `Rodada inválida: torneio tem ${totalRounds} rodada(s), tentou gravar em R${round_number}.`,
       });
+    }
+
+    // Onda A · commit 3: modo de marcação define o que o payload precisa e como
+    // derivar. finalStrokes/finalResultKind são o que vai gravado em `scores`.
+    let finalStrokes = null;
+    let finalResultKind = null;
+    if (scoringType === 'result_points') {
+      if (!RESULT_KINDS.includes(resultKindRaw)) {
+        return res.status(400).json({
+          error: `Torneio em modo Pontuação por Resultado — envie result_kind (${RESULT_KINDS.join(', ')}).`,
+        });
+      }
+      const par = await fetchPar(db, tournament_id, round_number, hole_number);
+      const derived = deriveStrokesFromResult(par, resultKindRaw);
+      if (derived.error) return res.status(400).json({ error: derived.error });
+      finalStrokes = derived.strokes;
+      finalResultKind = resultKindRaw;
+    } else {
+      // Modo strokes — comportamento antigo. Ignora result_kind se vier.
+      const s = Number(strokesRaw);
+      if (!Number.isInteger(s) || s < 1 || s > 20) {
+        return res.status(400).json({ error: 'strokes obrigatório (inteiro entre 1 e 20) em torneio por tacadas.' });
+      }
+      finalStrokes = s;
+      finalResultKind = null;
     }
 
     // Autorização de posse (espelha TrainingController.saveScore): o user_id do
@@ -64,16 +96,18 @@ exports.saveScore = async (req, res) => {
     // UPSERT atômico via uk_score(tournament_id, user_id, hole_number, round_number).
     // Substitui o antigo DELETE+INSERT — agora que o uk_score cobre round_number,
     // ON DUPLICATE KEY UPDATE resolve nativamente e sem race.
+    // Onda A · commit 3: grava result_kind também (NULL em torneio strokes).
     await db.execute(
-      `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE strokes = VALUES(strokes)`,
-      [tournament_id, user_id, hole_number, round_number, strokes]
+      `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes, result_kind)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
+      [tournament_id, user_id, hole_number, round_number, finalStrokes, finalResultKind]
     );
 
     res.json({
       message: "Score salvo!",
-      strokes,
+      strokes: finalStrokes,
+      result_kind: finalResultKind,
       hole: hole_number,
       round_number,
     });
@@ -289,8 +323,11 @@ exports.getScores = async (req, res) => {
       whereRound = ' AND round_number = ?';
       params.push(rn);
     }
+    // Onda A · commit 3: retorna result_kind (NULL em torneios strokes). Frontend
+    // novo consome pra pré-selecionar o botão certo no ResultPicker; frontend
+    // antigo ignora o campo, comportamento inalterado.
     const [results] = await db.execute(
-      `SELECT user_id, hole_number, round_number, strokes FROM scores WHERE tournament_id = ?${whereRound}`,
+      `SELECT user_id, hole_number, round_number, strokes, result_kind FROM scores WHERE tournament_id = ?${whereRound}`,
       params
     );
 
