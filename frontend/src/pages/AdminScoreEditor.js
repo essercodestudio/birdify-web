@@ -15,6 +15,30 @@ const TABS = [
   { id: "training",   label: "Treinos do Dia", icon: LuFlag },
 ];
 
+// ─── Pontuação por Resultado (Onda A · commit 8 · 2026-08-31) ────────────────
+// Só relevante quando editando torneios com scoring_type='result_points'. Bate
+// 1:1 com backend RESULT_KINDS + resultKindHelpers.deriveStrokesFromResult.
+const RESULT_KINDS = ['hio', 'albatross', 'eagle', 'birdie', 'par', 'bogey', 'double_bogey', 'triple_bogey'];
+const RESULT_LABELS = {
+  hio: 'Hole in One', albatross: 'Albatross', eagle: 'Eagle', birdie: 'Birdie',
+  par: 'Par', bogey: 'Bogey', double_bogey: 'Double Bogey', triple_bogey: 'Triple Bogey',
+};
+const deriveStrokesFromResult = (par, kind) => {
+  const p = Number(par);
+  if (!Number.isInteger(p) || p < 3) return null;
+  switch (kind) {
+    case 'hio': return 1;
+    case 'albatross': return p - 3 >= 1 ? p - 3 : null;
+    case 'eagle':     return p - 2 >= 1 ? p - 2 : null;
+    case 'birdie':    return p - 1;
+    case 'par':       return p;
+    case 'bogey':     return p + 1;
+    case 'double_bogey': return p + 2;
+    case 'triple_bogey': return p + 3;
+    default: return null;
+  }
+};
+
 const fmtDate = (d) => {
   if (!d) return "";
   const raw = typeof d === "string" ? d : new Date(d).toISOString();
@@ -132,6 +156,7 @@ export default function AdminScoreEditor() {
   }, [tab, selectedId, loadMatrix]);
 
   // Indexa scores {user_id: {hole_number: strokes}} pra render rápido.
+  // Onda A · commit 8: em torneio result_points, indexa também result_kind.
   const scoreIndex = useMemo(() => {
     const idx = {};
     if (!matrix) return idx;
@@ -140,6 +165,31 @@ export default function AdminScoreEditor() {
       idx[s.user_id][s.hole_number] = s.strokes;
     }
     return idx;
+  }, [matrix]);
+
+  // Onda A · commit 8: mapa paralelo pra result_kind. Vazio em torneios strokes
+  // e treinos (result_kind sempre NULL). Populado em torneios result_points.
+  const resultKindIndex = useMemo(() => {
+    const idx = {};
+    if (!matrix) return idx;
+    for (const s of matrix.scores || []) {
+      if (!s.result_kind) continue;
+      if (!idx[s.user_id]) idx[s.user_id] = {};
+      idx[s.user_id][s.hole_number] = s.result_kind;
+    }
+    return idx;
+  }, [matrix]);
+
+  // Torneio em modo Pontuação por Resultado? Treinos nunca são — só torneios.
+  const isResultPoints = tab === 'tournament'
+    && matrix?.tournament?.scoring_type === 'result_points';
+  // Mapa {kind: points} vindo do backend em getTournamentMatrix.result_points[].
+  const resultPointsMap = useMemo(() => {
+    const m = {};
+    (matrix?.result_points || []).forEach(({ result_kind, points }) => {
+      m[result_kind] = Number(points);
+    });
+    return m;
   }, [matrix]);
 
   const flatPlayers = useMemo(() => {
@@ -157,8 +207,45 @@ export default function AdminScoreEditor() {
   }, [matrix, tab]);
 
   // Etapa 1: usuário edita a célula e sai (blur/enter). Se mudou, abre modal.
-  const requestChange = (player, hole, rawValue) => {
+  // Onda A · commit 8: em torneio result_points, o valor editado é o RESULT_KIND
+  // (dropdown), strokes é derivado. Passa `mode` explícito pra requestChange
+  // separar os dois fluxos sem depender do formato do rawValue.
+  const requestChange = (player, hole, rawValue, mode = 'strokes') => {
     if (!matrix) return;
+    if (mode === 'result') {
+      // rawValue é o result_kind (string vazia = apagar). Valida contra RESULT_KINDS.
+      const newKind = rawValue === "" ? null : String(rawValue);
+      if (newKind !== null && !RESULT_KINDS.includes(newKind)) {
+        alert(`Resultado inválido: '${newKind}'.`);
+        return;
+      }
+      const currentKind = resultKindIndex[player.id]?.[hole.hole_number] || null;
+      if (newKind === currentKind) return;
+      // Deriva strokes só pra preview no modal (backend re-deriva autoritativamente).
+      const derivedStrokes = newKind === null
+        ? null
+        : deriveStrokesFromResult(hole.par, newKind);
+      if (newKind !== null && derivedStrokes === null) {
+        alert(`Resultado ${RESULT_LABELS[newKind]} impossível em par ${hole.par}.`);
+        return;
+      }
+      const currentStrokes = scoreIndex[player.id]?.[hole.hole_number];
+      setReasonText("");
+      setPendingChange({
+        mode: 'result',
+        userId: player.id,
+        playerName: player.name,
+        holeNumber: hole.hole_number,
+        par: hole.par,
+        currentValue: currentStrokes ?? null,        // strokes anteriores (pra referência)
+        currentResultKind: currentKind,
+        newValue: derivedStrokes,                     // strokes derivado
+        newResultKind: newKind,
+      });
+      return;
+    }
+
+    // mode='strokes' — fluxo antigo.
     const trimmed = String(rawValue || "").trim();
     const strokes = trimmed === "" ? null : Number(trimmed);
     const current = scoreIndex[player.id]?.[hole.hole_number];
@@ -172,6 +259,7 @@ export default function AdminScoreEditor() {
 
     setReasonText("");
     setPendingChange({
+      mode: 'strokes',
       userId: player.id,
       playerName: player.name,
       holeNumber: hole.hole_number,
@@ -194,18 +282,25 @@ export default function AdminScoreEditor() {
       alert("Motivo deve ter pelo menos 5 caracteres.");
       return;
     }
-    const { userId, holeNumber, newValue } = pendingChange;
+    const { userId, holeNumber, newValue, mode, newResultKind } = pendingChange;
     const key = `${userId}:${holeNumber}`;
     setSavingKey(key);
     try {
       if (tab === "tournament") {
-        await api.put("/admin/scores/tournament", {
+        // Onda A · commit 8: em modo result_points, envia result_kind (backend
+        // deriva strokes autoritativamente). Em modo strokes, mantém envio antigo.
+        const payload = {
           tournament_id: matrix.tournament.id,
           user_id: userId,
           hole_number: holeNumber,
-          strokes: newValue,
           reason,
-        });
+        };
+        if (mode === 'result') {
+          payload.result_kind = newResultKind; // pode ser null (apagar)
+        } else {
+          payload.strokes = newValue;
+        }
+        await api.put("/admin/scores/tournament", payload);
       } else {
         await api.put("/admin/scores/training", {
           group_id: matrix.group.id,
@@ -221,7 +316,12 @@ export default function AdminScoreEditor() {
           s => !(Number(s.user_id) === Number(userId) && Number(s.hole_number) === Number(holeNumber))
         );
         if (newValue !== null) {
-          filtered.push({ user_id: userId, hole_number: holeNumber, strokes: newValue });
+          filtered.push({
+            user_id: userId,
+            hole_number: holeNumber,
+            strokes: newValue,
+            ...(mode === 'result' ? { result_kind: newResultKind } : {}),
+          });
         }
         return { ...prev, scores: filtered };
       });
@@ -394,31 +494,64 @@ export default function AdminScoreEditor() {
                           {matrix.holes.map(h => {
                             const key = `${p.id}:${h.hole_number}`;
                             const val = scoreIndex[p.id]?.[h.hole_number];
+                            const kind = resultKindIndex[p.id]?.[h.hole_number];
                             const color = scoreColor(theme, val, h.par);
                             const saving = savingKey === key;
                             const flashed = flashKey === key;
                             return (
                               <td key={h.hole_number} style={{ padding: 2, textAlign: "center" }}>
                                 <div style={{ position: "relative" }}>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="20"
-                                    inputMode="numeric"
-                                    defaultValue={val ?? ""}
-                                    key={`${key}-${val ?? "x"}`}
-                                    onBlur={(e) => requestChange(p, h, e.target.value)}
-                                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                                    disabled={saving}
-                                    style={{
-                                      width: 42, height: 34, textAlign: "center",
-                                      backgroundColor: flashed ? theme.accentSoft : theme.bg,
-                                      color, fontWeight: 700, fontSize: 14,
-                                      border: `1px solid ${flashed ? theme.accent : theme.cardLight}`,
-                                      borderRadius: 6, outline: "none",
-                                      transition: "background-color 0.2s, border-color 0.2s",
-                                    }}
-                                  />
+                                  {isResultPoints ? (
+                                    // Onda A · commit 8: dropdown de resultKind
+                                    // filtrado por validade no par (albatross fora
+                                    // em par 3, etc). onChange dispara requestChange
+                                    // no ato (não on-blur — é um select, não input).
+                                    <select
+                                      value={kind || ""}
+                                      key={`${key}-${kind || "x"}`}
+                                      onChange={(e) => requestChange(p, h, e.target.value, 'result')}
+                                      disabled={saving}
+                                      style={{
+                                        width: 90, height: 34, textAlign: "center",
+                                        backgroundColor: flashed ? theme.accentSoft : theme.bg,
+                                        color, fontWeight: 700, fontSize: 12,
+                                        border: `1px solid ${flashed ? theme.accent : theme.cardLight}`,
+                                        borderRadius: 6, outline: "none",
+                                      }}
+                                    >
+                                      <option value="">—</option>
+                                      {RESULT_KINDS.map(k => {
+                                        const derived = deriveStrokesFromResult(h.par, k);
+                                        if (derived === null) return null; // impossível pro par
+                                        const pts = resultPointsMap[k];
+                                        return (
+                                          <option key={k} value={k}>
+                                            {RESULT_LABELS[k]}{pts !== undefined ? ` (${pts}pt)` : ''}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="20"
+                                      inputMode="numeric"
+                                      defaultValue={val ?? ""}
+                                      key={`${key}-${val ?? "x"}`}
+                                      onBlur={(e) => requestChange(p, h, e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                                      disabled={saving}
+                                      style={{
+                                        width: 42, height: 34, textAlign: "center",
+                                        backgroundColor: flashed ? theme.accentSoft : theme.bg,
+                                        color, fontWeight: 700, fontSize: 14,
+                                        border: `1px solid ${flashed ? theme.accent : theme.cardLight}`,
+                                        borderRadius: 6, outline: "none",
+                                        transition: "background-color 0.2s, border-color 0.2s",
+                                      }}
+                                    />
+                                  )}
                                   {saving && (
                                     <LuSave size={10} style={{ position: "absolute", top: -2, right: -2, color: theme.info }} />
                                   )}
@@ -472,16 +605,30 @@ export default function AdminScoreEditor() {
               <div style={{ backgroundColor: theme.bg, padding: 12, borderRadius: 8, marginBottom: 16, display: "flex", justifyContent: "space-around", alignItems: "center", gap: 12 }}>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Antes</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: theme.textMain }}>
-                    {pendingChange.currentValue ?? "—"}
+                  <div style={{ fontSize: pendingChange.mode === 'result' ? 16 : 24, fontWeight: 800, color: theme.textMain }}>
+                    {pendingChange.mode === 'result'
+                      ? (pendingChange.currentResultKind ? RESULT_LABELS[pendingChange.currentResultKind] : "—")
+                      : (pendingChange.currentValue ?? "—")}
                   </div>
+                  {pendingChange.mode === 'result' && pendingChange.currentValue != null && (
+                    <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>
+                      ({pendingChange.currentValue} tac.)
+                    </div>
+                  )}
                 </div>
                 <div style={{ color: theme.textMuted, fontSize: 20 }}>→</div>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Depois</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: pendingChange.newValue == null ? theme.danger : theme.accent }}>
-                    {pendingChange.newValue == null ? "apagar" : pendingChange.newValue}
+                  <div style={{ fontSize: pendingChange.mode === 'result' ? 16 : 24, fontWeight: 800, color: pendingChange.newValue == null ? theme.danger : theme.accent }}>
+                    {pendingChange.mode === 'result'
+                      ? (pendingChange.newResultKind ? RESULT_LABELS[pendingChange.newResultKind] : "apagar")
+                      : (pendingChange.newValue == null ? "apagar" : pendingChange.newValue)}
                   </div>
+                  {pendingChange.mode === 'result' && pendingChange.newValue != null && (
+                    <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>
+                      ({pendingChange.newValue} tac.)
+                    </div>
+                  )}
                 </div>
               </div>
               <label style={{ display: "block", color: theme.textMuted, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
