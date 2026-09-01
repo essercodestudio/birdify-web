@@ -186,6 +186,12 @@ CREATE TABLE IF NOT EXISTS tournaments (
   status                 VARCHAR(30)   NOT NULL DEFAULT 'OPEN',
   format                 ENUM('shotgun','tee_time') NOT NULL DEFAULT 'shotgun',
   total_rounds           TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  -- scoring_type: adicionado em 2026_08_31 (Onda A · Pontuação por Resultado).
+  -- 'strokes' (default) = ranking por tacadas brutas (comportamento histórico).
+  -- 'result_points' = ranking por soma de pontos configurados em tournament_result_points
+  --                   (Birdie=3, Par=2, Bogey=1, etc — config por torneio, gross puro sem handicap).
+  -- Torneios existentes recebem 'strokes' via default sem alterar comportamento.
+  scoring_type           ENUM('strokes','result_points') NOT NULL DEFAULT 'strokes',
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
@@ -289,21 +295,30 @@ CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
 -- do clube inteiro leva os audits dele.
 -- round_number: adicionado em 2026_08_28, NULLABLE (NULL = torneio 1-rodada
 -- legado ou treino, onde a coluna não se aplica).
+-- previous_result_kind / new_result_kind: adicionados em 2026_08_31 (Onda A).
+--   NULL em audits antigos e em torneios strokes; preenchido só quando admin
+--   edita resultado em torneio result_points.
+-- target_dupla_id: adicionado em 2026_08_31 (aditivo pra Onda B — Duplas).
+--   NULL enquanto a Onda B não estiver implementada; SEM FK aqui porque
+--   tournament_duplas ainda não existe. Onda B adiciona a FK depois.
 CREATE TABLE IF NOT EXISTS admin_score_audit (
-  id                 INT AUTO_INCREMENT PRIMARY KEY,
-  club_id            INT NOT NULL,
-  admin_user_id      INT DEFAULT NULL,
-  context            ENUM('tournament','training') NOT NULL,
-  tournament_id      INT DEFAULT NULL,
-  training_group_id  INT DEFAULT NULL,
-  target_user_id     INT DEFAULT NULL,
-  hole_number        INT NOT NULL,
-  round_number       TINYINT UNSIGNED NULL,
-  previous_strokes   INT DEFAULT NULL,
-  new_strokes        INT DEFAULT NULL,
-  action             ENUM('insert','update','delete') NOT NULL,
-  reason             VARCHAR(255) NOT NULL,
-  created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  id                    INT AUTO_INCREMENT PRIMARY KEY,
+  club_id               INT NOT NULL,
+  admin_user_id         INT DEFAULT NULL,
+  context               ENUM('tournament','training') NOT NULL,
+  tournament_id         INT DEFAULT NULL,
+  training_group_id     INT DEFAULT NULL,
+  target_user_id        INT DEFAULT NULL,
+  target_dupla_id       INT DEFAULT NULL,
+  hole_number           INT NOT NULL,
+  round_number          TINYINT UNSIGNED NULL,
+  previous_strokes      INT DEFAULT NULL,
+  previous_result_kind  ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NULL,
+  new_strokes           INT DEFAULT NULL,
+  new_result_kind       ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NULL,
+  action                ENUM('insert','update','delete') NOT NULL,
+  reason                VARCHAR(255) NOT NULL,
+  created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_asa_club   FOREIGN KEY (club_id)           REFERENCES clubs(id)             ON DELETE CASCADE,
   CONSTRAINT fk_asa_admin  FOREIGN KEY (admin_user_id)     REFERENCES users(id)             ON DELETE SET NULL,
   CONSTRAINT fk_asa_target FOREIGN KEY (target_user_id)    REFERENCES users(id)             ON DELETE SET NULL,
@@ -346,6 +361,11 @@ CREATE TABLE IF NOT EXISTS inscriptions (
 -- (user, tournament, hole) em rodadas diferentes num torneio multi-round.
 -- Migration 2026_08_28 também DROPOU um índice legado unique_score que não
 -- estava no SCHEMA.sql e bloqueava multi-rodada.
+-- result_kind: adicionado em 2026_08_31 (Onda A). NULL em torneios strokes;
+-- preenchido só em torneios scoring_type='result_points'. strokes continua
+-- NOT NULL — em modo result_points, guarda o valor DERIVADO do resultado + par
+-- (HiO=1, Alb=par-3, Eagle=par-2, Birdie=par-1, Par=par, Bogey=par+1, etc)
+-- pra preservar Meu Desempenho, exportação Excel e demais leitores de strokes.
 CREATE TABLE IF NOT EXISTS scores (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id INT NOT NULL,
@@ -353,6 +373,7 @@ CREATE TABLE IF NOT EXISTS scores (
   hole_number   INT NOT NULL,
   round_number  TINYINT UNSIGNED NOT NULL DEFAULT 1,
   strokes       INT NOT NULL,
+  result_kind   ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_scores_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
   CONSTRAINT fk_scores_user  FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE,
@@ -360,6 +381,21 @@ CREATE TABLE IF NOT EXISTS scores (
   INDEX idx_scores_tourn (tournament_id),
   INDEX idx_scores_round (tournament_id, round_number),
   INDEX idx_scores_user  (user_id)
+);
+
+-- ─── 14b. tournament_result_points (config de pontos por resultado) ──
+-- Só relevante quando tournaments.scoring_type = 'result_points'. Se o admin
+-- trocar o torneio de volta pra 'strokes', as linhas ficam órfãs mas o backend
+-- ignora — não há CHECK cross-table forçando consistência (MySQL suporta mal).
+-- PK composta garante 1 valor por (torneio, resultado). ON DELETE CASCADE
+-- limpa a config junto com o torneio. Migration 2026_08_31 (Onda A · Commit 1).
+CREATE TABLE IF NOT EXISTS tournament_result_points (
+  tournament_id  INT NOT NULL,
+  result_kind    ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NOT NULL,
+  points         INT NOT NULL,
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (tournament_id, result_kind),
+  CONSTRAINT fk_trp_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
 );
 
 -- ═════════════════════════════════════════════════════════════════════
