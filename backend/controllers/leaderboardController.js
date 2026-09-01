@@ -49,7 +49,12 @@ exports.getTournamentLeaderboard = async (req, res) => {
         COALESCE(MAX(ph.handicap), 0) as handicap,
         COALESCE(SUM(s.strokes), 0) as total_strokes,
         COALESCE(COUNT(s.hole_number), 0) as holes_played,
-        COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, hf.par, chf.par, 4)), 0) as score_to_par
+        COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, hf.par, chf.par, 4)), 0) as score_to_par,
+        -- Onda A · commit 4: SUM dos pontos configurados por resultado. NULL em
+        -- torneio strokes (s.result_kind IS NULL → JOIN vazio → SUM=0). Em torneio
+        -- result_points, cada linha de scores casa com uma entrada de
+        -- tournament_result_points, e SUM devolve o total de pontos do jogador.
+        COALESCE(SUM(trp.points), 0) as total_points
       FROM inscriptions i
       JOIN users u ON i.user_id = u.id
       LEFT JOIN scores s
@@ -66,6 +71,10 @@ exports.getTournamentLeaderboard = async (req, res) => {
       -- Fallback pro course do próprio torneio (single-round legado)
       LEFT JOIN holes hf        ON hf.course_id  = t.course_id AND hf.hole_number  = s.hole_number
       LEFT JOIN course_holes chf ON chf.course_id = t.course_id AND chf.hole_number = s.hole_number
+      -- Config de pontos por resultado (Onda A · commit 4). Só casa quando
+      -- s.result_kind IS NOT NULL (torneios result_points).
+      LEFT JOIN tournament_result_points trp
+        ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
 
       -- Handicap por jogador. GROUP BY user_id e MAX(handicap) sao OBRIGATORIOS
       -- pos-Bloco D (2026-08-28): grupos passaram a ser por rodada, entao o
@@ -132,11 +141,15 @@ exports.getPlayerScorecard = async (req, res) => {
       ? [tournamentId, userId, filterRound]
       : [tournamentId, userId];
 
+    // Onda A · commit 4: retorna result_kind + points (via LEFT JOIN em
+    // tournament_result_points). Torneio strokes → result_kind NULL, points NULL.
     const query = `
       SELECT
         s.hole_number,
         s.round_number,
         s.strokes,
+        s.result_kind,
+        trp.points,
         COALESCE(h.par, hf.par, 4) as par
       FROM scores s
       JOIN tournaments t ON s.tournament_id = t.id
@@ -144,6 +157,8 @@ exports.getPlayerScorecard = async (req, res) => {
         ON tr.tournament_id = s.tournament_id AND tr.round_number = s.round_number
       LEFT JOIN holes h  ON h.course_id  = tr.course_id AND h.hole_number = s.hole_number
       LEFT JOIN holes hf ON hf.course_id = t.course_id  AND hf.hole_number = s.hole_number
+      LEFT JOIN tournament_result_points trp
+        ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
       WHERE s.tournament_id = ? AND s.user_id = ? ${roundFilter}
       ORDER BY s.round_number ASC, s.hole_number ASC
     `;
