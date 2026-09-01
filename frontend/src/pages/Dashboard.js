@@ -9,6 +9,27 @@ import { mediaUrl } from '../services/media';
 import { LuCalendarDays, LuMapPin, LuLink, LuTrash2, LuUpload, LuX } from 'react-icons/lu';
 import { TOURNAMENT_CATEGORIES } from '../utils/categories';
 
+// ─── Pontuação por Resultado (Onda A · commit 5 · 2026-08-31) ────────────────
+// Ordem canônica dos resultados (melhor → pior). Bate com backend RESULT_KINDS.
+const RESULT_KINDS = ['hio', 'albatross', 'eagle', 'birdie', 'par', 'bogey', 'double_bogey', 'triple_bogey'];
+// Rótulos exibidos pro admin no painel de config. Emojis intencionalmente
+// evitados (design system Birdify).
+const RESULT_LABELS = {
+  hio: 'Hole in One',
+  albatross: 'Albatross',
+  eagle: 'Eagle',
+  birdie: 'Birdie',
+  par: 'Par',
+  bogey: 'Bogey',
+  double_bogey: 'Double Bogey',
+  triple_bogey: 'Triple Bogey',
+};
+// Defaults sugeridos (padrão Stableford básico) — batem 1:1 com backend
+// DEFAULT_RESULT_POINTS pra evitar surpresa se admin salvar sem tocar nos valores.
+const DEFAULT_RESULT_POINTS = {
+  hio: 8, albatross: 6, eagle: 5, birdie: 3, par: 2, bogey: 1, double_bogey: 0, triple_bogey: -1,
+};
+
 // ─── helpers de fuso horário (Brasília) ──────────────────────────────────────
 const TZ = 'America/Sao_Paulo';
 
@@ -99,6 +120,12 @@ function Dashboard() {
   // round_date estritamente crescente, cursos do clube.
   const [multiRound, setMultiRound] = useState(false);
   const [rounds, setRounds] = useState([]); // [{round_number, round_date, course_id}]
+
+  // Onda A · commit 5 (2026-08-31): tipo de marcação do torneio.
+  // 'strokes' (default) = comportamento atual, ranking por tacadas brutas.
+  // 'result_points' = ranking por soma de pontos configurados em resultPoints.
+  const [scoringType, setScoringType] = useState('strokes');
+  const [resultPoints, setResultPoints] = useState({ ...DEFAULT_RESULT_POINTS });
 
   const theme = {
     bg: '#0f172a',
@@ -253,13 +280,31 @@ function Dashboard() {
       totalRoundsPayload = rounds.length;
     }
 
+    // Onda A · commit 5: valida result_points client-side quando result_points ativo.
+    // Precisa ter todos os 8 kinds preenchidos com inteiro. Bate com validação
+    // server-side em buildResultPointsMap (tournamentController).
+    let resultPointsPayload;
+    if (scoringType === 'result_points') {
+      const missing = RESULT_KINDS.filter(k => {
+        const v = resultPoints[k];
+        return v === undefined || v === null || v === '' || !Number.isFinite(Number(v));
+      });
+      if (missing.length > 0) {
+        alert(`Preencha os pontos de: ${missing.map(k => RESULT_LABELS[k]).join(', ')}`);
+        return;
+      }
+      resultPointsPayload = RESULT_KINDS.map(k => ({ result_kind: k, points: Number(resultPoints[k]) }));
+    }
+
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
       registration_deadline: registrationDeadline, categories: selectedCategories, sponsors,
       format,
       total_rounds: totalRoundsPayload,
+      scoring_type: scoringType,
       ...(roundsPayload ? { rounds: roundsPayload } : {}),
+      ...(resultPointsPayload ? { result_points: resultPointsPayload } : {}),
     };
     
     try {
@@ -299,6 +344,18 @@ function Dashboard() {
         setMultiRound(false);
         setRounds([]);
       }
+      // Onda A · commit 5: hidrata scoring_type + result_points. Se torneio é strokes
+      // (o caso comum) mantém defaults no state — se admin marcar result_points depois,
+      // já tem valores válidos pra editar sem começar do zero.
+      const st = t.scoring_type === 'result_points' ? 'result_points' : 'strokes';
+      setScoringType(st);
+      if (st === 'result_points' && Array.isArray(t.result_points) && t.result_points.length > 0) {
+        const map = { ...DEFAULT_RESULT_POINTS };
+        t.result_points.forEach(({ result_kind, points }) => { map[result_kind] = Number(points); });
+        setResultPoints(map);
+      } else {
+        setResultPoints({ ...DEFAULT_RESULT_POINTS });
+      }
       setIsEditing(true);
       setEditTournamentId(t.id);
       window.scrollTo(0, 0);
@@ -311,6 +368,7 @@ function Dashboard() {
     setSelectedCategories([]); setSponsors([]); setPixKeyType('Chave Aleatória');
     setFormat('shotgun');
     setMultiRound(false); setRounds([]);
+    setScoringType('strokes'); setResultPoints({ ...DEFAULT_RESULT_POINTS });
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -525,6 +583,75 @@ function Dashboard() {
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Onda A · commit 5 — TIPO DE MARCAÇÃO (Tacadas vs Pontuação por Resultado) */}
+          <div style={{ marginTop: '20px', padding: '14px', border: `1px solid ${theme.cardLight}`, borderRadius: '10px', backgroundColor: theme.bg }}>
+            <label style={styles.label}>TIPO DE MARCAÇÃO</label>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: 8 }}>
+              {[
+                { value: 'strokes',        label: 'Tacadas',                hint: 'Ranking por menor soma de tacadas (formato padrão)' },
+                { value: 'result_points',  label: 'Pontuação por Resultado', hint: 'Ranking por maior soma de pontos (Birdie=3, Par=2, etc)' },
+              ].map(opt => {
+                const active = scoringType === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setScoringType(opt.value)}
+                    style={{
+                      flex: 1, minWidth: 200,
+                      padding: '14px', borderRadius: 8,
+                      border: `1px solid ${active ? theme.accent : theme.cardLight}`,
+                      backgroundColor: active ? theme.accent : theme.bg,
+                      color: active ? '#000' : theme.textMuted,
+                      cursor: 'pointer', textAlign: 'left',
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  >
+                    <div style={{ fontSize: 14 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4, fontWeight: 600 }}>{opt.hint}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {scoringType === 'result_points' && (
+              <div style={{ marginTop: '14px' }}>
+                <div style={{ color: theme.textMuted, fontSize: 12, marginBottom: 8 }}>
+                  Pontos por resultado (aceita negativos). Aplicado a todas as rodadas deste torneio.
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                  gap: '8px',
+                }}>
+                  {RESULT_KINDS.map(k => (
+                    <div key={k} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      backgroundColor: theme.card,
+                      border: `1px solid ${theme.cardLight}`,
+                      borderRadius: '8px',
+                    }}>
+                      <span style={{ color: theme.textMain, fontSize: 13, fontWeight: 600 }}>{RESULT_LABELS[k]}</span>
+                      <input
+                        type="number"
+                        step="1"
+                        value={resultPoints[k] ?? ''}
+                        onChange={e => setResultPoints(prev => ({ ...prev, [k]: e.target.value }))}
+                        style={{
+                          width: 64, padding: '6px 8px', textAlign: 'center',
+                          borderRadius: 6, border: `1px solid ${theme.cardLight}`,
+                          backgroundColor: theme.bg, color: theme.gold, fontWeight: 'bold', fontSize: 14,
+                        }}
+                        aria-label={`Pontos para ${RESULT_LABELS[k]}`}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
