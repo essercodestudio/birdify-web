@@ -11,7 +11,7 @@
 // Se qualquer passo falhar, ROLLBACK. Assim score e audit nunca ficam
 // dessincronizados e a assinatura invalidada sempre reflete uma edição real.
 const db = require("../db");
-const { deriveStrokesFromResult, fetchPar, RESULT_KINDS } = require("../services/resultKindHelpers");
+const { deriveStrokesFromResult, fetchPar, RESULT_KINDS, getEnabledKinds } = require("../services/resultKindHelpers");
 
 const REASON_MIN = 5;
 const REASON_MAX = 255;
@@ -142,8 +142,10 @@ exports.getTournamentMatrix = async (req, res) => {
     // Onda A · commit 3: expõe result_points[] pra AdminScoreEditor renderizar
     // dropdown de resultados quando scoring_type='result_points'. Torneio strokes
     // vem com array vazio — editor ignora.
+    // Bloco 2 · Commit 2.2 (2026-09-01): cada linha traz enabled — editor esconde
+    // opções desativadas do dropdown.
     const [rpRows] = await db.execute(
-      `SELECT result_kind, points FROM tournament_result_points WHERE tournament_id = ?`,
+      `SELECT result_kind, points, enabled FROM tournament_result_points WHERE tournament_id = ?`,
       [tournamentId]
     );
 
@@ -223,6 +225,18 @@ exports.upsertTournamentScore = async (req, res) => {
           await conn.rollback();
           return res.status(400).json({
             error: `Torneio em Pontuação por Resultado — envie result_kind (${RESULT_KINDS.join(', ')}) ou vazio pra apagar.`,
+          });
+        }
+        // Bloco 2 · Commit 2.2 (2026-09-01): rejeita result_kind desativado.
+        // Vale pra edição do admin igual pra save do jogador — nao dá pra
+        // corrigir um score PARA um resultado que o proprio torneio nao aceita.
+        // Delete de célula (resultKindEmpty=true) continua permitido: apagar
+        // dado antigo é sempre válido, mesmo se o kind tiver sido desativado.
+        const enabledKinds = await getEnabledKinds(conn, tournament_id);
+        if (!enabledKinds.has(resultKindRaw)) {
+          await conn.rollback();
+          return res.status(400).json({
+            error: `Resultado '${resultKindRaw}' está desativado neste torneio.`,
           });
         }
         const par = await fetchPar(conn, tournament_id, round_number, hole_number);

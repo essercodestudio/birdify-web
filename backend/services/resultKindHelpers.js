@@ -45,6 +45,24 @@ function deriveStrokesFromResult(par, resultKind) {
   }
 }
 
+// Bloco 2 · Commit 2.2 (2026-09-01): retorna Set com os result_kinds ATIVOS
+// (enabled=1) no torneio. Usado por scoreController e adminScoreController pra
+// rejeitar escritas de kinds desativados pelo admin.
+//
+// Torneio strokes ou sem config: retorna Set vazio (leitor deve tratar como
+// "não aplicável" — nenhum kind é aceito porque o modo não usa result_kind).
+//
+// Cache OFF de propósito: config muda raramente mas quando muda precisa refletir
+// imediato. Cada save carrega uma consulta indexada por PK composta — barato.
+async function getEnabledKinds(db, tournamentId) {
+  const [rows] = await db.execute(
+    `SELECT result_kind FROM tournament_result_points
+      WHERE tournament_id = ? AND enabled = 1`,
+    [tournamentId]
+  );
+  return new Set(rows.map(r => r.result_kind));
+}
+
 // Busca o par de um buraco específico no course da rodada, com fallback pro
 // course do próprio torneio (single-round legado) e default 4. Espelha o COALESCE
 // que o leaderboardController usa, mas em query dedicada e única linha —
@@ -70,4 +88,5 @@ module.exports = {
   RESULT_KINDS,
   deriveStrokesFromResult,
   fetchPar,
+  getEnabledKinds,
 };

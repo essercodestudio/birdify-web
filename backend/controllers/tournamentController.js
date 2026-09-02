@@ -19,41 +19,69 @@ function normalizeScoringType(raw) {
   return raw === 'result_points' ? 'result_points' : 'strokes';
 }
 
-// Valida payload result_points do admin e devolve o mapa {kind: points} ou erro.
-// Aceita:
-//   - undefined/null → aplica DEFAULT_RESULT_POINTS
-//   - array [{result_kind, points}] com todos os 8 kinds válidos e points inteiro
-// Rejeita: kinds fora da lista canônica; points não-inteiro; entradas duplicadas.
-// A tabela é "tudo-ou-nada" — todos os 8 kinds precisam ter valor, pra Scorecard
-// nunca cair num result sem pontos configurados.
-function buildResultPointsMap(raw) {
-  if (raw === undefined || raw === null) return { map: { ...DEFAULT_RESULT_POINTS } };
-  if (!Array.isArray(raw)) return { error: 'result_points deve ser um array [{result_kind, points}].' };
+// Normaliza flag enabled do payload. Aceita true/false, 1/0, undefined → 1 (default).
+function normalizeEnabled(raw) {
+  if (raw === undefined || raw === null) return 1;
+  if (raw === true || raw === 1 || raw === '1') return 1;
+  if (raw === false || raw === 0 || raw === '0') return 0;
+  return null; // sinaliza inválido pro caller
+}
 
-  const map = {};
+// Valida payload result_points do admin e devolve {pointsMap, enabledMap} ou erro.
+// Aceita:
+//   - undefined/null → aplica DEFAULT_RESULT_POINTS + todos enabled=1
+//   - array [{result_kind, points, enabled?}] com todos os 8 kinds válidos e points inteiro
+// Rejeita: kinds fora da lista canônica; points não-inteiro; entradas duplicadas;
+//   enabled em formato inválido; TODOS os 8 kinds desativados (Scorecard ficaria vazio).
+// A tabela é "tudo-ou-nada" — todos os 8 kinds precisam ter LINHA no banco (com valor
+// de points), pra Scorecard nunca cair num result sem pontos configurados. O flag
+// enabled apenas ESCONDE a opção no Scorecard/AdminEditor — o dado persiste.
+// Bloco 2 · Commit 2.2 (2026-09-01): campo enabled ganhou suporte.
+function buildResultPointsMap(raw) {
+  if (raw === undefined || raw === null) {
+    const enabledMap = {};
+    RESULT_KINDS.forEach(k => { enabledMap[k] = 1; });
+    return { pointsMap: { ...DEFAULT_RESULT_POINTS }, enabledMap };
+  }
+  if (!Array.isArray(raw)) return { error: 'result_points deve ser um array [{result_kind, points, enabled?}].' };
+
+  const pointsMap = {};
+  const enabledMap = {};
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') {
-      return { error: 'Cada entrada de result_points deve ser um objeto {result_kind, points}.' };
+      return { error: 'Cada entrada de result_points deve ser um objeto {result_kind, points, enabled?}.' };
     }
     const kind = entry.result_kind;
     if (!RESULT_KINDS.includes(kind)) {
       return { error: `result_kind inválido: '${kind}'. Aceitos: ${RESULT_KINDS.join(', ')}.` };
     }
-    if (kind in map) {
+    if (kind in pointsMap) {
       return { error: `result_kind duplicado: '${kind}'.` };
     }
     const points = Number(entry.points);
     if (!Number.isInteger(points)) {
       return { error: `points de '${kind}' deve ser um inteiro.` };
     }
-    map[kind] = points;
+    const enabled = normalizeEnabled(entry.enabled);
+    if (enabled === null) {
+      return { error: `enabled de '${kind}' deve ser boolean (true/false).` };
+    }
+    pointsMap[kind] = points;
+    enabledMap[kind] = enabled;
   }
   // Exige todos os 8 kinds — evita ScoreCard com botão "Birdie" sem pontos configurados.
-  const missing = RESULT_KINDS.filter(k => !(k in map));
+  const missing = RESULT_KINDS.filter(k => !(k in pointsMap));
   if (missing.length > 0) {
     return { error: `result_points incompleto — faltam: ${missing.join(', ')}.` };
   }
-  return { map };
+  // Bloco 2: pelo menos 1 kind precisa estar enabled (senão o Scorecard fica
+  // sem nenhum botão pra clicar). Defesa em profundidade — o admin também vê
+  // aviso no Dashboard.
+  const anyEnabled = RESULT_KINDS.some(k => enabledMap[k] === 1);
+  if (!anyEnabled) {
+    return { error: 'Pelo menos um tipo de resultado precisa ficar ativo.' };
+  }
+  return { pointsMap, enabledMap };
 }
 
 exports.listTournaments = async (req, res) => {
@@ -128,14 +156,17 @@ exports.getTournament = async (req, res) => {
         // 'strokes' vem com array vazio (Scorecard/Leaderboard ignoram); torneio
         // 'result_points' vem com 8 entradas na ordem canônica RESULT_KINDS pra
         // a UI de config renderizar sem se preocupar com faltas.
+        // Bloco 2 · Commit 2.2: cada entrada agora inclui `enabled` (0|1).
         const [rpRows] = await db.execute(
-            `SELECT result_kind, points FROM tournament_result_points WHERE tournament_id = ?`,
+            `SELECT result_kind, points, enabled FROM tournament_result_points WHERE tournament_id = ?`,
             [id]
         );
-        const rpMap = Object.fromEntries(rpRows.map(r => [r.result_kind, Number(r.points)]));
+        const rpMap = Object.fromEntries(
+            rpRows.map(r => [r.result_kind, { points: Number(r.points), enabled: Number(r.enabled) }])
+        );
         tournament.result_points = RESULT_KINDS
             .filter(k => k in rpMap)
-            .map(k => ({ result_kind: k, points: rpMap[k] }));
+            .map(k => ({ result_kind: k, points: rpMap[k].points, enabled: rpMap[k].enabled }));
 
         res.json(tournament);
         
@@ -241,10 +272,11 @@ exports.createTournament = async (req, res) => {
         } = req.body;
         const total_rounds = normalizeTotalRounds(req.body.total_rounds);
         // Onda A · commit 2: scoring_type ('strokes' | 'result_points') + result_points[]
+        // Bloco 2 · Commit 2.2: buildResultPointsMap agora devolve pointsMap + enabledMap.
         const scoring_type = normalizeScoringType(req.body.scoring_type);
         const rpParse = scoring_type === 'result_points'
             ? buildResultPointsMap(req.body.result_points)
-            : { map: null };
+            : { pointsMap: null, enabledMap: null };
         if (rpParse.error) return res.status(400).json({ error: rpParse.error });
 
         if (!validateYear(start_date)) {
@@ -307,10 +339,11 @@ exports.createTournament = async (req, res) => {
 
         // Onda A · commit 2: se result_points, insere config. Se strokes, ignora
         // qualquer result_points que tenha vindo no payload — mantém a tabela limpa.
-        if (scoring_type === 'result_points' && rpParse.map) {
-            const rpRows = RESULT_KINDS.map(k => [tournamentId, k, rpParse.map[k]]);
+        // Bloco 2 · Commit 2.2: também grava enabled (default 1 se admin nao mandar).
+        if (scoring_type === 'result_points' && rpParse.pointsMap) {
+            const rpRows = RESULT_KINDS.map(k => [tournamentId, k, rpParse.pointsMap[k], rpParse.enabledMap[k]]);
             await conn.query(
-                'INSERT INTO tournament_result_points (tournament_id, result_kind, points) VALUES ?',
+                'INSERT INTO tournament_result_points (tournament_id, result_kind, points, enabled) VALUES ?',
                 [rpRows]
             );
         }
@@ -402,16 +435,20 @@ exports.updateTournament = async (req, res) => {
         //         (não faz replace)
         //   - scoring_type efetivo é 'strokes': ignora rawRP; se veio, será limpo abaixo
         //     (admin trocou de 'result_points' pra 'strokes' — apagamos config antiga).
-        let rpMapForReplace = null;         // se != null, faz DELETE+INSERT
+        // Bloco 2 · Commit 2.2: agora persistimos pointsMap E enabledMap juntos.
+        let rpPointsForReplace = null;      // se != null, faz DELETE+INSERT
+        let rpEnabledForReplace = null;     // acompanha rpPointsForReplace
         let clearResultPoints = false;      // se true, faz só DELETE
         if (scoring_type === 'result_points') {
             if (rawRP !== undefined) {
                 const rpParse = buildResultPointsMap(rawRP);
                 if (rpParse.error) return res.status(400).json({ error: rpParse.error });
-                rpMapForReplace = rpParse.map;
+                rpPointsForReplace = rpParse.pointsMap;
+                rpEnabledForReplace = rpParse.enabledMap;
             } else if (tRows[0].scoring_type !== 'result_points') {
                 // Torneio virou result_points AGORA sem admin mandar config — aplica defaults.
-                rpMapForReplace = { ...DEFAULT_RESULT_POINTS };
+                rpPointsForReplace = { ...DEFAULT_RESULT_POINTS };
+                rpEnabledForReplace = Object.fromEntries(RESULT_KINDS.map(k => [k, 1]));
             }
             // else: mantém config atual, não toca
         } else {
@@ -449,14 +486,15 @@ exports.updateTournament = async (req, res) => {
              nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, id, req.club.id]
         );
 
-        // Onda A · commit 2: replace atômico da config de pontos, quando aplicável.
-        // Se rpMapForReplace veio, DELETE + INSERT dos 8 kinds. Se clearResultPoints,
-        // só DELETE (torneio voltou pra 'strokes' e config antiga vira lixo).
-        if (rpMapForReplace) {
+        // Onda A · commit 2 + Bloco 2 · Commit 2.2: replace atômico da config de
+        // pontos (points + enabled), quando aplicável. Se rpPointsForReplace veio,
+        // DELETE + INSERT dos 8 kinds. Se clearResultPoints, só DELETE (torneio
+        // voltou pra 'strokes' e config antiga vira lixo).
+        if (rpPointsForReplace) {
             await conn.execute('DELETE FROM tournament_result_points WHERE tournament_id = ?', [id]);
-            const rpRows = RESULT_KINDS.map(k => [id, k, rpMapForReplace[k]]);
+            const rpRows = RESULT_KINDS.map(k => [id, k, rpPointsForReplace[k], rpEnabledForReplace[k]]);
             await conn.query(
-                'INSERT INTO tournament_result_points (tournament_id, result_kind, points) VALUES ?',
+                'INSERT INTO tournament_result_points (tournament_id, result_kind, points, enabled) VALUES ?',
                 [rpRows]
             );
         } else if (clearResultPoints) {

@@ -1,6 +1,6 @@
 // backend/controllers/scoreController.js
 const db = require("../db");
-const { deriveStrokesFromResult, fetchPar, RESULT_KINDS } = require("../services/resultKindHelpers");
+const { deriveStrokesFromResult, fetchPar, RESULT_KINDS, getEnabledKinds } = require("../services/resultKindHelpers");
 
 // Salvar (ou atualizar) o score de um buraco.
 // Item 5 · commit 2 (2026-08-28): aceita round_number no payload (default 1).
@@ -52,6 +52,17 @@ exports.saveScore = async (req, res) => {
       if (!RESULT_KINDS.includes(resultKindRaw)) {
         return res.status(400).json({
           error: `Torneio em modo Pontuação por Resultado — envie result_kind (${RESULT_KINDS.join(', ')}).`,
+        });
+      }
+      // Bloco 2 · Commit 2.2 (2026-09-01): rejeita result_kind que o admin
+      // desativou (enabled=0) no torneio — defesa contra frontend antigo ou
+      // curl direto que ignora o filtro do ResultPicker. Regra de produto:
+      // scores JA gravados com aquele kind seguem contando pontos; apenas
+      // ESCRITA nova é bloqueada.
+      const enabledKinds = await getEnabledKinds(db, tournament_id);
+      if (!enabledKinds.has(resultKindRaw)) {
+        return res.status(400).json({
+          error: `Resultado '${resultKindRaw}' está desativado neste torneio.`,
         });
       }
       const par = await fetchPar(db, tournament_id, round_number, hole_number);
