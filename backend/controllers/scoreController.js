@@ -9,7 +9,13 @@ const { deriveStrokesFromResult, fetchPar, RESULT_KINDS, getEnabledKinds } = req
 // (4-col em user_id) por uk_score_v2 (4-col em entity_ref) pra permitir doubles.
 exports.saveScore = async (req, res) => {
   try {
-    const { tournament_id, user_id, hole_number } = req.body;
+    const { tournament_id, hole_number } = req.body;
+    // Onda B · Bloco 3 · Commit 3.3: em torneio doubles o payload traz dupla_id
+    // (nao user_id). user_id no body é ignorado nesse caso — dono do score é a
+    // dupla. Em torneio individual (comportamento antigo), user_id continua
+    // obrigatório.
+    const user_id_raw = req.body.user_id;
+    const dupla_id_raw = req.body.dupla_id;
     const round_number = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
     // Onda A · commit 3: em torneios strokes o payload traz strokes; em torneios
     // result_points traz result_kind (strokes é DERIVADO server-side pra evitar
@@ -17,19 +23,19 @@ exports.saveScore = async (req, res) => {
     const strokesRaw = req.body.strokes;
     const resultKindRaw = req.body.result_kind;
 
-    // Validação básica dos dados (strokes/result_kind checados abaixo por modo)
-    if (!tournament_id || !user_id || !hole_number) {
+    // Validação básica (dono verificado depois de saber a modality)
+    if (!tournament_id || !hole_number) {
       return res.status(400).json({
-        error: 'Dados incompletos. Envie tournament_id, user_id e hole_number.'
+        error: 'Dados incompletos. Envie tournament_id e hole_number.'
       });
     }
     if (!Number.isInteger(round_number) || round_number < 1) {
       return res.status(400).json({ error: 'round_number inválido.' });
     }
 
-    // Verifica se o torneio pertence ao clube + pega total_rounds e scoring_type
+    // Verifica se o torneio pertence ao clube + pega total_rounds, scoring_type, modality
     const [tournamentCheck] = await db.execute(
-      'SELECT id, total_rounds, scoring_type FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds, scoring_type, modality FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
 
@@ -38,10 +44,46 @@ exports.saveScore = async (req, res) => {
     }
     const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
     const scoringType = tournamentCheck[0].scoring_type || 'strokes';
+    const modality = tournamentCheck[0].modality || 'individual';
     if (round_number > totalRounds) {
       return res.status(400).json({
         error: `Rodada inválida: torneio tem ${totalRounds} rodada(s), tentou gravar em R${round_number}.`,
       });
+    }
+
+    // Onda B · Commit 3.3: valida payload por modality e resolve dono do score.
+    // ownerUserId + ownerDuplaId são XOR: exatamente um é !=null. entityRef é
+    // o valor de bookkeeping do UNIQUE uk_score_v2 (user_id positivo, -dupla_id
+    // negativo — namespaces não colidem).
+    let ownerUserId = null;
+    let ownerDuplaId = null;
+    let entityRef;
+    if (modality === 'doubles') {
+      const did = Number(dupla_id_raw);
+      if (!Number.isInteger(did) || did < 1) {
+        return res.status(400).json({
+          error: 'Torneio em Duplas — envie dupla_id (não user_id).',
+        });
+      }
+      // Confirma dupla pertence a esse torneio (defesa contra dupla_id de outro torneio)
+      const [duplaCheck] = await db.execute(
+        'SELECT id FROM tournament_duplas WHERE id = ? AND tournament_id = ?',
+        [did, tournament_id]
+      );
+      if (duplaCheck.length === 0) {
+        return res.status(400).json({ error: 'Dupla não pertence a este torneio.' });
+      }
+      ownerDuplaId = did;
+      entityRef = -did;
+    } else {
+      const uid = Number(user_id_raw);
+      if (!Number.isInteger(uid) || uid < 1) {
+        return res.status(400).json({
+          error: 'Torneio individual — envie user_id.',
+        });
+      }
+      ownerUserId = uid;
+      entityRef = uid;
     }
 
     // Onda A · commit 3: modo de marcação define o que o payload precisa e como
@@ -80,42 +122,53 @@ exports.saveScore = async (req, res) => {
       finalResultKind = null;
     }
 
-    // Autorização de posse (espelha TrainingController.saveScore): o user_id do
-    // body é o jogador alvo (colega no cartão), mas quem CHAMA precisa estar
-    // escalado num grupo deste torneio.
+    // Autorização de posse — caller precisa estar escalado num grupo da rodada.
+    // Individual: via group_players. Doubles: via tournament_dupla_players +
+    // group_duplas — caller precisa pertencer à MESMA dupla que ele está tentando
+    // marcar (não pode marcar por dupla que não é a sua).
     //
-    // Bloco D · hotfix 2026-08-29: agora o membership inclui tg.round_number.
-    // Um jogador do grupo de R1 nao pode gravar em R2 (mesmo com curl direto),
-    // pois grupos por rodada podem ser DIFERENTES apos re-seeding. Se o caller
-    // esta num grupo com round_number = payload.round_number, permite; senao
-    // 403. Torneio single-round: todos os grupos tem round=1, comportamento
-    // antigo preservado.
+    // Bloco D · hotfix 2026-08-29: membership inclui tg.round_number. Um jogador
+    // do grupo de R1 nao pode gravar em R2 (mesmo com curl direto).
     const caller_id = req.user.id;
-    const [membership] = await db.execute(
-      `SELECT 1 FROM group_players gp
-         JOIN tournament_groups tg ON gp.group_id = tg.id
-        WHERE tg.tournament_id = ? AND gp.user_id = ? AND tg.round_number = ?
-        LIMIT 1`,
-      [tournament_id, caller_id, round_number]
-    );
+    let membership;
+    if (modality === 'doubles') {
+      [membership] = await db.execute(
+        `SELECT 1 FROM tournament_dupla_players tdp
+           JOIN group_duplas gd ON gd.dupla_id = tdp.dupla_id
+           JOIN tournament_groups tg ON tg.id = gd.group_id
+          WHERE tg.tournament_id = ?
+            AND tdp.user_id = ?
+            AND tdp.dupla_id = ?
+            AND tg.round_number = ?
+          LIMIT 1`,
+        [tournament_id, caller_id, ownerDuplaId, round_number]
+      );
+    } else {
+      [membership] = await db.execute(
+        `SELECT 1 FROM group_players gp
+           JOIN tournament_groups tg ON gp.group_id = tg.id
+          WHERE tg.tournament_id = ? AND gp.user_id = ? AND tg.round_number = ?
+          LIMIT 1`,
+        [tournament_id, caller_id, round_number]
+      );
+    }
     if (membership.length === 0) {
       return res.status(403).json({
-        error: `Acesso negado. Você não pertence a um grupo da rodada ${round_number} deste torneio.`,
+        error: modality === 'doubles'
+          ? `Acesso negado. Você não pertence à dupla escalada nesta rodada.`
+          : `Acesso negado. Você não pertence a um grupo da rodada ${round_number} deste torneio.`,
       });
     }
 
     // UPSERT atômico via uk_score_v2(tournament_id, entity_ref, hole_number, round_number).
-    // Substitui o antigo DELETE+INSERT — agora que o uk cobre round_number,
-    // ON DUPLICATE KEY UPDATE resolve nativamente e sem race.
-    // Onda A · commit 3: grava result_kind também (NULL em torneio strokes).
-    // Onda B · Bloco 3 · Commit B1.1 (2026-09-01): entity_ref = user_id em modo
-    // individual (todo torneio hoje). Modo doubles (com dupla_id) chega no B1.3.
-    const entityRef = user_id;
+    // Onda B · Commit 3.3: user_id XOR dupla_id — exatamente um é !=null.
+    // entity_ref = user_id (individual) ou -dupla_id (doubles). Namespaces
+    // separados garantem UNIQUE consistente.
     await db.execute(
-      `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, round_number, strokes, result_kind)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO scores (tournament_id, user_id, dupla_id, entity_ref, hole_number, round_number, strokes, result_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
-      [tournament_id, user_id, entityRef, hole_number, round_number, finalStrokes, finalResultKind]
+      [tournament_id, ownerUserId, ownerDuplaId, entityRef, hole_number, round_number, finalStrokes, finalResultKind]
     );
 
     res.json({
@@ -124,6 +177,8 @@ exports.saveScore = async (req, res) => {
       result_kind: finalResultKind,
       hole: hole_number,
       round_number,
+      dupla_id: ownerDuplaId,
+      user_id: ownerUserId,
     });
 
   } catch (error) {
@@ -340,8 +395,11 @@ exports.getScores = async (req, res) => {
     // Onda A · commit 3: retorna result_kind (NULL em torneios strokes). Frontend
     // novo consome pra pré-selecionar o botão certo no ResultPicker; frontend
     // antigo ignora o campo, comportamento inalterado.
+    // Onda B · Commit 3.3: retorna dupla_id (NULL em torneios individuais).
+    // Frontend antigo ignora o campo. Torneio doubles vem só com dupla_id
+    // preenchido e user_id NULL.
     const [results] = await db.execute(
-      `SELECT user_id, hole_number, round_number, strokes, result_kind FROM scores WHERE tournament_id = ?${whereRound}`,
+      `SELECT user_id, dupla_id, hole_number, round_number, strokes, result_kind FROM scores WHERE tournament_id = ?${whereRound}`,
       params
     );
 

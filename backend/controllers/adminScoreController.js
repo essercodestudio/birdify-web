@@ -161,7 +161,10 @@ exports.getTournamentMatrix = async (req, res) => {
 // round — assinatura de R1 continua válida mesmo se admin editar R2 e vice-versa.
 exports.upsertTournamentScore = async (req, res) => {
   const tournament_id = Number(req.body.tournament_id);
-  const user_id       = Number(req.body.user_id);
+  // Onda B · Commit 3.3: em torneio doubles o admin edita cell por dupla_id;
+  // em individual continua por user_id. XOR obrigatório no payload.
+  const user_id_raw   = req.body.user_id;
+  const dupla_id_raw  = req.body.dupla_id;
   const hole_number   = Number(req.body.hole_number);
   const round_number  = req.body.round_number !== undefined ? Number(req.body.round_number) : 1;
   const strokesRaw    = req.body.strokes;
@@ -170,7 +173,7 @@ exports.upsertTournamentScore = async (req, res) => {
   // strokes vazio OU result_kind vazio — ambos indicam "apaga a linha".
   const resultKindRaw = req.body.result_kind;
 
-  if (!tournament_id || !user_id || !hole_number) {
+  if (!tournament_id || !hole_number) {
     return res.status(400).json({ error: "Dados incompletos." });
   }
   if (!Number.isInteger(round_number) || round_number < 1) {
@@ -191,13 +194,12 @@ exports.upsertTournamentScore = async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Escopo do clube + total_rounds + scoring_type + nome do jogador (pra compor invalidated_reason)
+    // Escopo do clube + total_rounds + scoring_type + modality. Nome do alvo
+    // (jogador OU dupla) resolvido depois da bifurcação por modality.
     const [tRows] = await conn.execute(
-      `SELECT t.id, t.total_rounds, t.scoring_type, u.name AS target_name
-         FROM tournaments t
-         JOIN users u ON u.id = ?
-        WHERE t.id = ? AND t.club_id = ?`,
-      [user_id, tournament_id, req.club.id]
+      `SELECT id, total_rounds, scoring_type, modality
+         FROM tournaments WHERE id = ? AND club_id = ?`,
+      [tournament_id, req.club.id]
     );
     if (tRows.length === 0) {
       await conn.rollback();
@@ -205,13 +207,51 @@ exports.upsertTournamentScore = async (req, res) => {
     }
     const totalRounds = Number(tRows[0].total_rounds) || 1;
     const scoringType = tRows[0].scoring_type || 'strokes';
+    const modality = tRows[0].modality || 'individual';
     if (round_number > totalRounds) {
       await conn.rollback();
       return res.status(400).json({
         error: `Rodada inválida: torneio tem ${totalRounds} rodada(s), tentou editar R${round_number}.`,
       });
     }
-    const targetName = tRows[0].target_name;
+
+    // Onda B · Commit 3.3: resolve dono XOR + nome do alvo.
+    let ownerUserId = null;
+    let ownerDuplaId = null;
+    let entityRef;
+    let targetName;
+    if (modality === 'doubles') {
+      const did = Number(dupla_id_raw);
+      if (!Number.isInteger(did) || did < 1) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Torneio em Duplas — envie dupla_id.' });
+      }
+      const [duplaRows] = await conn.execute(
+        `SELECT dupla_name FROM tournament_duplas WHERE id = ? AND tournament_id = ?`,
+        [did, tournament_id]
+      );
+      if (duplaRows.length === 0) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Dupla não pertence a este torneio.' });
+      }
+      ownerDuplaId = did;
+      entityRef = -did;
+      targetName = duplaRows[0].dupla_name;
+    } else {
+      const uid = Number(user_id_raw);
+      if (!Number.isInteger(uid) || uid < 1) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Torneio individual — envie user_id.' });
+      }
+      const [uRows] = await conn.execute('SELECT name FROM users WHERE id = ?', [uid]);
+      if (uRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Jogador não encontrado.' });
+      }
+      ownerUserId = uid;
+      entityRef = uid;
+      targetName = uRows[0].name;
+    }
 
     // Onda A · commit 3: valida payload por modo E deriva newStrokes/newResultKind.
     // Delete unificado: nos dois modos, campo vazio = limpar célula.
@@ -261,26 +301,46 @@ exports.upsertTournamentScore = async (req, res) => {
       }
     }
 
-    // Jogador precisa estar escalado em algum grupo do torneio
-    const [membership] = await conn.execute(
-      `SELECT tg.id AS group_id
-         FROM group_players gp
-         JOIN tournament_groups tg ON tg.id = gp.group_id
-        WHERE tg.tournament_id = ? AND gp.user_id = ?`,
-      [tournament_id, user_id]
-    );
+    // Alvo (jogador OU dupla) precisa estar escalado em algum grupo do torneio.
+    // Individual: via group_players. Doubles: via group_duplas.
+    let membership;
+    if (modality === 'doubles') {
+      [membership] = await conn.execute(
+        `SELECT tg.id AS group_id
+           FROM group_duplas gd
+           JOIN tournament_groups tg ON tg.id = gd.group_id
+          WHERE tg.tournament_id = ? AND gd.dupla_id = ?`,
+        [tournament_id, ownerDuplaId]
+      );
+    } else {
+      [membership] = await conn.execute(
+        `SELECT tg.id AS group_id
+           FROM group_players gp
+           JOIN tournament_groups tg ON tg.id = gp.group_id
+          WHERE tg.tournament_id = ? AND gp.user_id = ?`,
+        [tournament_id, ownerUserId]
+      );
+    }
     if (membership.length === 0) {
       await conn.rollback();
-      return res.status(400).json({ error: "Jogador não pertence a este torneio." });
+      return res.status(400).json({
+        error: modality === 'doubles'
+          ? "Dupla não escalada em grupo deste torneio."
+          : "Jogador não pertence a este torneio.",
+      });
     }
     const affectedGroupIds = membership.map(r => r.group_id);
 
-    // Valor anterior POR ROUND (pra audit — R1 e R2 são scores independentes)
-    // Onda A · commit 3: também busca previous_result_kind pro audit em torneio result_points.
+    // Valor anterior POR ROUND (pra audit). Filtra por user_id OU dupla_id
+    // dependendo da modality — uk_score_v2 usa entity_ref mas a query
+    // segue clara filtrando pelo dono real.
+    const prevWhere = modality === 'doubles'
+      ? 'tournament_id = ? AND dupla_id = ? AND hole_number = ? AND round_number = ?'
+      : 'tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?';
+    const prevOwner = modality === 'doubles' ? ownerDuplaId : ownerUserId;
     const [prevRows] = await conn.execute(
-      `SELECT strokes, result_kind FROM scores
-        WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
-      [tournament_id, user_id, hole_number, round_number]
+      `SELECT strokes, result_kind FROM scores WHERE ${prevWhere}`,
+      [tournament_id, prevOwner, hole_number, round_number]
     );
     const previousStrokes = prevRows.length ? Number(prevRows[0].strokes) : null;
     const previousResultKind = prevRows.length ? (prevRows[0].result_kind || null) : null;
@@ -299,37 +359,35 @@ exports.upsertTournamentScore = async (req, res) => {
     }
 
     // Mutação — DELETE ou UPSERT via uk_score_v2 4-col (entity_ref).
-    // Onda B · Bloco 3 · Commit B1.1: entity_ref = user_id (modo individual);
-    // suporte a dupla_id no B1.3. DELETE filtra por user_id igual — em modo
-    // individual (todos os torneios hoje) isso equivale ao filtro antigo.
+    // Onda B · Commit 3.3: DELETE agora filtra por dupla_id em torneio doubles.
+    // UPSERT carrega user_id XOR dupla_id conforme modality.
     if (willDelete) {
       await conn.execute(
-        `DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
-        [tournament_id, user_id, hole_number, round_number]
+        `DELETE FROM scores WHERE ${prevWhere}`,
+        [tournament_id, prevOwner, hole_number, round_number]
       );
     } else {
-      const entityRef = user_id;
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, round_number, strokes, result_kind)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO scores (tournament_id, user_id, dupla_id, entity_ref, hole_number, round_number, strokes, result_kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
-        [tournament_id, user_id, entityRef, hole_number, round_number, newStrokes, newResultKind]
+        [tournament_id, ownerUserId, ownerDuplaId, entityRef, hole_number, round_number, newStrokes, newResultKind]
       );
     }
 
-    // Audit — inclui round_number + previous_result_kind + new_result_kind.
-    // Em torneio strokes os dois kinds ficam NULL (comportamento antigo preservado
-    // porque as colunas foram adicionadas como NULLABLE em 2026_08_31).
+    // Audit — inclui round_number + previous/new result_kind + target_dupla_id.
+    // Onda B · Commit 3.3: target_user_id preenchido em individual, target_dupla_id
+    // preenchido em doubles. FK ON DELETE SET NULL preserva histórico.
     const [auditResult] = await conn.execute(
       `INSERT INTO admin_score_audit
          (club_id, admin_user_id, context, tournament_id, training_group_id,
-          target_user_id, hole_number, round_number,
+          target_user_id, target_dupla_id, hole_number, round_number,
           previous_strokes, previous_result_kind, new_strokes, new_result_kind,
           action, reason)
-       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, 'tournament', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.club.id, req.user.id, tournament_id,
-        user_id, hole_number, round_number,
+        ownerUserId, ownerDuplaId, hole_number, round_number,
         previousStrokes, previousResultKind, newStrokes, newResultKind,
         action, reason,
       ]
@@ -341,8 +399,11 @@ exports.upsertTournamentScore = async (req, res) => {
     // que já estavam legitimamente assinadas.
     let invalidatedCount = 0;
     if (affectedGroupIds.length > 0) {
+      const targetLabel = modality === 'doubles'
+        ? `dupla ${targetName} (id=${ownerDuplaId})`
+        : `jogador ${targetName} (id=${ownerUserId})`;
       const invalidatedReason =
-        `Score R${round_number} do jogador ${targetName} (id=${user_id}) buraco ${hole_number} ` +
+        `Score R${round_number} do ${targetLabel} buraco ${hole_number} ` +
         `alterado por admin (id=${req.user.id}) em ${new Date().toISOString()} ` +
         `(audit #${auditId}). Motivo: ${reason}`;
       const truncatedReason = invalidatedReason.slice(0, 500);
