@@ -389,10 +389,15 @@ CREATE TABLE IF NOT EXISTS scores (
 -- ignora — não há CHECK cross-table forçando consistência (MySQL suporta mal).
 -- PK composta garante 1 valor por (torneio, resultado). ON DELETE CASCADE
 -- limpa a config junto com o torneio. Migration 2026_08_31 (Onda A · Commit 1).
+-- enabled: adicionado em 2026_09_01 (Bloco 2 · Commit 2.1). Default 1 preserva
+-- torneios existentes com todos os 8 kinds ativos. Backend rejeita saveScore
+-- de kind com enabled=0; scores antigos daquele kind continuam contando pontos
+-- normalmente (leaderboard só olha points, não enabled).
 CREATE TABLE IF NOT EXISTS tournament_result_points (
   tournament_id  INT NOT NULL,
   result_kind    ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NOT NULL,
   points         INT NOT NULL,
+  enabled        TINYINT(1) NOT NULL DEFAULT 1,
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (tournament_id, result_kind),
   CONSTRAINT fk_trp_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
