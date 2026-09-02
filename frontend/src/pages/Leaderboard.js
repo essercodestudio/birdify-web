@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import api from "../services/api";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { LuArrowLeft, LuFlag } from "react-icons/lu";
-import { applyCategoryFilter, isNetCategory } from "../utils/categories";
+import { applyCategoryFilter, isNetCategory, getLeaderboardTabs } from "../utils/categories";
 import { mediaUrl } from "../services/media";
 
 const theme = {
@@ -67,12 +67,17 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       setTotalRounds(Number(res.data.total_rounds || 1));
       setRounds(Array.isArray(res.data.rounds) ? res.data.rounds : []);
       // Onda A · commit 7: scoring_type do torneio
-      setScoringType(res.data.scoring_type === 'result_points' ? 'result_points' : 'strokes');
+      const st = res.data.scoring_type === 'result_points' ? 'result_points' : 'strokes';
+      setScoringType(st);
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
-      setTabs(cats);
-      setActiveTab(prev => (!prev && cats.length > 0 ? cats[0] : prev));
+      // Bloco 1 · Commit 1.1 (2026-09-01): torneio result_points ignora as
+      // categorias salvas em tournament_categories — usa Masculino/Feminino
+      // hardcoded (categorias por handicap não fazem sentido em modo pontos).
+      const tabsToRender = getLeaderboardTabs(st, cats);
+      setTabs(tabsToRender);
+      setActiveTab(prev => (!prev && tabsToRender.length > 0 ? tabsToRender[0] : prev));
     } catch (e) { console.error("Leaderboard fetchInfo:", e); }
   }, [tournamentId]);
 

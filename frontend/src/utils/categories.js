@@ -9,11 +9,31 @@ export const TOURNAMENT_CATEGORIES = [
   "Feminino Net (F3) - 23.8 a 36.4"
 ];
 
+// Bloco 1 · Commit 1.1 (2026-09-01): categorias fixas para torneios com
+// scoring_type='result_points'. Não passa por tournament_categories no banco —
+// o Leaderboard hardcoda as 2 abas quando o torneio é result_points.
+export const RESULT_POINTS_CATEGORIES = ["Masculino", "Feminino"];
+
+// Decide qual conjunto de tabs mostrar no Leaderboard.
+// - scoringType='result_points' → sempre ["Masculino", "Feminino"] (ignora o que
+//   o admin salvou em tournament_categories — decisão de produto Ajuste 1).
+// - scoringType='strokes' (default) → devolve o que veio do backend, comportamento
+//   antigo preservado.
+export function getLeaderboardTabs(scoringType, tournamentCategories) {
+  if (scoringType === 'result_points') return [...RESULT_POINTS_CATEGORIES];
+  return Array.isArray(tournamentCategories) ? tournamentCategories : [];
+}
+
 // Filtro por categoria (mesmas regras históricas do Leaderboard de torneio)
 export function applyCategoryFilter(players, tab) {
   return players.filter(p => {
     const hc = parseFloat(p.handicap) || 0;
     const sx = p.gender || p.sexo || "M";
+    // Bloco 1 · Commit 1.1: tabs curtas "Masculino"/"Feminino" (result_points)
+    // filtram apenas por gênero, ignorando handicap. Cheque EXATO evita colidir
+    // com "Masculino Gross (M0)" etc, que já batem nas regras antigas abaixo.
+    if (tab === "Masculino") return sx === "M" || sx === "Masculino";
+    if (tab === "Feminino")  return sx === "F" || sx === "Feminino";
     if (sx === "M" || sx === "Masculino") {
       if (tab.includes("Feminino") || tab.startsWith("F")) return false;
       if (tab.includes("Masculino Livre") || tab.includes("Masculino Gross") || tab.includes("M0")) return true;

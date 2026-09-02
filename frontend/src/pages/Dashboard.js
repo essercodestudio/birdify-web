@@ -226,7 +226,13 @@ function Dashboard() {
 
   const handleSubmitTournament = async (e) => {
     e.preventDefault();
-    if (!selectedCourseId || selectedCategories.length === 0) { alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return; }
+    // Bloco 1 · Commit 1.1 (2026-09-01): torneio result_points ignora categorias
+    // do form — Leaderboard mostra Masculino/Feminino fixo. Skip da validação
+    // "escolha pelo menos 1 categoria" nesse modo; strokes segue exigindo.
+    if (!selectedCourseId) { alert("Selecione o campo do torneio."); return; }
+    if (scoringType !== 'result_points' && selectedCategories.length === 0) {
+      alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return;
+    }
     if (!validYear(newTournamentDate)) { alert('Ano da data do torneio inválido.'); return; }
     if (registrationDeadline && !validYear(registrationDeadline)) { alert('Ano da data limite inválido.'); return; }
 
@@ -296,10 +302,13 @@ function Dashboard() {
       resultPointsPayload = RESULT_KINDS.map(k => ({ result_kind: k, points: Number(resultPoints[k]) }));
     }
 
+    // Bloco 1 · Commit 1.1: em result_points, envia categories=[] pra manter
+    // tournament_categories vazio (Leaderboard usa Masculino/Feminino hardcoded).
+    const categoriesPayload = scoringType === 'result_points' ? [] : selectedCategories;
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
-      registration_deadline: registrationDeadline, categories: selectedCategories, sponsors,
+      registration_deadline: registrationDeadline, categories: categoriesPayload, sponsors,
       format,
       total_rounds: totalRoundsPayload,
       scoring_type: scoringType,
@@ -656,17 +665,35 @@ function Dashboard() {
             )}
           </div>
 
-          <div style={{...styles.sectionTitle, marginTop: '30px'}}>2. CATEGORIAS</div>
-          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px'}}>
-            {defaultCategories.map(cat => (
-              <div key={cat} onClick={() => toggleCategory(cat)} style={{
-                padding: '12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', textAlign: 'center', fontWeight: 'bold',
-                backgroundColor: selectedCategories.includes(cat) ? theme.accent : theme.bg,
-                color: selectedCategories.includes(cat) ? '#000' : theme.textMuted,
-                border: `1px solid ${theme.cardLight}`
-              }}>{cat}</div>
-            ))}
-          </div>
+          {/* Bloco 1 · Commit 1.1 (2026-09-01): em result_points, esconde as
+              categorias por handicap — Leaderboard mostra Masculino/Feminino
+              hardcoded. Mostra aviso curto no lugar pra o admin entender. */}
+          {scoringType === 'result_points' ? (
+            <div style={{
+              marginTop: '30px', padding: '14px', borderRadius: '10px',
+              border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg,
+              color: theme.textMuted, fontSize: 13,
+            }}>
+              <div style={{ color: theme.textMain, fontWeight: 700, marginBottom: 6 }}>
+                2. CATEGORIAS
+              </div>
+              Torneio de Pontuação por Resultado usa categorias fixas <strong style={{ color: theme.textMain }}>Masculino</strong> e <strong style={{ color: theme.textMain }}>Feminino</strong> no leaderboard, sem subdivisão por handicap.
+            </div>
+          ) : (
+            <>
+              <div style={{...styles.sectionTitle, marginTop: '30px'}}>2. CATEGORIAS</div>
+              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px'}}>
+                {defaultCategories.map(cat => (
+                  <div key={cat} onClick={() => toggleCategory(cat)} style={{
+                    padding: '12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', textAlign: 'center', fontWeight: 'bold',
+                    backgroundColor: selectedCategories.includes(cat) ? theme.accent : theme.bg,
+                    color: selectedCategories.includes(cat) ? '#000' : theme.textMuted,
+                    border: `1px solid ${theme.cardLight}`
+                  }}>{cat}</div>
+                ))}
+              </div>
+            </>
+          )}
 
           <div style={{...styles.sectionTitle, marginTop: '30px'}}>3. INSCRIÇÃO E PAGAMENTO</div>
           
