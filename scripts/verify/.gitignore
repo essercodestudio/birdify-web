@@ -1,2 +1,4 @@
 node_modules/
 package-lock.json
+# Screenshots dos verify scripts (Playwright) sao artefatos ephemerals
+*.png
