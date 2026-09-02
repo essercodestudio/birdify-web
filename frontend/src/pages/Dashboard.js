@@ -126,6 +126,12 @@ function Dashboard() {
   // 'result_points' = ranking por soma de pontos configurados em resultPoints.
   const [scoringType, setScoringType] = useState('strokes');
   const [resultPoints, setResultPoints] = useState({ ...DEFAULT_RESULT_POINTS });
+  // Bloco 2 · Commit 2.3 (2026-09-01): admin pode ligar/desligar cada kind.
+  // Default = todos habilitados. Kind desabilitado NÃO aparece no ResultPicker
+  // do jogador nem no dropdown do AdminScoreEditor; scores antigos daquele kind
+  // continuam contando no leaderboard.
+  const DEFAULT_ENABLED = RESULT_KINDS.reduce((m, k) => ({ ...m, [k]: true }), {});
+  const [resultKindEnabled, setResultKindEnabled] = useState(DEFAULT_ENABLED);
 
   const theme = {
     bg: '#0f172a',
@@ -289,6 +295,8 @@ function Dashboard() {
     // Onda A · commit 5: valida result_points client-side quando result_points ativo.
     // Precisa ter todos os 8 kinds preenchidos com inteiro. Bate com validação
     // server-side em buildResultPointsMap (tournamentController).
+    // Bloco 2 · Commit 2.3: também envia enabled por kind e valida que pelo
+    // menos 1 fique ativo (Scorecard vazio nao ajuda ninguem).
     let resultPointsPayload;
     if (scoringType === 'result_points') {
       const missing = RESULT_KINDS.filter(k => {
@@ -299,7 +307,16 @@ function Dashboard() {
         alert(`Preencha os pontos de: ${missing.map(k => RESULT_LABELS[k]).join(', ')}`);
         return;
       }
-      resultPointsPayload = RESULT_KINDS.map(k => ({ result_kind: k, points: Number(resultPoints[k]) }));
+      const anyEnabled = RESULT_KINDS.some(k => resultKindEnabled[k]);
+      if (!anyEnabled) {
+        alert('Ative pelo menos um tipo de resultado — senão o Scorecard fica sem opção.');
+        return;
+      }
+      resultPointsPayload = RESULT_KINDS.map(k => ({
+        result_kind: k,
+        points: Number(resultPoints[k]),
+        enabled: resultKindEnabled[k] ? 1 : 0,
+      }));
     }
 
     // Bloco 1 · Commit 1.1: em result_points, envia categories=[] pra manter
@@ -360,10 +377,18 @@ function Dashboard() {
       setScoringType(st);
       if (st === 'result_points' && Array.isArray(t.result_points) && t.result_points.length > 0) {
         const map = { ...DEFAULT_RESULT_POINTS };
-        t.result_points.forEach(({ result_kind, points }) => { map[result_kind] = Number(points); });
+        // Bloco 2 · Commit 2.3: hidrata enabled (default true se backend ainda
+        // nao devolveu — retrocompat com response Onda A pura antes do 2.2).
+        const enabledMap = { ...DEFAULT_ENABLED };
+        t.result_points.forEach(({ result_kind, points, enabled }) => {
+          map[result_kind] = Number(points);
+          enabledMap[result_kind] = enabled === undefined ? true : Number(enabled) === 1;
+        });
         setResultPoints(map);
+        setResultKindEnabled(enabledMap);
       } else {
         setResultPoints({ ...DEFAULT_RESULT_POINTS });
+        setResultKindEnabled({ ...DEFAULT_ENABLED });
       }
       setIsEditing(true);
       setEditTournamentId(t.id);
@@ -378,6 +403,7 @@ function Dashboard() {
     setFormat('shotgun');
     setMultiRound(false); setRounds([]);
     setScoringType('strokes'); setResultPoints({ ...DEFAULT_RESULT_POINTS });
+    setResultKindEnabled({ ...DEFAULT_ENABLED });
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -631,35 +657,60 @@ function Dashboard() {
               <div style={{ marginTop: '14px' }}>
                 <div style={{ color: theme.textMuted, fontSize: 12, marginBottom: 8 }}>
                   Pontos por resultado (aceita negativos). Aplicado a todas as rodadas deste torneio.
+                  <br />
+                  <span style={{ color: theme.textMuted }}>
+                    Marque somente os tipos que este torneio vai aceitar — desmarcados somem do Scorecard e do editor de admin.
+                  </span>
                 </div>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
                   gap: '8px',
                 }}>
-                  {RESULT_KINDS.map(k => (
-                    <div key={k} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '10px 12px',
-                      backgroundColor: theme.card,
-                      border: `1px solid ${theme.cardLight}`,
-                      borderRadius: '8px',
-                    }}>
-                      <span style={{ color: theme.textMain, fontSize: 13, fontWeight: 600 }}>{RESULT_LABELS[k]}</span>
-                      <input
-                        type="number"
-                        step="1"
-                        value={resultPoints[k] ?? ''}
-                        onChange={e => setResultPoints(prev => ({ ...prev, [k]: e.target.value }))}
-                        style={{
-                          width: 64, padding: '6px 8px', textAlign: 'center',
-                          borderRadius: 6, border: `1px solid ${theme.cardLight}`,
-                          backgroundColor: theme.bg, color: theme.gold, fontWeight: 'bold', fontSize: 14,
-                        }}
-                        aria-label={`Pontos para ${RESULT_LABELS[k]}`}
-                      />
-                    </div>
-                  ))}
+                  {RESULT_KINDS.map(k => {
+                    const enabled = !!resultKindEnabled[k];
+                    return (
+                      <label key={k} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
+                        padding: '10px 12px',
+                        backgroundColor: enabled ? theme.card : theme.bg,
+                        border: `1px solid ${enabled ? theme.cardLight : theme.cardLight}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        opacity: enabled ? 1 : 0.55,
+                      }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={e => setResultKindEnabled(prev => ({ ...prev, [k]: e.target.checked }))}
+                            style={{ accentColor: theme.accent, cursor: 'pointer', width: 16, height: 16 }}
+                            aria-label={`Ativar ${RESULT_LABELS[k]}`}
+                          />
+                          <span style={{
+                            color: enabled ? theme.textMain : theme.textMuted,
+                            fontSize: 13, fontWeight: 600,
+                          }}>{RESULT_LABELS[k]}</span>
+                        </span>
+                        <input
+                          type="number"
+                          step="1"
+                          value={resultPoints[k] ?? ''}
+                          disabled={!enabled}
+                          onChange={e => setResultPoints(prev => ({ ...prev, [k]: e.target.value }))}
+                          style={{
+                            width: 64, padding: '6px 8px', textAlign: 'center',
+                            borderRadius: 6, border: `1px solid ${theme.cardLight}`,
+                            backgroundColor: theme.bg,
+                            color: enabled ? theme.gold : theme.textMuted,
+                            fontWeight: 'bold', fontSize: 14,
+                            cursor: enabled ? 'text' : 'not-allowed',
+                          }}
+                          aria-label={`Pontos para ${RESULT_LABELS[k]}`}
+                        />
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}

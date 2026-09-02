@@ -191,6 +191,16 @@ export default function AdminScoreEditor() {
     });
     return m;
   }, [matrix]);
+  // Bloco 2 · Commit 2.3 (2026-09-01): mapa de enabled — kinds desativados somem
+  // do dropdown do editor. Mapa vazio = tudo ativo (torneio strokes / backend
+  // pre-2.2). Delete de célula segue permitido pra qualquer kind (option "—").
+  const resultKindEnabledMap = useMemo(() => {
+    const m = {};
+    (matrix?.result_points || []).forEach(({ result_kind, enabled }) => {
+      m[result_kind] = enabled === undefined ? true : Number(enabled) === 1;
+    });
+    return m;
+  }, [matrix]);
 
   const flatPlayers = useMemo(() => {
     if (!matrix) return [];
@@ -523,6 +533,10 @@ export default function AdminScoreEditor() {
                                       {RESULT_KINDS.map(k => {
                                         const derived = deriveStrokesFromResult(h.par, k);
                                         if (derived === null) return null; // impossível pro par
+                                        // Bloco 2 · Commit 2.3: esconde kinds desativados. Mapa
+                                        // vazio (backend pre-2.2 ou torneio sem config) = todos aparecem.
+                                        const enabledKnown = Object.keys(resultKindEnabledMap).length > 0;
+                                        if (enabledKnown && !resultKindEnabledMap[k]) return null;
                                         const pts = resultPointsMap[k];
                                         return (
                                           <option key={k} value={k}>

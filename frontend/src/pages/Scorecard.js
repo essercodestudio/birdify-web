@@ -135,6 +135,9 @@ function Scorecard() {
   const [inputMode, setInputMode] = useState('strokes');
   const [ownerKind, setOwnerKind] = useState('user'); // eslint-disable-line no-unused-vars
   const [resultPointsMap, setResultPointsMap] = useState({}); // {kind: points}
+  // Bloco 2 · Commit 2.3 (2026-09-01): {kind: true|false} — kinds desativados
+  // sao filtrados do ResultPicker. Vazio = tudo ativo (torneio strokes ou pre-2.2).
+  const [resultKindEnabledMap, setResultKindEnabledMap] = useState({});
 
   const [showSummary, setShowSummary] = useState(false);
   const [isReviewMode, setIsReviewMode] = useState(false);
@@ -281,10 +284,17 @@ function Scorecard() {
       setOwnerKind(tourRes.data.modality === 'doubles' ? 'dupla' : 'user');
       if (st === 'result' && Array.isArray(tourRes.data.result_points)) {
         const rpMap = {};
-        tourRes.data.result_points.forEach(({ result_kind, points }) => { rpMap[result_kind] = Number(points); });
+        // Bloco 2 · Commit 2.3: mapa de enabled (default true se backend antigo).
+        const enabledMap = {};
+        tourRes.data.result_points.forEach(({ result_kind, points, enabled }) => {
+          rpMap[result_kind] = Number(points);
+          enabledMap[result_kind] = enabled === undefined ? true : Number(enabled) === 1;
+        });
         setResultPointsMap(rpMap);
+        setResultKindEnabledMap(enabledMap);
       } else {
         setResultPointsMap({});
+        setResultKindEnabledMap({});
       }
       // Bloco D · commit 5: Opcao B — cada grupo pertence a UMA rodada. Se o
       // backend entregou group.round_number, usa direto (autoritativo). Fallback
@@ -1059,7 +1069,12 @@ function Scorecard() {
                 // cor (verde/cinza/vermelho/amarelo). O clique dispara
                 // handleResultPick (sem debounce, enqueue imediato).
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                  {RESULT_KINDS.map(k => {
+                  {RESULT_KINDS
+                    // Bloco 2 · Commit 2.3: esconde kinds que o admin desativou
+                    // neste torneio. Mapa vazio (torneio strokes / backend antigo)
+                    // → todos aparecem, comportamento inalterado.
+                    .filter(k => Object.keys(resultKindEnabledMap).length === 0 || resultKindEnabledMap[k])
+                    .map(k => {
                     const derived = deriveStrokesFromResult(par, k);
                     const impossible = derived === null;
                     const active = kind === k;
