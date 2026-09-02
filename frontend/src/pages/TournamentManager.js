@@ -710,10 +710,23 @@ function TournamentManager() {
     <div style={s.container}>
       <div style={s.header}>
         <h1 style={{ ...theme.text.h1, margin: 0 }}>Birdify Admin</h1>
-        <button onClick={() => navigate("/dashboard")} style={s.backBtn} className="tm-tap">
-          <LuArrowLeft size={15} />
-          Voltar ao Painel
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {/* Onda B · Commit 3.9: torneios doubles mostram atalho pra
+              AdminDuplasManager (rota /admin/torneio/:id/duplas). */}
+          {tournament?.modality === 'doubles' && (
+            <button
+              onClick={() => navigate(`/admin/torneio/${id}/duplas`)}
+              style={{ ...s.backBtn, backgroundColor: theme.accent, color: '#000' }}
+              className="tm-tap"
+            >
+              Gerenciar Duplas
+            </button>
+          )}
+          <button onClick={() => navigate("/dashboard")} style={s.backBtn} className="tm-tap">
+            <LuArrowLeft size={15} />
+            Voltar ao Painel
+          </button>
+        </div>
       </div>
 
       {/* ═══ SEÇÃO 1 · INSCRITOS ═══════════════════════════════════════════ */}
