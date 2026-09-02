@@ -26,6 +26,7 @@ function buildRoundsQuery(period, userId, cid) {
       FROM tournaments t
       JOIN inscriptions i ON i.tournament_id = t.id AND i.user_id = ?
      WHERE t.status = 'concluido' AND t.club_id = ?
+       AND t.modality = 'individual'
   `;
   const params = [userId, cid, userId, cid];
 

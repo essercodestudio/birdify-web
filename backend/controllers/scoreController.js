@@ -208,17 +208,18 @@ exports.signCard = async (req, res) => {
       return res.status(400).json({ error: 'round_number inválido.' });
     }
 
-    // Escopo do clube via tournament + pega total_rounds. Se rodada específica veio,
+    // Escopo do clube via tournament + pega total_rounds + modality. Se rodada específica veio,
     // usa o course_id da tournament_rounds daquela rodada (pra torneios multi que
     // rodam em campos diferentes por dia).
     const [tournamentCheck] = await db.execute(
-      'SELECT id, course_id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, course_id, total_rounds, modality FROM tournaments WHERE id = ? AND club_id = ?',
       [tournament_id, req.club.id]
     );
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
     const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    const modality = tournamentCheck[0].modality || 'individual';
     if (round_number > totalRounds) {
       return res.status(400).json({ error: `Rodada inválida: torneio tem ${totalRounds} rodada(s).` });
     }
@@ -231,14 +232,32 @@ exports.signCard = async (req, res) => {
       if (roundRow) courseId = roundRow.course_id;
     }
 
-    // Caller precisa estar escalado no grupo (mesmo padrão do saveScore)
-    const [membership] = await db.execute(
-      `SELECT 1 FROM group_players
-        WHERE group_id = ? AND user_id = ? LIMIT 1`,
-      [group_id, caller_id]
-    );
-    if (membership.length === 0) {
-      return res.status(403).json({ error: 'Acesso negado. Você não participa deste grupo.' });
+    // Caller precisa estar escalado no grupo. Individual: group_players.
+    // Doubles: tournament_dupla_players de uma dupla que está em group_duplas
+    // desse grupo. Também resolve callerDuplaId pra gravar na assinatura.
+    let callerDuplaId = null;
+    if (modality === 'doubles') {
+      const [duplaMembership] = await db.execute(
+        `SELECT gd.dupla_id
+           FROM group_duplas gd
+           JOIN tournament_dupla_players tdp ON tdp.dupla_id = gd.dupla_id
+          WHERE gd.group_id = ? AND tdp.user_id = ?
+          LIMIT 1`,
+        [group_id, caller_id]
+      );
+      if (duplaMembership.length === 0) {
+        return res.status(403).json({ error: 'Acesso negado. Você não participa deste grupo.' });
+      }
+      callerDuplaId = duplaMembership[0].dupla_id;
+    } else {
+      const [membership] = await db.execute(
+        `SELECT 1 FROM group_players
+          WHERE group_id = ? AND user_id = ? LIMIT 1`,
+        [group_id, caller_id]
+      );
+      if (membership.length === 0) {
+        return res.status(403).json({ error: 'Acesso negado. Você não participa deste grupo.' });
+      }
     }
 
     // Confirma que o grupo pertence ao torneio recebido E que a rodada bate.
@@ -265,35 +284,65 @@ exports.signCard = async (req, res) => {
     );
     const expected = hole_count > 0 ? hole_count : 18;
 
-    // Jogadores do grupo + contagem de scores por jogador NESTA rodada
-    const [players] = await db.execute(
-      `SELECT gp.user_id, u.name,
-              COUNT(s.hole_number) AS holes_played
-         FROM group_players gp
-         JOIN users u ON u.id = gp.user_id
-         LEFT JOIN scores s
-                ON s.tournament_id = ?
-               AND s.user_id       = gp.user_id
-               AND s.round_number  = ?
-               AND s.hole_number BETWEEN 1 AND ?
-        WHERE gp.group_id = ?
-        GROUP BY gp.user_id, u.name`,
-      [tournament_id, round_number, expected, group_id]
-    );
-
-    // Detecta quem está incompleto e QUAIS buracos faltam (pra UI mostrar) — nesta rodada
+    // Onda B · Commit 3.4: verificação de completude bifurca por modality.
+    // Doubles: cada dupla escalada no grupo precisa ter score em todos os buracos
+    // (uma linha por dupla × buraco). Individual: mesma coisa por user_id.
     const missing = [];
-    for (const p of players) {
-      if (Number(p.holes_played) < expected) {
-        const [rows] = await db.execute(
-          `SELECT hole_number FROM scores
-            WHERE tournament_id = ? AND user_id = ? AND round_number = ? AND hole_number BETWEEN 1 AND ?`,
-          [tournament_id, p.user_id, round_number, expected]
-        );
-        const have = new Set(rows.map(r => Number(r.hole_number)));
-        const holes = [];
-        for (let h = 1; h <= expected; h++) if (!have.has(h)) holes.push(h);
-        missing.push({ user_id: p.user_id, name: p.name, missing_holes: holes });
+    if (modality === 'doubles') {
+      const [duplas] = await db.execute(
+        `SELECT gd.dupla_id, d.dupla_name,
+                COUNT(s.hole_number) AS holes_played
+           FROM group_duplas gd
+           JOIN tournament_duplas d ON d.id = gd.dupla_id
+           LEFT JOIN scores s
+                  ON s.tournament_id = ?
+                 AND s.dupla_id      = gd.dupla_id
+                 AND s.round_number  = ?
+                 AND s.hole_number BETWEEN 1 AND ?
+          WHERE gd.group_id = ?
+          GROUP BY gd.dupla_id, d.dupla_name`,
+        [tournament_id, round_number, expected, group_id]
+      );
+      for (const d of duplas) {
+        if (Number(d.holes_played) < expected) {
+          const [rows] = await db.execute(
+            `SELECT hole_number FROM scores
+              WHERE tournament_id = ? AND dupla_id = ? AND round_number = ? AND hole_number BETWEEN 1 AND ?`,
+            [tournament_id, d.dupla_id, round_number, expected]
+          );
+          const have = new Set(rows.map(r => Number(r.hole_number)));
+          const holes = [];
+          for (let h = 1; h <= expected; h++) if (!have.has(h)) holes.push(h);
+          missing.push({ dupla_id: d.dupla_id, name: d.dupla_name, missing_holes: holes });
+        }
+      }
+    } else {
+      const [players] = await db.execute(
+        `SELECT gp.user_id, u.name,
+                COUNT(s.hole_number) AS holes_played
+           FROM group_players gp
+           JOIN users u ON u.id = gp.user_id
+           LEFT JOIN scores s
+                  ON s.tournament_id = ?
+                 AND s.user_id       = gp.user_id
+                 AND s.round_number  = ?
+                 AND s.hole_number BETWEEN 1 AND ?
+          WHERE gp.group_id = ?
+          GROUP BY gp.user_id, u.name`,
+        [tournament_id, round_number, expected, group_id]
+      );
+      for (const p of players) {
+        if (Number(p.holes_played) < expected) {
+          const [rows] = await db.execute(
+            `SELECT hole_number FROM scores
+              WHERE tournament_id = ? AND user_id = ? AND round_number = ? AND hole_number BETWEEN 1 AND ?`,
+            [tournament_id, p.user_id, round_number, expected]
+          );
+          const have = new Set(rows.map(r => Number(r.hole_number)));
+          const holes = [];
+          for (let h = 1; h <= expected; h++) if (!have.has(h)) holes.push(h);
+          missing.push({ user_id: p.user_id, name: p.name, missing_holes: holes });
+        }
       }
     }
 
@@ -307,13 +356,17 @@ exports.signCard = async (req, res) => {
 
     // OK, tudo completo — grava assinatura por (tournament, group, user, round).
     // uk_sig 4-col garante idempotência: assinar 2x na mesma round → só atualiza signed_at.
+    // Onda B · Commit 3.4: em torneio doubles, user_id continua sendo o caller
+    // (rastreio de QUEM apertou), dupla_id carrega a identidade da assinatura
+    // (decisão 5: qualquer jogador da dupla assina em nome dela).
     await db.execute(
-      `INSERT INTO tournament_scorecard_signatures (tournament_id, group_id, user_id, round_number)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO tournament_scorecard_signatures (tournament_id, group_id, user_id, dupla_id, round_number)
+       VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE signed_at = CURRENT_TIMESTAMP,
                                invalidated_at = NULL,
-                               invalidated_reason = NULL`,
-      [tournament_id, group_id, caller_id, round_number]
+                               invalidated_reason = NULL,
+                               dupla_id = VALUES(dupla_id)`,
+      [tournament_id, group_id, caller_id, callerDuplaId, round_number]
     );
 
     const [[sig]] = await db.execute(
