@@ -798,9 +798,9 @@ exports.generateFromStandings = async (req, res) => {
       return res.status(400).json({ error: "round_number deve ser inteiro >= 2 (rodada 1 usa /groups/auto-generate)." });
     }
 
-    // 1. Torneio + total_rounds do clube
+    // 1. Torneio + total_rounds + modality do clube
     const [tCheck] = await db.execute(
-      "SELECT id, format, total_rounds FROM tournaments WHERE id = ? AND club_id = ?",
+      "SELECT id, format, total_rounds, modality FROM tournaments WHERE id = ? AND club_id = ?",
       [tournament_id, req.club.id]
     );
     if (tCheck.length === 0) {
@@ -813,6 +813,7 @@ exports.generateFromStandings = async (req, res) => {
       });
     }
     const format = tCheck[0].format || 'shotgun';
+    const modality = tCheck[0].modality || 'individual';
 
     // 2. course_id + round_date de R(N-1) e da propria N (via tournament_rounds)
     const prevRound = roundNumber - 1;
@@ -854,51 +855,92 @@ exports.generateFromStandings = async (req, res) => {
       intervalMin = raw;
     }
 
-    // 4. Aprovados que COMPLETARAM R(N-1), ordenados por soma de strokes ASC
-    const [standings] = await db.execute(
-      `SELECT s.user_id,
-              SUM(s.strokes)                                             AS gross,
-              COUNT(DISTINCT s.hole_number)                              AS holes_played
-         FROM scores s
-         JOIN inscriptions i
-           ON i.tournament_id = s.tournament_id AND i.user_id = s.user_id AND i.status = 'APPROVED'
-        WHERE s.tournament_id = ?
-          AND s.round_number  = ?
-          AND s.hole_number BETWEEN 1 AND ?
-        GROUP BY s.user_id
-       HAVING holes_played = ?
-        ORDER BY gross ASC, s.user_id ASC`,
-      [tournament_id, prevRound, expectedHoles, expectedHoles]
-    );
-
-    if (standings.length === 0) {
-      return res.status(400).json({
-        error: `Nenhum jogador aprovado completou R${prevRound} (${expectedHoles} buracos). Re-seeding automatico exige classificacao completa.`,
-      });
+    // 4. Standings da R(N-1) — ordena por gross ASC. Individual: por user_id.
+    // Doubles: por dupla_id (soma dos strokes gravados na dupla). Precisa que
+    // dupla tenha completado (holes_played = expectedHoles).
+    let standings; // array de { entity_id (user OU dupla), gross }
+    if (modality === 'doubles') {
+      const [rows] = await db.execute(
+        `SELECT s.dupla_id AS entity_id,
+                SUM(s.strokes) AS gross,
+                COUNT(DISTINCT s.hole_number) AS holes_played
+           FROM scores s
+           JOIN tournament_duplas d ON d.id = s.dupla_id
+          WHERE s.tournament_id = ?
+            AND s.round_number  = ?
+            AND s.hole_number BETWEEN 1 AND ?
+            AND d.tournament_id = ?
+          GROUP BY s.dupla_id
+         HAVING holes_played = ?
+          ORDER BY gross ASC, s.dupla_id ASC`,
+        [tournament_id, prevRound, expectedHoles, tournament_id, expectedHoles]
+      );
+      if (rows.length === 0) {
+        return res.status(400).json({
+          error: `Nenhuma dupla completou R${prevRound} (${expectedHoles} buracos).`,
+        });
+      }
+      standings = rows;
+    } else {
+      const [rows] = await db.execute(
+        `SELECT s.user_id AS entity_id,
+                SUM(s.strokes) AS gross,
+                COUNT(DISTINCT s.hole_number) AS holes_played
+           FROM scores s
+           JOIN inscriptions i
+             ON i.tournament_id = s.tournament_id AND i.user_id = s.user_id AND i.status = 'APPROVED'
+          WHERE s.tournament_id = ?
+            AND s.round_number  = ?
+            AND s.hole_number BETWEEN 1 AND ?
+          GROUP BY s.user_id
+         HAVING holes_played = ?
+          ORDER BY gross ASC, s.user_id ASC`,
+        [tournament_id, prevRound, expectedHoles, expectedHoles]
+      );
+      if (rows.length === 0) {
+        return res.status(400).json({
+          error: `Nenhum jogador aprovado completou R${prevRound} (${expectedHoles} buracos). Re-seeding automatico exige classificacao completa.`,
+        });
+      }
+      standings = rows;
     }
 
-    // 5. Apagar grupos + scores da R(N) atual (auto-generate estilo por rodada)
-    await db.execute(
-      `DELETE s FROM scores s
-         JOIN group_players gp ON gp.user_id = s.user_id
-         JOIN tournament_groups tg ON tg.id = gp.group_id
-        WHERE tg.tournament_id = ?
-          AND tg.round_number = ?
-          AND s.tournament_id = ?
-          AND s.round_number = ?`,
-      [tournament_id, roundNumber, tournament_id, roundNumber]
-    );
+    // 5. Apagar grupos + scores da R(N) atual. Filtro por user_id ou dupla_id
+    // conforme modality (mesma logica de autoGenerateGroups).
+    if (modality === 'doubles') {
+      await db.execute(
+        `DELETE s FROM scores s
+           JOIN group_duplas gd ON gd.dupla_id = s.dupla_id
+           JOIN tournament_groups tg ON tg.id = gd.group_id
+          WHERE tg.tournament_id = ?
+            AND tg.round_number = ?
+            AND s.tournament_id = ?
+            AND s.round_number = ?`,
+        [tournament_id, roundNumber, tournament_id, roundNumber]
+      );
+    } else {
+      await db.execute(
+        `DELETE s FROM scores s
+           JOIN group_players gp ON gp.user_id = s.user_id
+           JOIN tournament_groups tg ON tg.id = gp.group_id
+          WHERE tg.tournament_id = ?
+            AND tg.round_number = ?
+            AND s.tournament_id = ?
+            AND s.round_number = ?`,
+        [tournament_id, roundNumber, tournament_id, roundNumber]
+      );
+    }
     await db.execute(
       "DELETE FROM tournament_groups WHERE tournament_id = ? AND round_number = ?",
       [tournament_id, roundNumber]
     );
 
-    // 6. Agrupa de 4 em 4 sequencialmente na ordem do standings
-    const FLIGHT_SIZE = 4;
-    const nFlights = Math.ceil(standings.length / FLIGHT_SIZE);
+    // 6. Agrupa sequencialmente. Individual: 4/flight. Doubles: 2 duplas/flight.
+    const UNITS_PER_FLIGHT = modality === 'doubles' ? 2 : 4;
+    const nFlights = Math.ceil(standings.length / UNITS_PER_FLIGHT);
     const flights = Array.from({ length: nFlights }, () => []);
     standings.forEach((s, idx) => {
-      flights[Math.floor(idx / FLIGHT_SIZE)].push(s.user_id);
+      flights[Math.floor(idx / UNITS_PER_FLIGHT)].push(s.entity_id);
     });
 
     // 7. Pre-calcular hora inicial da rodada N pro modo tee_time (BRT)
@@ -948,11 +990,19 @@ exports.generateFromStandings = async (req, res) => {
 
       if (flights[i].length > 0) {
         const placeholders = flights[i].map(() => "(?, ?)").join(", ");
-        const values = flights[i].flatMap((uid) => [groupId, uid]);
-        await db.execute(
-          `INSERT INTO group_players (group_id, user_id) VALUES ${placeholders}`,
-          values
-        );
+        const values = flights[i].flatMap((id) => [groupId, id]);
+        // Onda B · Commit 3.6: escala group_duplas em doubles.
+        if (modality === 'doubles') {
+          await db.execute(
+            `INSERT INTO group_duplas (group_id, dupla_id) VALUES ${placeholders}`,
+            values
+          );
+        } else {
+          await db.execute(
+            `INSERT INTO group_players (group_id, user_id) VALUES ${placeholders}`,
+            values
+          );
+        }
       }
     }
 
@@ -960,7 +1010,8 @@ exports.generateFromStandings = async (req, res) => {
       message: `Re-seeding R${roundNumber} concluido.`,
       round_number: roundNumber,
       groups_created: nFlights,
-      players_seeded: standings.length,
+      players_seeded: modality === 'doubles' ? standings.length * 2 : standings.length,
+      duplas_seeded: modality === 'doubles' ? standings.length : undefined,
       based_on_round: prevRound,
       expected_holes: expectedHoles,
     });

@@ -12,9 +12,9 @@ exports.getTournamentLeaderboard = async (req, res) => {
   try {
     const { tournamentId } = req.params;
 
-    // Verifica se o torneio pertence ao clube + pega metadata multi-rodada
+    // Verifica se o torneio pertence ao clube + pega metadata multi-rodada + modality
     const [tournamentCheck] = await db.execute(
-      'SELECT id, total_rounds FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, total_rounds, modality FROM tournaments WHERE id = ? AND club_id = ?',
       [tournamentId, req.club.id]
     );
 
@@ -22,6 +22,7 @@ exports.getTournamentLeaderboard = async (req, res) => {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
     const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+    const modality = tournamentCheck[0].modality || 'individual';
 
     // Parse do filtro. 'all' (ou ausente) = sem filtro; N inteiro = filtra por round.
     const roundParam = req.query.round;
@@ -34,6 +35,56 @@ exports.getTournamentLeaderboard = async (req, res) => {
       filterRound = rn;
     }
 
+    // Onda B · Commit 3.6: torneio doubles agrega por dupla_id em vez de user_id.
+    // Categoria derivada dos generos dos 2 jogadores: Masculina (M+M), Feminina
+    // (F+F), Mista (M+F), Livre (fallback / catch-all). Frontend bucketiza.
+    if (modality === 'doubles') {
+      const scoreRoundFilterD = filterRound !== null ? 'AND s.round_number = ?' : '';
+      const scoreRoundParamsD = filterRound !== null ? [filterRound] : [];
+      const [rows] = await db.execute(
+        `SELECT
+           d.id AS dupla_id,
+           d.dupla_name,
+           d.handicap,
+           GROUP_CONCAT(u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
+           GROUP_CONCAT(u.gender ORDER BY u.name SEPARATOR '') AS gender_concat,
+           COALESCE(SUM(s.strokes), 0) AS total_strokes,
+           COALESCE(COUNT(s.hole_number), 0) AS holes_played,
+           COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, hf.par, chf.par, 4)), 0) AS score_to_par,
+           COALESCE(SUM(trp.points), 0) AS total_points
+         FROM tournament_duplas d
+         LEFT JOIN tournament_dupla_players tdp ON tdp.dupla_id = d.id
+         LEFT JOIN users u ON u.id = tdp.user_id
+         LEFT JOIN scores s
+                ON s.dupla_id = d.id AND s.tournament_id = d.tournament_id
+                ${scoreRoundFilterD}
+         LEFT JOIN tournaments t ON t.id = d.tournament_id
+         LEFT JOIN tournament_rounds tr
+                ON tr.tournament_id = s.tournament_id AND tr.round_number = s.round_number
+         LEFT JOIN holes h        ON h.course_id  = tr.course_id AND h.hole_number  = s.hole_number
+         LEFT JOIN course_holes ch ON ch.course_id = tr.course_id AND ch.hole_number = s.hole_number
+         LEFT JOIN holes hf        ON hf.course_id  = t.course_id AND hf.hole_number  = s.hole_number
+         LEFT JOIN course_holes chf ON chf.course_id = t.course_id AND chf.hole_number = s.hole_number
+         LEFT JOIN tournament_result_points trp
+                ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
+         WHERE d.tournament_id = ?
+         GROUP BY d.id, d.dupla_name, d.handicap`,
+        [...scoreRoundParamsD, tournamentId]
+      );
+      // Deriva categoria a partir de gender_concat ('MM','FF','MF','FM','M','F',null).
+      const withCategory = rows.map(r => {
+        const g = (r.gender_concat || '').toUpperCase();
+        let category = 'Livre';
+        if (g === 'MM') category = 'Masculina';
+        else if (g === 'FF') category = 'Feminina';
+        else if (g === 'MF' || g === 'FM') category = 'Mista';
+        // Dupla incompleta (1 player só) fica em Livre.
+        return { ...r, category };
+      });
+      return res.json(withCategory);
+    }
+
+    // ────────────────────── Torneio individual (comportamento antigo) ──────────────
     // Query principal — o par vem do course da RODADA (via tr.course_id), com
     // fallback pro course do torneio pra torneios legados/single-round onde
     // tournament_rounds ainda espelha t.course_id. Isso resolve o caso de rodadas
@@ -170,5 +221,66 @@ exports.getPlayerScorecard = async (req, res) => {
     res.status(500).json({
       error: 'Erro interno no servidor.'
     });
+  }
+};
+
+// Onda B · Commit 3.6: scorecard buraco-a-buraco de uma DUPLA. Espelha
+// getPlayerScorecard mas filtra por dupla_id em vez de user_id. Multi-tenant
+// via JOIN com tournament_duplas (garante dupla pertence a torneio do clube).
+exports.getDuplaScorecard = async (req, res) => {
+  try {
+    const { tournamentId, duplaId } = req.params;
+    const roundParam = req.query.round;
+
+    const [tournamentCheck] = await db.execute(
+      `SELECT t.id, t.total_rounds
+         FROM tournaments t
+         JOIN tournament_duplas d ON d.tournament_id = t.id
+        WHERE t.id = ? AND t.club_id = ? AND d.id = ?`,
+      [tournamentId, req.club.id, duplaId]
+    );
+    if (tournamentCheck.length === 0) {
+      return res.status(403).json({ error: 'Torneio ou dupla não encontrado / acesso negado.' });
+    }
+    const totalRounds = Number(tournamentCheck[0].total_rounds) || 1;
+
+    let filterRound = null;
+    if (roundParam !== undefined && roundParam !== '' && roundParam !== 'all') {
+      const rn = Number(roundParam);
+      if (!Number.isInteger(rn) || rn < 1 || rn > totalRounds) {
+        return res.status(400).json({ error: `round inválido — use 'all' ou 1..${totalRounds}.` });
+      }
+      filterRound = rn;
+    }
+
+    const roundFilter = filterRound !== null ? 'AND s.round_number = ?' : '';
+    const params = filterRound !== null
+      ? [tournamentId, duplaId, filterRound]
+      : [tournamentId, duplaId];
+
+    const [results] = await db.execute(
+      `SELECT
+         s.hole_number,
+         s.round_number,
+         s.strokes,
+         s.result_kind,
+         trp.points,
+         COALESCE(h.par, hf.par, 4) as par
+       FROM scores s
+       JOIN tournaments t ON s.tournament_id = t.id
+       LEFT JOIN tournament_rounds tr
+         ON tr.tournament_id = s.tournament_id AND tr.round_number = s.round_number
+       LEFT JOIN holes h  ON h.course_id  = tr.course_id AND h.hole_number = s.hole_number
+       LEFT JOIN holes hf ON hf.course_id = t.course_id  AND hf.hole_number = s.hole_number
+       LEFT JOIN tournament_result_points trp
+         ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
+       WHERE s.tournament_id = ? AND s.dupla_id = ? ${roundFilter}
+       ORDER BY s.round_number ASC, s.hole_number ASC`,
+      params
+    );
+    res.json(results);
+  } catch (error) {
+    console.error('Erro ao buscar scorecard da dupla:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 };
