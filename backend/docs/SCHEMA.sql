@@ -192,6 +192,11 @@ CREATE TABLE IF NOT EXISTS tournaments (
   --                   (Birdie=3, Par=2, Bogey=1, etc — config por torneio, gross puro sem handicap).
   -- Torneios existentes recebem 'strokes' via default sem alterar comportamento.
   scoring_type           ENUM('strokes','result_points') NOT NULL DEFAULT 'strokes',
+  -- modality: adicionado em 2026_09_01 (Onda B · Bloco 3). Ortogonal a scoring_type.
+  -- 'individual' (default) = 1 jogador por scorecard (comportamento histórico).
+  -- 'doubles' = 2 jogadores compartilham 1 scorecard e 1 resultado por buraco.
+  -- Combina com qualquer scoring_type (strokes ou result_points).
+  modality               ENUM('individual','doubles') NOT NULL DEFAULT 'individual',
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
@@ -216,6 +221,44 @@ CREATE TABLE IF NOT EXISTS tournament_rounds (
   CONSTRAINT fk_tr_course FOREIGN KEY (course_id)     REFERENCES courses(id)     ON DELETE RESTRICT,
   UNIQUE KEY uk_tr_num (tournament_id, round_number),
   INDEX idx_tr_tourn (tournament_id, round_number)
+);
+
+-- ─── 8c. tournament_duplas / tournament_dupla_players / group_duplas ──
+-- Onda B (2026_09_01 · Bloco 3). Só relevante em tournaments.modality='doubles'.
+-- Se admin trocar modality='doubles' -> 'individual', linhas ficam órfãs mas
+-- backend ignora — não há CHECK cross-table (MySQL suporta mal).
+-- dupla_name: nome livre digitado pelo admin ("João e Pedro"). handicap:
+-- combinado, confirmado no lobby. Sem enforcement de "1 user em só 1 dupla
+-- por torneio" via constraint (violaria BCNF); enforcement no controller.
+CREATE TABLE IF NOT EXISTS tournament_duplas (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  tournament_id  INT NOT NULL,
+  dupla_name     VARCHAR(100) NOT NULL,
+  handicap       DECIMAL(4,1) NULL,
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_td_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  INDEX idx_td_tourn (tournament_id)
+);
+
+CREATE TABLE IF NOT EXISTS tournament_dupla_players (
+  dupla_id  INT NOT NULL,
+  user_id   INT NOT NULL,
+  PRIMARY KEY (dupla_id, user_id),
+  CONSTRAINT fk_tdp_dupla FOREIGN KEY (dupla_id) REFERENCES tournament_duplas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tdp_user  FOREIGN KEY (user_id)  REFERENCES users(id)             ON DELETE CASCADE,
+  INDEX idx_tdp_user (user_id)
+);
+
+-- group_duplas: espelho de group_players pra duplas. Handicap por dupla POR
+-- grupo (mesmo padrão do individual — re-declarado por rodada, Bloco D).
+CREATE TABLE IF NOT EXISTS group_duplas (
+  group_id  INT NOT NULL,
+  dupla_id  INT NOT NULL,
+  handicap  DECIMAL(4,1) NULL,
+  PRIMARY KEY (group_id, dupla_id),
+  CONSTRAINT fk_gd_group FOREIGN KEY (group_id) REFERENCES tournament_groups(id) ON DELETE CASCADE,
+  CONSTRAINT fk_gd_dupla FOREIGN KEY (dupla_id) REFERENCES tournament_duplas(id) ON DELETE CASCADE,
+  INDEX idx_gd_dupla (dupla_id)
 );
 
 -- ─── 9. tournament_categories ────────────────────────────────────────
@@ -269,11 +312,15 @@ CREATE TABLE IF NOT EXISTS group_players (
 -- round_number: adicionado em 2026_08_28 pra suportar torneio multi-rodada
 -- (cada rodada tem sua própria assinatura). idx_sig_tourn foi criado no mesmo
 -- deploy pra sustentar fk_sig_tourn depois do drop do uk_sig antigo.
+-- dupla_id: adicionado em 2026_09_01 (Onda B). Torneio doubles: qualquer
+-- jogador da dupla assina em nome dela — a assinatura carrega dupla_id
+-- (user_id continua no INSERT pra rastrear QUEM apertou o botão).
 CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
   id                  INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id       INT NOT NULL,
   group_id            INT NOT NULL,
   user_id             INT NOT NULL,
+  dupla_id            INT NULL,
   round_number        TINYINT UNSIGNED NOT NULL DEFAULT 1,
   signed_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   invalidated_at      TIMESTAMP    NULL,
@@ -282,7 +329,8 @@ CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
   INDEX idx_sig_tourn (tournament_id),
   CONSTRAINT fk_sig_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id)       ON DELETE CASCADE,
   CONSTRAINT fk_sig_group FOREIGN KEY (group_id)      REFERENCES tournament_groups(id) ON DELETE CASCADE,
-  CONSTRAINT fk_sig_user  FOREIGN KEY (user_id)       REFERENCES users(id)             ON DELETE CASCADE
+  CONSTRAINT fk_sig_user  FOREIGN KEY (user_id)       REFERENCES users(id)             ON DELETE CASCADE,
+  CONSTRAINT fk_sig_dupla FOREIGN KEY (dupla_id)      REFERENCES tournament_duplas(id) ON DELETE CASCADE
 );
 
 -- ─── 11c. admin_score_audit (rastro de correção manual do admin) ─────
@@ -299,8 +347,9 @@ CREATE TABLE IF NOT EXISTS tournament_scorecard_signatures (
 --   NULL em audits antigos e em torneios strokes; preenchido só quando admin
 --   edita resultado em torneio result_points.
 -- target_dupla_id: adicionado em 2026_08_31 (aditivo pra Onda B — Duplas).
---   NULL enquanto a Onda B não estiver implementada; SEM FK aqui porque
---   tournament_duplas ainda não existe. Onda B adiciona a FK depois.
+--   NULL em audits de torneio individual (99% dos casos); preenchido só em
+--   torneios modality='doubles'. FK adicionada em 2026_09_01 (Onda B · Bloco 3)
+--   com ON DELETE SET NULL, mesmo padrão dos demais FKs de audit.
 CREATE TABLE IF NOT EXISTS admin_score_audit (
   id                    INT AUTO_INCREMENT PRIMARY KEY,
   club_id               INT NOT NULL,
@@ -322,8 +371,9 @@ CREATE TABLE IF NOT EXISTS admin_score_audit (
   CONSTRAINT fk_asa_club   FOREIGN KEY (club_id)           REFERENCES clubs(id)             ON DELETE CASCADE,
   CONSTRAINT fk_asa_admin  FOREIGN KEY (admin_user_id)     REFERENCES users(id)             ON DELETE SET NULL,
   CONSTRAINT fk_asa_target FOREIGN KEY (target_user_id)    REFERENCES users(id)             ON DELETE SET NULL,
-  CONSTRAINT fk_asa_tourn  FOREIGN KEY (tournament_id)     REFERENCES tournaments(id)       ON DELETE SET NULL,
-  CONSTRAINT fk_asa_tgroup FOREIGN KEY (training_group_id) REFERENCES training_groups(id)   ON DELETE SET NULL,
+  CONSTRAINT fk_asa_tourn        FOREIGN KEY (tournament_id)     REFERENCES tournaments(id)       ON DELETE SET NULL,
+  CONSTRAINT fk_asa_tgroup       FOREIGN KEY (training_group_id) REFERENCES training_groups(id)   ON DELETE SET NULL,
+  CONSTRAINT fk_asa_target_dupla FOREIGN KEY (target_dupla_id)   REFERENCES tournament_duplas(id) ON DELETE SET NULL,
   INDEX idx_asa_club_created (club_id, created_at),
   INDEX idx_asa_tournament   (tournament_id, created_at),
   INDEX idx_asa_training     (training_group_id, created_at)
@@ -366,21 +416,37 @@ CREATE TABLE IF NOT EXISTS inscriptions (
 -- NOT NULL — em modo result_points, guarda o valor DERIVADO do resultado + par
 -- (HiO=1, Alb=par-3, Eagle=par-2, Birdie=par-1, Par=par, Bogey=par+1, etc)
 -- pra preservar Meu Desempenho, exportação Excel e demais leitores de strokes.
+-- user_id + dupla_id (Onda B, 2026_09_01): dono XOR — user_id preenchido em
+-- torneios modality='individual', dupla_id em modality='doubles'. Enforcement
+-- de exclusividade no controller (evita CHECK cross-cell).
+-- entity_ref: coluna REAL INT NOT NULL preenchida pelo backend em cada INSERT
+-- (=user_id em torneio individual, =-dupla_id em doubles). Namespaces
+-- user_id (positivo) e -dupla_id (negativo) nao colidem. Necessaria porque:
+--   (a) UNIQUE 5-col (tid, uid, dupla, hole, round) NAO rejeita duplicatas
+--       quando user_id eh NULL (MySQL trata NULL como distinto).
+--   (b) Coluna GENERATED STORED sobre user_id/dupla_id nao pode ser indexada
+--       porque MySQL proibe UNIQUE em generated col cujas bases sao FK CASCADE.
+-- Solucao pratica: coluna real mantida pelo controller. uk_score_v2 (4-col
+-- via entity_ref) substitui o uk_score legado.
 CREATE TABLE IF NOT EXISTS scores (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   tournament_id INT NOT NULL,
-  user_id       INT NOT NULL,
+  user_id       INT NULL,
+  dupla_id      INT NULL,
+  entity_ref    INT NOT NULL,
   hole_number   INT NOT NULL,
   round_number  TINYINT UNSIGNED NOT NULL DEFAULT 1,
   strokes       INT NOT NULL,
   result_kind   ENUM('hio','albatross','eagle','birdie','par','bogey','double_bogey','triple_bogey') NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_scores_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
-  CONSTRAINT fk_scores_user  FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE,
-  UNIQUE KEY uk_score (tournament_id, user_id, hole_number, round_number),
+  CONSTRAINT fk_scores_tourn FOREIGN KEY (tournament_id) REFERENCES tournaments(id)     ON DELETE CASCADE,
+  CONSTRAINT fk_scores_user  FOREIGN KEY (user_id)       REFERENCES users(id)           ON DELETE CASCADE,
+  CONSTRAINT fk_scores_dupla FOREIGN KEY (dupla_id)      REFERENCES tournament_duplas(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_score_v2 (tournament_id, entity_ref, hole_number, round_number),
   INDEX idx_scores_tourn (tournament_id),
   INDEX idx_scores_round (tournament_id, round_number),
-  INDEX idx_scores_user  (user_id)
+  INDEX idx_scores_user  (user_id),
+  INDEX idx_scores_dupla (dupla_id)
 );
 
 -- ─── 14b. tournament_result_points (config de pontos por resultado) ──

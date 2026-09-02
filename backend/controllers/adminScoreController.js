@@ -298,18 +298,22 @@ exports.upsertTournamentScore = async (req, res) => {
       return res.status(200).json({ ok: true, noop: true });
     }
 
-    // Mutação — DELETE ou UPSERT via uk_score 4-col. Grava result_kind (NULL em strokes).
+    // Mutação — DELETE ou UPSERT via uk_score_v2 4-col (entity_ref).
+    // Onda B · Bloco 3 · Commit B1.1: entity_ref = user_id (modo individual);
+    // suporte a dupla_id no B1.3. DELETE filtra por user_id igual — em modo
+    // individual (todos os torneios hoje) isso equivale ao filtro antigo.
     if (willDelete) {
       await conn.execute(
         `DELETE FROM scores WHERE tournament_id = ? AND user_id = ? AND hole_number = ? AND round_number = ?`,
         [tournament_id, user_id, hole_number, round_number]
       );
     } else {
+      const entityRef = user_id;
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes, result_kind)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, round_number, strokes, result_kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
-        [tournament_id, user_id, hole_number, round_number, newStrokes, newResultKind]
+        [tournament_id, user_id, entityRef, hole_number, round_number, newStrokes, newResultKind]
       );
     }
 

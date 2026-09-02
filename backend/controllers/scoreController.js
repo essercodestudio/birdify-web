@@ -104,15 +104,18 @@ exports.saveScore = async (req, res) => {
       });
     }
 
-    // UPSERT atômico via uk_score(tournament_id, user_id, hole_number, round_number).
-    // Substitui o antigo DELETE+INSERT — agora que o uk_score cobre round_number,
+    // UPSERT atômico via uk_score_v2(tournament_id, entity_ref, hole_number, round_number).
+    // Substitui o antigo DELETE+INSERT — agora que o uk cobre round_number,
     // ON DUPLICATE KEY UPDATE resolve nativamente e sem race.
     // Onda A · commit 3: grava result_kind também (NULL em torneio strokes).
+    // Onda B · Bloco 3 · Commit B1.1 (2026-09-01): entity_ref = user_id em modo
+    // individual (todo torneio hoje). Modo doubles (com dupla_id) chega no B1.3.
+    const entityRef = user_id;
     await db.execute(
-      `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes, result_kind)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, round_number, strokes, result_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE strokes = VALUES(strokes), result_kind = VALUES(result_kind)`,
-      [tournament_id, user_id, hole_number, round_number, finalStrokes, finalResultKind]
+      [tournament_id, user_id, entityRef, hole_number, round_number, finalStrokes, finalResultKind]
     );
 
     res.json({

@@ -308,9 +308,11 @@ exports.adminEditScorecard = async (req, res) => {
         [strokes, user_id, tournamentId, hole_number]
       );
     } else {
+      // Onda B · Bloco 3 · Commit B1.1: entity_ref obrigatoria (NOT NULL) em
+      // scores. Modo individual (circuitos so usam esse) → entity_ref = user_id.
       await db.execute(
-        'INSERT INTO scores (user_id, tournament_id, hole_number, strokes) VALUES (?, ?, ?, ?)',
-        [user_id, tournamentId, hole_number, strokes]
+        'INSERT INTO scores (user_id, tournament_id, entity_ref, hole_number, strokes) VALUES (?, ?, ?, ?, ?)',
+        [user_id, tournamentId, user_id, hole_number, strokes]
       );
     }
 
