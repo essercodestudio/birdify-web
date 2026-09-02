@@ -915,7 +915,14 @@ function PlayerHome() {
             activeTournaments.map((t) => (
               <div key={t.id} style={styles.tournamentCard} onClick={() => openDetails(t)}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: space[3], marginBottom: space[2] }}>
-                  <h3 style={{ margin: 0, ...text.h3, color: theme.textMain }}>{t.name}</h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: space[2], flexWrap: "wrap" }}>
+                    <h3 style={{ margin: 0, ...text.h3, color: theme.textMain }}>{t.name}</h3>
+                    {/* Onda B · Commit 3.13: badge DUPLAS distingue rapido
+                        torneios doubles na lista do jogador. */}
+                    {t.modality === 'doubles' && (
+                      <span style={{ ...styles.badge, backgroundColor: theme.gold, color: '#000' }}>DUPLAS</span>
+                    )}
+                  </div>
                   {t.is_subscribed > 0 && <span style={styles.badge}>INSCRITO</span>}
                 </div>
 
