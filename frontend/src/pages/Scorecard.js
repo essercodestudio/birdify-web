@@ -133,7 +133,9 @@ function Scorecard() {
   // Derivados de tournament.scoring_type e tournament.modality respectivamente
   // no fetchData. Setados 1x quando carrega o torneio.
   const [inputMode, setInputMode] = useState('strokes');
-  const [ownerKind, setOwnerKind] = useState('user'); // eslint-disable-line no-unused-vars
+  // Onda B · Commit 3.11: ownerKind agora usado em enqueueScore + UI (linhas
+  // de score mostram "Joao & Pedro" abaixo do nome da dupla).
+  const [ownerKind, setOwnerKind] = useState('user');
   const [resultPointsMap, setResultPointsMap] = useState({}); // {kind: points}
   // Bloco 2 · Commit 2.3 (2026-09-01): {kind: true|false} — kinds desativados
   // sao filtrados do ResultPicker. Vazio = tudo ativo (torneio strokes ou pre-2.2).
@@ -268,7 +270,22 @@ function Scorecard() {
       const groupList = await api.get(`/groups/list/${savedGroup.tournament_id}`);
       const myGroupData = groupList.data.find((g) => g.id === Number(groupId));
 
-      if (myGroupData && myGroupData.players) setPlayers(myGroupData.players);
+      // Onda B · Commit 3.11: torneio doubles carrega duplas como "players" —
+      // cada dupla vira 1 entidade scoreable (mesma forma {id, name, handicap}
+      // que a UI de scorecard consome). Individual: comportamento antigo.
+      const groupModality = myGroupData?.duplas && myGroupData.duplas.length > 0
+        ? 'doubles' : 'individual';
+      if (groupModality === 'doubles') {
+        setPlayers((myGroupData.duplas || []).map(d => ({
+          id: d.id,
+          name: d.dupla_name,
+          handicap: d.handicap,
+          _isDupla: true,
+          _playerNames: (d.players || []).map(p => p.name).join(' & '),
+        })));
+      } else if (myGroupData && myGroupData.players) {
+        setPlayers(myGroupData.players);
+      }
 
       const tourRes = await api.get(`/tournaments/${savedGroup.tournament_id}`);
       // Item 5 · commit 4: hidrata metadados multi-rodada + calcula round atual.
@@ -327,10 +344,13 @@ function Scorecard() {
       const scoresMap = {};
       const kindsMap = {};
       scoresRes.data.forEach((s) => {
-        scoresMap[`${s.user_id}-${s.hole_number}`] = s.strokes;
+        // Onda B · Commit 3.11: em doubles usa dupla_id como key; individual, user_id.
+        const entityId = tourRes.data.modality === 'doubles' ? s.dupla_id : s.user_id;
+        if (!entityId) return;
+        scoresMap[`${entityId}-${s.hole_number}`] = s.strokes;
         // Onda A · commit 6: preenche resultKinds a partir do backend. Torneio
         // strokes vem com result_kind NULL — kindsMap fica vazio, sem ruído.
-        if (s.result_kind) kindsMap[`${s.user_id}-${s.hole_number}`] = s.result_kind;
+        if (s.result_kind) kindsMap[`${entityId}-${s.hole_number}`] = s.result_kind;
       });
       // Overlay offline-first: itens na fila do syncService ainda não confirmados
       // pelo servidor (pending/syncing/failed) sobrepõem o que veio do GET. Sem
@@ -338,13 +358,15 @@ function Scorecard() {
       // Item 5 · commit 4: filtra também por round pra não puxar scores de R1
       // sobre a tela de R2 (que exibe só os scores desta rodada).
       const pendingOverlay = {};
+      const entityIdOfPayload = (p) => tourRes.data.modality === 'doubles' ? p.dupla_id : p.user_id;
       syncService.getPendingItems((item) =>
         item.endpoint === "/scores/save"
         && Number(item.payload?.tournament_id) === Number(savedGroup.tournament_id)
         && Number(item.payload?.round_number || 1) === autoRound
       ).forEach((item) => {
         const p = item.payload;
-        pendingOverlay[`${p.user_id}-${p.hole_number}`] = p.strokes;
+        const eid = entityIdOfPayload(p);
+        if (eid) pendingOverlay[`${eid}-${p.hole_number}`] = p.strokes;
       });
       // prev vem por último pra preservar cliques ainda no debounce.
       setScores((prev) => ({ ...scoresMap, ...pendingOverlay, ...prev }));
@@ -357,25 +379,31 @@ function Scorecard() {
         && item.payload?.result_kind
       ).forEach((item) => {
         const p = item.payload;
-        pendingKindsOverlay[`${p.user_id}-${p.hole_number}`] = p.result_kind;
+        const eid = entityIdOfPayload(p);
+        if (eid) pendingKindsOverlay[`${eid}-${p.hole_number}`] = p.result_kind;
       });
       setResultKinds((prev) => ({ ...kindsMap, ...pendingKindsOverlay, ...prev }));
       
       // Encontrar o primeiro buraco sem pontuação
       let finalCurrentHole = savedGroup.starting_hole;
       
-      if (scoresRes.data && scoresRes.data.length > 0 && myGroupData && myGroupData.players) {
-        const groupPlayerIds = myGroupData.players.map(p => p.id);
-        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupPlayerIds.includes(s.user_id));
+      // Onda B · Commit 3.11: entity list bifurca por modality.
+      const entities = groupModality === 'doubles'
+        ? (myGroupData?.duplas || []).map(d => ({ id: d.id }))
+        : (myGroupData?.players || []);
+      const entityFieldInScore = groupModality === 'doubles' ? 'dupla_id' : 'user_id';
+      if (scoresRes.data && scoresRes.data.length > 0 && entities.length > 0) {
+        const groupEntityIds = entities.map(p => p.id);
+        const scoresDoMeuGrupo = scoresRes.data.filter(s => groupEntityIds.includes(s[entityFieldInScore]));
 
         if (scoresDoMeuGrupo.length > 0) {
           let nextHole = savedGroup.starting_hole;
           for (let i = 1; i <= 18; i++) {
             const holeToCheck = savedGroup.starting_hole + i - 1;
             const actualHole = holeToCheck > 18 ? holeToCheck - 18 : holeToCheck;
-            
-            const allPlayersHaveScore = myGroupData.players.every(p => {
-              return scoresDoMeuGrupo.some(s => s.user_id === p.id && s.hole_number === actualHole);
+
+            const allPlayersHaveScore = entities.every(p => {
+              return scoresDoMeuGrupo.some(s => s[entityFieldInScore] === p.id && s.hole_number === actualHole);
             });
             
             if (!allPlayersHaveScore) {
@@ -500,26 +528,29 @@ function Scorecard() {
   // offline, fica em PENDING e reenvia ao voltar. `dedupKey` garante que
   // cliques em sequência no mesmo (tournament, user, hole) substituam a
   // pendência anterior em vez de empilhar duplicatas.
-  const enqueueScore = (userId, hole, strokes, resultKind = null) => {
+  const enqueueScore = (entityId, hole, strokes, resultKind = null) => {
     if (!group?.tournament_id) return;
     // Item 5 · commit 4: round_number no payload. dedupKey inclui round pra que
-    // scores da mesma (user,hole) em rounds diferentes NÃO substituam um ao outro
+    // scores da mesma (entity,hole) em rounds diferentes NÃO substituam um ao outro
     // na fila (bug potencial se dedupKey ignorasse round).
     // Onda A · commit 6: result_kind opcional. Em torneio strokes fica null e
     // o backend ignora; em torneio result_points é obrigatório (backend rejeita
     // sem kind e re-deriva strokes autoritativamente).
+    // Onda B · Commit 3.11: em doubles envia dupla_id em vez de user_id.
+    // Backend valida XOR conforme tournament.modality.
     const payload = {
       tournament_id: group.tournament_id,
-      user_id: Number(userId),
       hole_number: Number(hole),
       round_number: Number(currentRound),
       strokes: Number(strokes),
     };
+    if (ownerKind === 'dupla') payload.dupla_id = Number(entityId);
+    else payload.user_id = Number(entityId);
     if (resultKind) payload.result_kind = resultKind;
     syncService.enqueue({
       endpoint: "/scores/save",
       payload,
-      dedupKey: `score:${group.tournament_id}:${currentRound}:${userId}:${hole}`,
+      dedupKey: `score:${group.tournament_id}:${currentRound}:${ownerKind}:${entityId}:${hole}`,
     });
   };
 
@@ -1031,7 +1062,9 @@ function Scorecard() {
         {players.map((p) => {
           const score = scores[`${p.id}-${currentHole}`];
           const kind = resultKinds[`${p.id}-${currentHole}`];
-          const perfil = calcularPerfilGolfista(p.gender, p.handicap);
+          // Onda B · Commit 3.11: duplas nao tem gender individual — calcula
+          // perfil so pra individuais. UI ja bifurca renderizacao em p._isDupla.
+          const perfil = p._isDupla ? { tee: { cor: '#94a3b8', nome: 'Branco' }, cat: '—' } : calcularPerfilGolfista(p.gender, p.handicap);
           const par = currentHoleData.par || 4;
 
           // Onda A · commit 6: em modo 'result', card vira coluna (info em cima,
@@ -1045,14 +1078,20 @@ function Scorecard() {
             <div key={p.id} style={cardStyle}>
               <div style={styles.playerName}>
                 <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
-                  <span style={{
-                    width: "10px", height: "10px", borderRadius: "50%",
-                    backgroundColor: perfil.tee.cor,
-                    border: perfil.tee.nome === "Branco" ? "1px solid #94a3b8" : "none"
-                  }}></span>
-                  TEE {perfil.tee.nome.toUpperCase()} • {perfil.cat} • HDCP {p.handicap || 0}
-                </div>
+                {p._isDupla ? (
+                  <div style={{ marginTop: 4, fontSize: 11, color: theme.textMuted }}>
+                    {p._playerNames} • HDCP {p.handicap ?? 0}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
+                    <span style={{
+                      width: "10px", height: "10px", borderRadius: "50%",
+                      backgroundColor: perfil.tee.cor,
+                      border: perfil.tee.nome === "Branco" ? "1px solid #94a3b8" : "none"
+                    }}></span>
+                    TEE {perfil.tee.nome.toUpperCase()} • {perfil.cat} • HDCP {p.handicap || 0}
+                  </div>
+                )}
               </div>
 
               {inputMode === 'strokes' ? (
