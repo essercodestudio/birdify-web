@@ -126,12 +126,12 @@ async function bootstrap() {
     const params = [];
     for (let round of [1, 2]) {
       for (let h = 1; h <= 18; h++) {
-        insertPairs.push('(?, ?, ?, ?, ?)');
-        params.push(tournamentId, player.user.id, h, round, 4);
+        insertPairs.push('(?, ?, ?, ?, ?, ?)');
+        params.push(tournamentId, player.user.id, player.user.id, h, round, 4);
       }
     }
     await conn.execute(
-      `INSERT INTO scores (tournament_id, user_id, hole_number, round_number, strokes)
+      `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, round_number, strokes)
        VALUES ${insertPairs.join(', ')}`,
       params
     );

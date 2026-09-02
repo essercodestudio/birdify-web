@@ -229,8 +229,8 @@ async function markTournamentScoresDirect(tournamentId, userId, holes) {
   for (const [hole, strokes] of holes) {
     await query(`DELETE FROM scores WHERE tournament_id=? AND user_id=? AND hole_number=?`,
       [tournamentId, userId, hole]);
-    await query(`INSERT INTO scores (tournament_id, user_id, hole_number, strokes) VALUES (?, ?, ?, ?)`,
-      [tournamentId, userId, hole, strokes]);
+    await query(`INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, strokes) VALUES (?, ?, ?, ?, ?)`,
+      [tournamentId, userId, userId, hole, strokes]);
   }
 }
 

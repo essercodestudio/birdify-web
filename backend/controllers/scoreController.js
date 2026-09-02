@@ -4,9 +4,9 @@ const { deriveStrokesFromResult, fetchPar, RESULT_KINDS, getEnabledKinds } = req
 
 // Salvar (ou atualizar) o score de um buraco.
 // Item 5 · commit 2 (2026-08-28): aceita round_number no payload (default 1).
-// Grava via UPSERT atômico usando uk_score(tournament_id,user_id,hole_number,round_number)
-// — antes era DELETE+INSERT (janela de race). Como uk_score agora inclui round_number,
-// o UPSERT resolve tanto single-round (round=1) quanto multi-rodada corretamente.
+// Grava via UPSERT atômico usando uk_score_v2(tournament_id,entity_ref,hole_number,round_number)
+// — antes era DELETE+INSERT (janela de race). Bloco 3 · commit 3.1 substituiu uk_score
+// (4-col em user_id) por uk_score_v2 (4-col em entity_ref) pra permitir doubles.
 exports.saveScore = async (req, res) => {
   try {
     const { tournament_id, user_id, hole_number } = req.body;

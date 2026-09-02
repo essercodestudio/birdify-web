@@ -279,12 +279,12 @@ async function signatureInvalidatedAfterEdit() {
   try {
     for (let h = 1; h <= 18; h++) {
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, hole_number, strokes) VALUES (?, ?, ?, 4)`,
-        [ctx.tournamentId, ctx.creator.user.id, h]
+        `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, strokes) VALUES (?, ?, ?, ?, 4)`,
+        [ctx.tournamentId, ctx.creator.user.id, ctx.creator.user.id, h]
       );
       await conn.execute(
-        `INSERT INTO scores (tournament_id, user_id, hole_number, strokes) VALUES (?, ?, ?, 5)`,
-        [ctx.tournamentId, ctx.athlete2.user.id, h]
+        `INSERT INTO scores (tournament_id, user_id, entity_ref, hole_number, strokes) VALUES (?, ?, ?, ?, 5)`,
+        [ctx.tournamentId, ctx.athlete2.user.id, ctx.athlete2.user.id, h]
       );
     }
   } finally { await conn.end(); }
