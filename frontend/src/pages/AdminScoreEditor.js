@@ -299,12 +299,17 @@ export default function AdminScoreEditor() {
       if (tab === "tournament") {
         // Onda A · commit 8: em modo result_points, envia result_kind (backend
         // deriva strokes autoritativamente). Em modo strokes, mantém envio antigo.
+        // Onda B · Commit 3.12: em torneio doubles, userId eh na verdade dupla_id
+        // (backend aliasou pra manter compat de indexacao no frontend). Payload
+        // vai com dupla_id em vez de user_id.
+        const isDoublesMat = matrix?.tournament?.modality === 'doubles';
         const payload = {
           tournament_id: matrix.tournament.id,
-          user_id: userId,
           hole_number: holeNumber,
           reason,
         };
+        if (isDoublesMat) payload.dupla_id = userId;
+        else payload.user_id = userId;
         if (mode === 'result') {
           payload.result_kind = newResultKind; // pode ser null (apagar)
         } else {

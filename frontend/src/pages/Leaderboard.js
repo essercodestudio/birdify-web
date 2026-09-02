@@ -55,6 +55,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   // 'strokes' (default) — ranking por menor tacadas + relPar (comportamento antigo).
   // 'result_points' — ranking por MAIOR total_points (ordenação inversa; sem NET).
   const [scoringType,         setScoringType]         = useState('strokes');
+  // Onda B · Commit 3.12: modality do torneio. 'doubles' altera tabs (Livre/
+  // Masc/Fem/Mista), colunas (Dupla + Jogadores) e endpoint de detalhes.
+  const [modality,            setModality]            = useState('individual');
 
   const fetchInfo = useCallback(async () => {
     if (!tournamentId) return;
@@ -69,13 +72,13 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       // Onda A · commit 7: scoring_type do torneio
       const st = res.data.scoring_type === 'result_points' ? 'result_points' : 'strokes';
       setScoringType(st);
+      // Onda B · Commit 3.12: modality do torneio
+      const mod = res.data.modality === 'doubles' ? 'doubles' : 'individual';
+      setModality(mod);
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
-      // Bloco 1 · Commit 1.1 (2026-09-01): torneio result_points ignora as
-      // categorias salvas em tournament_categories — usa Masculino/Feminino
-      // hardcoded (categorias por handicap não fazem sentido em modo pontos).
-      const tabsToRender = getLeaderboardTabs(st, cats);
+      const tabsToRender = getLeaderboardTabs(st, cats, mod);
       setTabs(tabsToRender);
       setActiveTab(prev => (!prev && tabsToRender.length > 0 ? tabsToRender[0] : prev));
     } catch (e) { console.error("Leaderboard fetchInfo:", e); }
@@ -89,17 +92,31 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
         ? `/leaderboard/${tournamentId}`
         : `/leaderboard/${tournamentId}?round=${activeRound}`;
       const res = await api.get(path);
-      setRanking(res.data.map(p => ({
-        ...p,
-        handicap:      parseFloat(p.handicap || 0),
-        total_strokes: parseInt(p.total_strokes || 0),
-        // Onda A · commit 7: total_points vem do backend (SUM via LEFT JOIN
-        // em tournament_result_points). 0 em torneios strokes (JOIN vazio).
-        total_points:  parseInt(p.total_points  || 0),
-        holes_played:  parseInt(p.holes_played  || 0),
-        gross_to_par:  parseInt(p.score_to_par  || 0),
-        net_to_par:    parseInt(p.score_to_par  || 0) - parseFloat(p.handicap || 0),
-      })));
+      // Onda B · Commit 3.12: em doubles cada row vem com dupla_id + dupla_name +
+      // players_names + category. Normaliza pra { id, name, category, ... }
+      // reusando os mesmos campos que a UI de individual espera (name, handicap,
+      // score_to_par, etc).
+      setRanking(res.data.map(p => {
+        const norm = {
+          ...p,
+          id:            p.id ?? p.dupla_id,
+          name:          p.name ?? p.dupla_name,
+          handicap:      parseFloat(p.handicap || 0),
+          total_strokes: parseInt(p.total_strokes || 0),
+          // Onda A · commit 7: total_points vem do backend (SUM via LEFT JOIN
+          // em tournament_result_points). 0 em torneios strokes (JOIN vazio).
+          total_points:  parseInt(p.total_points  || 0),
+          holes_played:  parseInt(p.holes_played  || 0),
+          gross_to_par:  parseInt(p.score_to_par  || 0),
+          net_to_par:    parseInt(p.score_to_par  || 0) - parseFloat(p.handicap || 0),
+        };
+        // Doubles: preserva players_names + category pro render bifurcado
+        if (p.dupla_id) {
+          norm.is_dupla = true;
+          norm.players_names = p.players_names || '';
+        }
+        return norm;
+      }));
     } catch (e) { console.error("Leaderboard fetchRanking:", e); }
   }, [tournamentId, activeRound]);
 
@@ -125,9 +142,11 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
     const cacheKey = `${player.id}:${activeRound}`;
     if (!playerScores._loadedFor || playerScores._loadedFor !== cacheKey) {
       try {
-        const path = activeRound === 'all'
-          ? `/leaderboard/details/${tournamentId}/${player.id}`
-          : `/leaderboard/details/${tournamentId}/${player.id}?round=${activeRound}`;
+        // Onda B · Commit 3.12: doubles usa endpoint dedicado /details-dupla.
+        const base = modality === 'doubles'
+          ? `/leaderboard/details-dupla/${tournamentId}/${player.id}`
+          : `/leaderboard/details/${tournamentId}/${player.id}`;
+        const path = activeRound === 'all' ? base : `${base}?round=${activeRound}`;
         const res = await api.get(path);
         const data = res.data;
         data._loadedFor = cacheKey;
@@ -293,11 +312,19 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
                 {row.holes_played > 0 ? idx + 1 : "—"}
               </div>
               <div
-                style={{ fontSize: "14px", fontWeight: "600", color: theme.accent, cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                style={{ cursor: "pointer", overflow: "hidden" }}
                 onClick={() => handlePlayerClick(row)}
               >
-                {row.name}
-                {net && <span style={{ fontSize: "10px", color: theme.textMuted, marginLeft: "5px" }}>(HC {row.handicap})</span>}
+                <div style={{ fontSize: "14px", fontWeight: "600", color: theme.accent, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                  {row.name}
+                  {net && <span style={{ fontSize: "10px", color: theme.textMuted, marginLeft: "5px" }}>(HC {row.handicap})</span>}
+                </div>
+                {/* Onda B · Commit 3.12: subtitulo com nomes dos 2 jogadores da dupla */}
+                {row.is_dupla && row.players_names && (
+                  <div style={{ fontSize: "11px", color: theme.textMuted, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                    {row.players_names}
+                  </div>
+                )}
               </div>
               <div style={{ textAlign: "center", fontSize: "13px", color: theme.textMuted }}>{row.holes_played || 0}</div>
               <div style={{ textAlign: "center", fontSize: "14px", fontWeight: "bold", color: theme.textMain }}>{row.holes_played ? row.total_strokes : "--"}</div>

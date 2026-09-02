@@ -69,12 +69,13 @@ exports.getTournamentMatrix = async (req, res) => {
     if (!tournamentId) return res.status(400).json({ error: "tournament_id inválido." });
 
     const [[tournament]] = await db.execute(
-      `SELECT id, name, start_date, course_id, total_rounds, scoring_type
+      `SELECT id, name, start_date, course_id, total_rounds, scoring_type, modality
          FROM tournaments
         WHERE id = ? AND club_id = ?`,
       [tournamentId, req.club.id]
     );
     if (!tournament) return res.status(404).json({ error: "Torneio não encontrado." });
+    const modalityMat = tournament.modality || 'individual';
 
     const [holesRaw] = await db.execute(
       `SELECT hole_number, par FROM holes WHERE course_id = ? ORDER BY hole_number`,
@@ -92,38 +93,71 @@ exports.getTournamentMatrix = async (req, res) => {
       holes = Array.from({ length: 18 }, (_, i) => ({ hole_number: i + 1, par: 4 }));
     }
 
-    const [groupRows] = await db.execute(
-      `SELECT tg.id AS group_id, tg.group_name, tg.starting_hole, tg.tee_time,
-              u.id AS user_id, u.name AS user_name
-         FROM tournament_groups tg
-         LEFT JOIN group_players gp ON gp.group_id = tg.id
-         LEFT JOIN users u ON u.id = gp.user_id
-        WHERE tg.tournament_id = ?
-        ORDER BY tg.id ASC, u.name ASC`,
-      [tournamentId]
-    );
-
+    // Onda B · Commit 3.12: matriz bifurca por modality. Doubles retorna
+    // groups[].duplas (id, name = dupla_name) em vez de players[]; scores
+    // trazem dupla_id no lugar de user_id.
     const groups = [];
     const gmap = new Map();
-    for (const r of groupRows) {
-      if (!gmap.has(r.group_id)) {
-        const g = {
-          id: r.group_id,
-          name: r.group_name,
-          starting_hole: r.starting_hole,
-          tee_time: r.tee_time,
-          players: [],
-        };
-        gmap.set(r.group_id, g);
-        groups.push(g);
+    if (modalityMat === 'doubles') {
+      const [groupRows] = await db.execute(
+        `SELECT tg.id AS group_id, tg.group_name, tg.starting_hole, tg.tee_time,
+                d.id AS dupla_id, d.dupla_name
+           FROM tournament_groups tg
+           LEFT JOIN group_duplas gd ON gd.group_id = tg.id
+           LEFT JOIN tournament_duplas d ON d.id = gd.dupla_id
+          WHERE tg.tournament_id = ?
+          ORDER BY tg.id ASC, d.dupla_name ASC`,
+        [tournamentId]
+      );
+      for (const r of groupRows) {
+        if (!gmap.has(r.group_id)) {
+          const g = {
+            id: r.group_id, name: r.group_name,
+            starting_hole: r.starting_hole, tee_time: r.tee_time,
+            players: [], // vazio em doubles
+          };
+          gmap.set(r.group_id, g);
+          groups.push(g);
+        }
+        if (r.dupla_id) {
+          // Reusa o campo "players" pra frontend que ja itera nele
+          gmap.get(r.group_id).players.push({ id: r.dupla_id, name: r.dupla_name, is_dupla: true });
+        }
       }
-      if (r.user_id) {
-        gmap.get(r.group_id).players.push({ id: r.user_id, name: r.user_name });
+    } else {
+      const [groupRows] = await db.execute(
+        `SELECT tg.id AS group_id, tg.group_name, tg.starting_hole, tg.tee_time,
+                u.id AS user_id, u.name AS user_name
+           FROM tournament_groups tg
+           LEFT JOIN group_players gp ON gp.group_id = tg.id
+           LEFT JOIN users u ON u.id = gp.user_id
+          WHERE tg.tournament_id = ?
+          ORDER BY tg.id ASC, u.name ASC`,
+        [tournamentId]
+      );
+      for (const r of groupRows) {
+        if (!gmap.has(r.group_id)) {
+          const g = {
+            id: r.group_id, name: r.group_name,
+            starting_hole: r.starting_hole, tee_time: r.tee_time,
+            players: [],
+          };
+          gmap.set(r.group_id, g);
+          groups.push(g);
+        }
+        if (r.user_id) {
+          gmap.get(r.group_id).players.push({ id: r.user_id, name: r.user_name });
+        }
       }
     }
 
+    // Scores: em doubles envia dupla_id como "user_id" no response pra frontend
+    // usar a mesma chave de indexacao. Preserva o campo original tambem.
+    const scoreSelectField = modalityMat === 'doubles'
+      ? 'dupla_id AS user_id, dupla_id'
+      : 'user_id';
     const [scores] = await db.execute(
-      `SELECT user_id, hole_number, round_number, strokes, result_kind
+      `SELECT ${scoreSelectField}, hole_number, round_number, strokes, result_kind
          FROM scores
         WHERE tournament_id = ?`,
       [tournamentId]
