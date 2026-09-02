@@ -20,6 +20,13 @@ exports.exportTournamentToExcel = async (req, res) => {
 
     const tournament = tournamentRows[0];
 
+    // Onda B · Commit 3.7: doubles bifurca aqui pra um export separado com
+    // 1 linha por DUPLA (nomes dos 2 jogadores) e 4 categorias curtas
+    // (Livre / Masculina / Feminina / Mista). Individual segue lógica original.
+    if ((tournament.modality || 'individual') === 'doubles') {
+      return await exportDoublesTournament(req, res, tournament);
+    }
+
     const [categories] = await db.execute(
       "SELECT name FROM tournament_categories WHERE tournament_id = ?",
       [tournamentId],
@@ -347,3 +354,148 @@ exports.exportTournamentToExcel = async (req, res) => {
     res.status(500).json({ error: "Erro ao gerar Excel." });
   }
 };
+
+// Onda B · Commit 3.7: export dedicado pra torneios doubles. Estrutura:
+//   - Linhas: 1 por dupla (nomes dos 2 jogadores + score buraco a buraco)
+//   - Categorias (abas): Absoluto Gross, Livre (todas), Masculina, Feminina, Mista
+//   - Sem NET separado (handicap da dupla vem de group_duplas.handicap ou
+//     tournament_duplas.handicap; NET = GROSS - HDC)
+//   - Sem desempate USGA (versao MVP; adicionar depois se admin pedir)
+async function exportDoublesTournament(req, res, tournament) {
+  const tournamentId = tournament.id;
+  let holes = [];
+  if (tournament.course_id) {
+    const [h] = await db.execute("SELECT * FROM holes WHERE course_id = ?", [tournament.course_id]);
+    holes = h;
+    if (!holes.length) {
+      const [ch] = await db.execute("SELECT * FROM course_holes WHERE course_id = ?", [tournament.course_id]);
+      holes = ch;
+    }
+  }
+  const parArray = Array(19).fill(4);
+  let parOut = 0, parIn = 0;
+  for (const h of holes) {
+    const n = Number(h.hole_number || h.hole || h.numero);
+    const p = Number(h.par || h.par_value || 4);
+    if (n >= 1 && n <= 18) {
+      parArray[n] = p;
+      if (n <= 9) parOut += p; else parIn += p;
+    }
+  }
+  if (parOut === 0 && parIn === 0) { parOut = 36; parIn = 36; }
+
+  // Duplas + players + handicap. Prefere handicap de group_duplas (por rodada)
+  // sobre tournament_duplas (default do cadastro). Usa MAX pra colapsar N linhas
+  // (dupla pode estar em varios grupos em torneio multi-rodada).
+  const [duplaRows] = await db.execute(
+    `SELECT d.id AS dupla_id, d.dupla_name,
+            COALESCE(MAX(gd.handicap), MAX(d.handicap), 0) AS handicap,
+            GROUP_CONCAT(DISTINCT u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
+            GROUP_CONCAT(DISTINCT u.gender ORDER BY u.name SEPARATOR '') AS gender_concat
+       FROM tournament_duplas d
+       LEFT JOIN tournament_dupla_players tdp ON tdp.dupla_id = d.id
+       LEFT JOIN users u ON u.id = tdp.user_id
+       LEFT JOIN group_duplas gd ON gd.dupla_id = d.id
+      WHERE d.tournament_id = ?
+      GROUP BY d.id, d.dupla_name`,
+    [tournamentId]
+  );
+
+  const [scoresRows] = await db.execute(
+    "SELECT dupla_id, hole_number, strokes FROM scores WHERE tournament_id = ? AND dupla_id IS NOT NULL",
+    [tournamentId]
+  );
+
+  const duplas = duplaRows.map(d => {
+    const scores = Array(19).fill(0);
+    let gross = 0;
+    for (const s of scoresRows) {
+      if (s.dupla_id === d.dupla_id) {
+        scores[s.hole_number] = Number(s.strokes) || 0;
+        gross += Number(s.strokes) || 0;
+      }
+    }
+    const hc = parseFloat(d.handicap || 0);
+    const g = String(d.gender_concat || '').toUpperCase();
+    let category = 'Livre';
+    if (g === 'MM') category = 'Masculina';
+    else if (g === 'FF') category = 'Feminina';
+    else if (g === 'MF' || g === 'FM') category = 'Mista';
+    return {
+      dupla_id: d.dupla_id,
+      dupla_name: d.dupla_name,
+      players_names: d.players_names || '',
+      handicap: hc,
+      scores, gross, net: gross - hc,
+      category,
+    };
+  });
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Birdify';
+
+  const tabs = ['Absoluto Gross', 'Livre', 'Masculina', 'Feminina', 'Mista'];
+  const columns = [
+    { header: 'Pos.', width: 6 },
+    { header: 'Dupla', width: 30 },
+    { header: 'Jogadores', width: 40 },
+    { header: 'HDC', width: 8 },
+    ...Array.from({ length: 9 }, (_, i) => ({ header: `B${i + 1}`, width: 5 })),
+    { header: '1ª Volta', width: 10 },
+    ...Array.from({ length: 9 }, (_, i) => ({ header: `B${i + 10}`, width: 5 })),
+    { header: '2ª Volta', width: 10 },
+    { header: 'GROSS', width: 10 },
+    { header: 'NET', width: 10 },
+  ];
+
+  for (const tabName of tabs) {
+    let filtered;
+    if (tabName === 'Absoluto Gross' || tabName === 'Livre') {
+      filtered = [...duplas];
+    } else {
+      filtered = duplas.filter(d => d.category === tabName);
+    }
+    if (filtered.length === 0) continue;
+    filtered.sort((a, b) => a.gross - b.gross);
+
+    const sheet = workbook.addWorksheet(tabName.substring(0, 31));
+    sheet.columns = columns;
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).alignment = { horizontal: 'center' };
+
+    const parCells = [
+      '', 'PAR DO CAMPO', '', '',
+      parArray[1], parArray[2], parArray[3], parArray[4], parArray[5],
+      parArray[6], parArray[7], parArray[8], parArray[9], parOut,
+      parArray[10], parArray[11], parArray[12], parArray[13], parArray[14],
+      parArray[15], parArray[16], parArray[17], parArray[18], parIn,
+      parOut + parIn, parOut + parIn,
+    ];
+    const parRow = sheet.addRow(parCells);
+    parRow.font = { bold: true };
+    parRow.alignment = { horizontal: 'center' };
+    parRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDDDDD' } };
+
+    filtered.forEach((d, idx) => {
+      let outSum = 0, inSum = 0;
+      for (let i = 1; i <= 9; i++) outSum += d.scores[i];
+      for (let i = 10; i <= 18; i++) inSum += d.scores[i];
+      const row = sheet.addRow([
+        idx + 1, d.dupla_name, d.players_names, d.handicap,
+        d.scores[1] || '-', d.scores[2] || '-', d.scores[3] || '-',
+        d.scores[4] || '-', d.scores[5] || '-', d.scores[6] || '-',
+        d.scores[7] || '-', d.scores[8] || '-', d.scores[9] || '-', outSum,
+        d.scores[10] || '-', d.scores[11] || '-', d.scores[12] || '-',
+        d.scores[13] || '-', d.scores[14] || '-', d.scores[15] || '-',
+        d.scores[16] || '-', d.scores[17] || '-', d.scores[18] || '-', inSum,
+        d.gross, d.net,
+      ]);
+      row.alignment = { horizontal: 'center' };
+    });
+  }
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Torneio_Duplas_${tournament.name || 'export'}.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
+}
