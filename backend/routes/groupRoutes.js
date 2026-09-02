@@ -25,6 +25,8 @@ router.delete("/delete/:id",    requireAdmin,    groupController.deleteGroup);
 router.post("/generate-code",   requireAdmin,    groupController.generateCode);
 router.post('/join',            blockAdmin,      groupController.joinGroup);
 router.put("/save-handicaps",   blockAdmin,      groupController.saveGroupHandicaps);
+// Onda B · Commit 3.10: handicap por dupla em torneio doubles.
+router.put("/save-dupla-handicaps", blockAdmin,  groupController.saveGroupDuplaHandicaps);
 // PUT /:id é catch-all — precisa vir DEPOIS de todas as rotas com paths literais
 // (senão engoliria /save-handicaps tratando "save-handicaps" como id de grupo).
 router.put("/:id",              requireAdmin,    groupController.updateGroup);

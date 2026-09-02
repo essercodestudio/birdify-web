@@ -506,22 +506,77 @@ exports.joinGroup = async (req, res) => {
 
     const group = groupResults[0];
 
-    const [playerResults] = await db.execute(
-      "SELECT * FROM group_players WHERE group_id = ? AND user_id = ?",
-      [group.id, user_id]
-    );
+    // Onda B · Commit 3.10: valida membership por group_players (individual)
+    // OU group_duplas + tournament_dupla_players (doubles). Em doubles, tambem
+    // resolve dupla_id do caller e injeta no response.
+    const [tRow] = await db.execute('SELECT modality FROM tournaments WHERE id = ?', [group.tournament_id]);
+    const modality = tRow[0]?.modality || 'individual';
 
-    if (playerResults.length === 0) {
-      return res.status(403).json({
-        message: `Você não está escalado no grupo "${group.group_name}".`
-      });
+    let callerDuplaId = null;
+    if (modality === 'doubles') {
+      const [duplaMembership] = await db.execute(
+        `SELECT gd.dupla_id
+           FROM group_duplas gd
+           JOIN tournament_dupla_players tdp ON tdp.dupla_id = gd.dupla_id
+          WHERE gd.group_id = ? AND tdp.user_id = ?
+          LIMIT 1`,
+        [group.id, user_id]
+      );
+      if (duplaMembership.length === 0) {
+        return res.status(403).json({
+          message: `Sua dupla não está escalada no grupo "${group.group_name}".`
+        });
+      }
+      callerDuplaId = duplaMembership[0].dupla_id;
+    } else {
+      const [playerResults] = await db.execute(
+        "SELECT * FROM group_players WHERE group_id = ? AND user_id = ?",
+        [group.id, user_id]
+      );
+      if (playerResults.length === 0) {
+        return res.status(403).json({
+          message: `Você não está escalado no grupo "${group.group_name}".`
+        });
+      }
     }
 
-    res.json({ group });
+    res.json({ group: { ...group, modality, caller_dupla_id: callerDuplaId } });
     
   } catch (error) {
     console.error('Erro ao entrar no grupo:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+};
+
+// Onda B · Commit 3.10: salva handicap de duplas no lobby (group_duplas.handicap).
+// Body: { group_id, duplas_data: [{ dupla_id, handicap }] }. Multi-tenant via
+// JOIN tournament_groups + tournaments. Nao verifica se a dupla esta no grupo —
+// a UPDATE por (group_id, dupla_id) so afeta rows existentes na tabela.
+exports.saveGroupDuplaHandicaps = async (req, res) => {
+  try {
+    const { group_id, duplas_data } = req.body;
+    if (!Array.isArray(duplas_data) || duplas_data.length === 0) {
+      return res.json({ message: "Nenhuma dupla para atualizar." });
+    }
+    const [groupCheck] = await db.execute(
+      `SELECT tg.id FROM tournament_groups tg
+        JOIN tournaments t ON tg.tournament_id = t.id
+       WHERE tg.id = ? AND t.club_id = ?`,
+      [group_id, req.club.id]
+    );
+    if (groupCheck.length === 0) {
+      return res.status(403).json({ error: 'Grupo não encontrado ou acesso negado.' });
+    }
+    await Promise.all(duplas_data.map(d =>
+      db.execute(
+        "UPDATE group_duplas SET handicap = ? WHERE group_id = ? AND dupla_id = ?",
+        [d.handicap, group_id, d.dupla_id]
+      )
+    ));
+    res.json({ message: "Handicaps de dupla confirmados com sucesso!" });
+  } catch (error) {
+    console.error('Erro ao salvar handicaps de dupla:', error);
+    res.status(500).json({ error: "Erro ao salvar handicaps." });
   }
 };
 

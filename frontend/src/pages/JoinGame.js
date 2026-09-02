@@ -19,6 +19,13 @@ function JoinGame() {
   const [groupPlayers, setGroupPlayers] = useState([]);
   const [handicaps, setHandicaps] = useState({});
   const [teeRules, setTeeRules] = useState([]);
+  // Onda B · Commit 3.10: doubles carrega duplas do grupo + handicap por dupla.
+  // callerDuplaId (do joinGroup) identifica a dupla do jogador — usado pra
+  // navegar direto ao scorecard com contexto certo.
+  const [groupDuplas, setGroupDuplas] = useState([]);
+  const [duplaHandicaps, setDuplaHandicaps] = useState({});
+  const [modality, setModality] = useState('individual');
+  const [callerDuplaId, setCallerDuplaId] = useState(null);
 
   const clubTheme = useContext(ThemeContext) || {};
 
@@ -52,14 +59,41 @@ function JoinGame() {
     }
 
     try {
-      const res = await api.post('/groups/join', { 
+      const res = await api.post('/groups/join', {
         access_code: accessCode,
-        user_id: user.id 
+        user_id: user.id
       });
-      
+
       const group = res.data.group;
+      const mod = group.modality || 'individual';
       const listRes = await api.get(`/groups/list/${group.tournament_id}`);
       const myGroup = listRes.data.find(g => g.id === group.id) || group;
+
+      setModality(mod);
+      setCallerDuplaId(group.caller_dupla_id || null);
+
+      // Onda B · Commit 3.10: doubles bifurca aqui. Se torneio doubles, mostra
+      // modal com 1 linha por DUPLA (nao por player). Handicap eh unico da
+      // dupla, digitado no lobby (decisao 2).
+      if (mod === 'doubles') {
+        const duplas = myGroup.duplas || [];
+        if (duplas.length === 0) {
+          // sem duplas escaladas ainda — vai direto pro scorecard (admin deve
+          // cadastrar duplas antes; mensagem descritiva vem do proprio scorecard)
+          localStorage.setItem('activeGroup', JSON.stringify(group));
+          navigate(`/scorecard/${group.id}`);
+          return;
+        }
+        setPendingGroup(group);
+        setGroupDuplas(duplas);
+        const initialHc = {};
+        duplas.forEach(d => {
+          initialHc[d.id] = (d.handicap !== null && d.handicap !== undefined) ? d.handicap : '';
+        });
+        setDuplaHandicaps(initialHc);
+        setShowModal(true);
+        return;
+      }
 
       if (myGroup.players && myGroup.players.length > 0) {
         setPendingGroup(group);
@@ -91,6 +125,40 @@ function JoinGame() {
     } catch (error) {
       const msg = error.response?.data?.message || "Erro de conexão.";
       alert("🚨 " + msg);
+    }
+  };
+
+  const handleDuplaHandicapChange = (duplaId, value) => {
+    setDuplaHandicaps({ ...duplaHandicaps, [duplaId]: value });
+  };
+
+  const submitDuplaHandicaps = async () => {
+    if (!navigator.onLine) {
+      alert("⚠️ Aguarde a conexão voltar para confirmar os handicaps.");
+      return;
+    }
+    for (const d of groupDuplas) {
+      if (duplaHandicaps[d.id] === '' || duplaHandicaps[d.id] === undefined) {
+        alert(`Insira o handicap da dupla ${d.dupla_name}`);
+        return;
+      }
+    }
+    const duplas_data = groupDuplas.map(d => ({
+      dupla_id: d.id,
+      handicap: parseFloat(duplaHandicaps[d.id]),
+    }));
+    try {
+      await api.put('/groups/save-dupla-handicaps', {
+        group_id: pendingGroup.id,
+        duplas_data,
+      });
+      // Passa caller_dupla_id via activeGroup pra Scorecard saber qual dupla eh a do jogador
+      const groupWithDupla = { ...pendingGroup, modality: 'doubles', caller_dupla_id: callerDuplaId };
+      localStorage.setItem('activeGroup', JSON.stringify(groupWithDupla));
+      setShowModal(false);
+      navigate(`/scorecard/${pendingGroup.id}`);
+    } catch (error) {
+      alert("Erro ao salvar: " + (error.response?.data?.error || error.message));
     }
   };
 
@@ -198,10 +266,29 @@ function JoinGame() {
           <div style={styles.modalContent}>
             <h2 style={{ color: theme.accent, marginTop: 0, textAlign: 'center', fontWeight: '900' }}>HANDICAPS</h2>
             <p style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center', marginBottom: '25px' }}>
-              Insira o handicap para o cálculo do <strong style={{color: theme.textMain}}>Net Score</strong>.
+              {modality === 'doubles'
+                ? <>Insira o handicap <strong style={{color: theme.textMain}}>de cada dupla</strong> — combinado, único por dupla.</>
+                : <>Insira o handicap para o cálculo do <strong style={{color: theme.textMain}}>Net Score</strong>.</>}
             </p>
 
-            {groupPlayers.map(p => (
+            {modality === 'doubles' ? groupDuplas.map(d => (
+              <div key={d.id} style={styles.playerRow}>
+                <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{d.dupla_name}</div>
+                  <div style={{ fontSize: '12px', color: theme.textMuted }}>
+                    {(d.players || []).map(p => p.name).join(' & ')}
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="0.0"
+                  value={duplaHandicaps[d.id] || ''}
+                  onChange={e => handleDuplaHandicapChange(d.id, e.target.value)}
+                  style={styles.hcInput}
+                />
+              </div>
+            )) : groupPlayers.map(p => (
               <div key={p.id} style={styles.playerRow}>
                 <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{p.name}</div>
@@ -227,7 +314,7 @@ function JoinGame() {
               <button onClick={() => setShowModal(false)} style={{ flex: 1, padding: '15px', backgroundColor: 'transparent', color: theme.textMuted, border: `1px solid ${theme.cardLight}`, borderRadius: '12px', cursor: 'pointer' }}>
                 VOLTAR
               </button>
-              <button onClick={submitHandicaps} style={{ ...styles.btnPlay, flex: 2, padding: '15px' }}>
+              <button onClick={modality === 'doubles' ? submitDuplaHandicaps : submitHandicaps} style={{ ...styles.btnPlay, flex: 2, padding: '15px' }}>
                 CONFIRMAR
               </button>
             </div>
