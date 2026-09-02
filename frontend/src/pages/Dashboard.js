@@ -125,6 +125,9 @@ function Dashboard() {
   // 'strokes' (default) = comportamento atual, ranking por tacadas brutas.
   // 'result_points' = ranking por soma de pontos configurados em resultPoints.
   const [scoringType, setScoringType] = useState('strokes');
+  // Onda B · Commit 3.8: modality — ortogonal ao scoring_type. Individual (default)
+  // preserva 100% do fluxo antigo. Doubles ativa cadastro de duplas + score por dupla.
+  const [modality, setModality] = useState('individual');
   const [resultPoints, setResultPoints] = useState({ ...DEFAULT_RESULT_POINTS });
   // Bloco 2 · Commit 2.3 (2026-09-01): admin pode ligar/desligar cada kind.
   // Default = todos habilitados. Kind desabilitado NÃO aparece no ResultPicker
@@ -236,7 +239,7 @@ function Dashboard() {
     // do form — Leaderboard mostra Masculino/Feminino fixo. Skip da validação
     // "escolha pelo menos 1 categoria" nesse modo; strokes segue exigindo.
     if (!selectedCourseId) { alert("Selecione o campo do torneio."); return; }
-    if (scoringType !== 'result_points' && selectedCategories.length === 0) {
+    if (scoringType !== 'result_points' && modality !== 'doubles' && selectedCategories.length === 0) {
       alert("Preencha os campos obrigatórios e escolha pelo menos 1 categoria."); return;
     }
     if (!validYear(newTournamentDate)) { alert('Ano da data do torneio inválido.'); return; }
@@ -321,7 +324,11 @@ function Dashboard() {
 
     // Bloco 1 · Commit 1.1: em result_points, envia categories=[] pra manter
     // tournament_categories vazio (Leaderboard usa Masculino/Feminino hardcoded).
-    const categoriesPayload = scoringType === 'result_points' ? [] : selectedCategories;
+    // Onda B · Commit 3.8: em doubles, tambem envia categories=[] — categorias
+    // fixas Livre/Masc/Fem/Mista sao derivadas dos generos dos jogadores no
+    // leaderboard (decisao 3), nao vem de tournament_categories.
+    const skipCategories = scoringType === 'result_points' || modality === 'doubles';
+    const categoriesPayload = skipCategories ? [] : selectedCategories;
     const payload = {
       name: newTournamentName, start_date: newTournamentDate, course_id: selectedCourseId,
       description, fee, payment_info: paymentInfo, pix_key_type: pixKeyType, whatsapp_contact: whatsappContact,
@@ -329,6 +336,7 @@ function Dashboard() {
       format,
       total_rounds: totalRoundsPayload,
       scoring_type: scoringType,
+      modality,
       ...(roundsPayload ? { rounds: roundsPayload } : {}),
       ...(resultPointsPayload ? { result_points: resultPointsPayload } : {}),
     };
@@ -375,6 +383,8 @@ function Dashboard() {
       // já tem valores válidos pra editar sem começar do zero.
       const st = t.scoring_type === 'result_points' ? 'result_points' : 'strokes';
       setScoringType(st);
+      // Onda B · Commit 3.8: hidrata modality. Default 'individual' preserva comportamento antigo.
+      setModality(t.modality === 'doubles' ? 'doubles' : 'individual');
       if (st === 'result_points' && Array.isArray(t.result_points) && t.result_points.length > 0) {
         const map = { ...DEFAULT_RESULT_POINTS };
         // Bloco 2 · Commit 2.3: hidrata enabled (default true se backend ainda
@@ -404,6 +414,7 @@ function Dashboard() {
     setMultiRound(false); setRounds([]);
     setScoringType('strokes'); setResultPoints({ ...DEFAULT_RESULT_POINTS });
     setResultKindEnabled({ ...DEFAULT_ENABLED });
+    setModality('individual');
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -622,6 +633,43 @@ function Dashboard() {
             )}
           </div>
 
+          {/* Onda B · commit 3.8 — MODALIDADE (Individual vs Duplas) */}
+          <div style={{ marginTop: '20px', padding: '14px', border: `1px solid ${theme.cardLight}`, borderRadius: '10px', backgroundColor: theme.bg }}>
+            <label style={styles.label}>MODALIDADE</label>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: 8 }}>
+              {[
+                { value: 'individual', label: 'Individual', hint: 'Cada jogador tem seu próprio scorecard (formato padrão)' },
+                { value: 'doubles',    label: 'Duplas',     hint: '2 jogadores compartilham 1 scorecard e 1 resultado por buraco' },
+              ].map(opt => {
+                const active = modality === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setModality(opt.value)}
+                    style={{
+                      flex: 1, minWidth: 200,
+                      padding: '14px', borderRadius: 8,
+                      border: `1px solid ${active ? theme.accent : theme.cardLight}`,
+                      backgroundColor: active ? theme.accent : theme.bg,
+                      color: active ? '#000' : theme.textMuted,
+                      cursor: 'pointer', textAlign: 'left',
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  >
+                    <div style={{ fontSize: 14 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4, fontWeight: 600 }}>{opt.hint}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {modality === 'doubles' && (
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, backgroundColor: theme.card, color: theme.textMuted, fontSize: 12 }}>
+                Depois de criar o torneio, cadastre as duplas na tela <strong style={{ color: theme.textMain }}>Duplas</strong> do menu admin do torneio. Auto-gerar flights vai distribuir 2 duplas por grupo (=4 jogadores).
+              </div>
+            )}
+          </div>
+
           {/* Onda A · commit 5 — TIPO DE MARCAÇÃO (Tacadas vs Pontuação por Resultado) */}
           <div style={{ marginTop: '20px', padding: '14px', border: `1px solid ${theme.cardLight}`, borderRadius: '10px', backgroundColor: theme.bg }}>
             <label style={styles.label}>TIPO DE MARCAÇÃO</label>
@@ -718,8 +766,20 @@ function Dashboard() {
 
           {/* Bloco 1 · Commit 1.1 (2026-09-01): em result_points, esconde as
               categorias por handicap — Leaderboard mostra Masculino/Feminino
-              hardcoded. Mostra aviso curto no lugar pra o admin entender. */}
-          {scoringType === 'result_points' ? (
+              hardcoded. Onda B · Commit 3.8: em doubles idem, mostra Livre/
+              Masculina/Feminina/Mista derivadas dos generos dos jogadores. */}
+          {modality === 'doubles' ? (
+            <div style={{
+              marginTop: '30px', padding: '14px', borderRadius: '10px',
+              border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg,
+              color: theme.textMuted, fontSize: 13,
+            }}>
+              <div style={{ color: theme.textMain, fontWeight: 700, marginBottom: 6 }}>
+                2. CATEGORIAS
+              </div>
+              Torneio em Duplas usa 4 categorias fixas derivadas dos gêneros dos jogadores: <strong style={{ color: theme.textMain }}>Livre</strong> (todas), <strong style={{ color: theme.textMain }}>Masculina</strong> (2 homens), <strong style={{ color: theme.textMain }}>Feminina</strong> (2 mulheres), <strong style={{ color: theme.textMain }}>Mista</strong> (1+1). Sem cadastro manual.
+            </div>
+          ) : scoringType === 'result_points' ? (
             <div style={{
               marginTop: '30px', padding: '14px', borderRadius: '10px',
               border: `1px solid ${theme.cardLight}`, backgroundColor: theme.bg,

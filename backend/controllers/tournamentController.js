@@ -19,6 +19,11 @@ function normalizeScoringType(raw) {
   return raw === 'result_points' ? 'result_points' : 'strokes';
 }
 
+// Onda B · Commit 3.8: normaliza modality. Default seguro 'individual'.
+function normalizeModality(raw) {
+  return raw === 'doubles' ? 'doubles' : 'individual';
+}
+
 // Normaliza flag enabled do payload. Aceita true/false, 1/0, undefined → 1 (default).
 function normalizeEnabled(raw) {
   if (raw === undefined || raw === null) return 1;
@@ -274,6 +279,8 @@ exports.createTournament = async (req, res) => {
         // Onda A · commit 2: scoring_type ('strokes' | 'result_points') + result_points[]
         // Bloco 2 · Commit 2.2: buildResultPointsMap agora devolve pointsMap + enabledMap.
         const scoring_type = normalizeScoringType(req.body.scoring_type);
+        // Onda B · Commit 3.8: modality ('individual' | 'doubles'). Ortogonal ao scoring_type.
+        const modality = normalizeModality(req.body.modality);
         const rpParse = scoring_type === 'result_points'
             ? buildResultPointsMap(req.body.result_points)
             : { pointsMap: null, enabledMap: null };
@@ -331,9 +338,9 @@ exports.createTournament = async (req, res) => {
         const nn = (v) => (v === undefined || v === '' ? null : v);
         const [result] = await conn.execute(
             `INSERT INTO tournaments
-             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, club_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, req.club.id]
+             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, modality, club_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, req.club.id]
         );
         const tournamentId = result.insertId;
 
@@ -368,7 +375,7 @@ exports.createTournament = async (req, res) => {
         }
 
         await conn.commit();
-        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds, scoring_type });
+        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds, scoring_type, modality });
     } catch (error) {
         try { await conn.rollback(); } catch (_) {}
         console.error('Erro ao criar torneio:', error);
@@ -416,7 +423,7 @@ exports.updateTournament = async (req, res) => {
 
         // Escopo do clube + estado atual
         const [tRows] = await conn.execute(
-            'SELECT id, total_rounds, scoring_type FROM tournaments WHERE id = ? AND club_id = ?',
+            'SELECT id, total_rounds, scoring_type, modality FROM tournaments WHERE id = ? AND club_id = ?',
             [id, req.club.id]
         );
         if (tRows.length === 0) {
@@ -426,6 +433,9 @@ exports.updateTournament = async (req, res) => {
         const total_rounds = total_rounds_input !== undefined ? total_rounds_input : currentTotalRounds;
         // scoring_type efetivo: preferência ao input; senão mantém o atual.
         const scoring_type = scoring_type_input !== undefined ? scoring_type_input : (tRows[0].scoring_type || 'strokes');
+        // Onda B · Commit 3.8: modality efetivo — mesma logica.
+        const modality_input = req.body.modality !== undefined ? normalizeModality(req.body.modality) : undefined;
+        const modality = modality_input !== undefined ? modality_input : (tRows[0].modality || 'individual');
         // Onda A · commit 2: interpreta result_points condicionalmente.
         //   - scoring_type efetivo é 'result_points':
         //       - se rawRP veio, valida e usa pra REPLACE
@@ -480,10 +490,10 @@ exports.updateTournament = async (req, res) => {
         await conn.execute(
             `UPDATE tournaments SET
              name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?,
-             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?
+             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?, modality=?
              WHERE id=? AND club_id=?`,
             [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type),
-             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, id, req.club.id]
+             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, id, req.club.id]
         );
 
         // Onda A · commit 2 + Bloco 2 · Commit 2.2: replace atômico da config de
