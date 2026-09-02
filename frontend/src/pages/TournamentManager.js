@@ -46,6 +46,10 @@ function TournamentManager() {
   const [newGroupTeeTime, setNewGroupTeeTime] = useState("");
 
   const [addPlayerByGroup, setAddPlayerByGroup] = useState({});
+  // Onda B · Commit 3.15: torneio doubles usa 2 selects por grupo (jogador + parceiro)
+  // pra criar a dupla inline. Ambos guardam user_id do inscrito escolhido.
+  const [addDuplaP1ByGroup, setAddDuplaP1ByGroup] = useState({});
+  const [addDuplaP2ByGroup, setAddDuplaP2ByGroup] = useState({});
   const [teeTimeDraft, setTeeTimeDraft] = useState({}); // { [groupId]: "HH:MM" } enquanto edita
 
   // Bloco D · commit 4: torneio multi-rodada — cada rodada tem seus proprios
@@ -56,6 +60,8 @@ function TournamentManager() {
   const isMultiRound = totalRounds > 1;
 
   const isTeeTime = tournament?.format === "tee_time";
+  // Onda B · Commit 3.15: torneio doubles usa fluxo inline (2 selects por grupo).
+  const isDoubles = tournament?.modality === "doubles";
 
   const fetchGroups = useCallback(async () => {
     try {
@@ -161,6 +167,48 @@ function TournamentManager() {
       fetchGroups();
     } catch (error) {
       alert("Erro ao remover jogador.");
+    }
+  };
+
+  // Onda B · Commit 3.15: cria dupla + escala no grupo em 1 clique. Reusa POST
+  // /tournament-duplas (mesma validacao de "1 user em 1 dupla por torneio") e o
+  // novo POST /groups/add-dupla. Se add-dupla falhar apos criar, a dupla fica
+  // orfa no torneio — admin pode reusar depois ou deletar em outra tela.
+  const handleCreateAndAddDupla = async (groupId) => {
+    const p1 = addDuplaP1ByGroup[groupId];
+    const p2 = addDuplaP2ByGroup[groupId];
+    if (!p1 || !p2) return;
+    if (String(p1) === String(p2)) {
+      alert("Escolha 2 jogadores diferentes.");
+      return;
+    }
+    const p1Name = approvedPlayers.find(a => String(a.user_id) === String(p1))?.player_name || `#${p1}`;
+    const p2Name = approvedPlayers.find(a => String(a.user_id) === String(p2))?.player_name || `#${p2}`;
+    const autoName = `${p1Name} & ${p2Name}`.substring(0, 100);
+    try {
+      const createRes = await api.post("/tournament-duplas", {
+        tournament_id: Number(id),
+        dupla_name: autoName,
+        player_ids: [Number(p1), Number(p2)],
+      });
+      const duplaId = createRes.data?.id;
+      if (!duplaId) throw new Error("dupla criada sem id");
+      await api.post("/groups/add-dupla", { group_id: groupId, dupla_id: duplaId });
+      setAddDuplaP1ByGroup(s => ({ ...s, [groupId]: "" }));
+      setAddDuplaP2ByGroup(s => ({ ...s, [groupId]: "" }));
+      fetchGroups();
+    } catch (error) {
+      alert(error.response?.data?.message || error.response?.data?.error || "Erro ao criar dupla.");
+    }
+  };
+
+  const handleRemoveDupla = async (groupId, duplaId, duplaLabel) => {
+    if (!window.confirm(`Remover ${duplaLabel} deste grupo? Scores da rodada serão apagados.`)) return;
+    try {
+      await api.delete(`/groups/remove-dupla/${groupId}/${duplaId}`);
+      fetchGroups();
+    } catch (error) {
+      alert(error.response?.data?.error || "Erro ao remover dupla.");
     }
   };
 
@@ -300,6 +348,28 @@ function TournamentManager() {
     () => inscriptions.filter((i) => i.status === "APPROVED"),
     [inscriptions]
   );
+
+  // Onda B · Commit 3.15: computa, a partir das duplas carregadas em cada
+  // grupo (backend retorna duplas[].players[]), o mapa user_id -> parceiro pra
+  // exibir badge "Em dupla c/ X" na lista de aprovados, e o Set de user_ids
+  // ja pareados pra remover do dropdown de novo par.
+  // Nota: agrupa todas as duplas de TODOS os flights da rodada — 1 user so pode
+  // estar em 1 dupla por torneio, entao a mesma dupla aparece so 1x na rodada.
+  const { pairedInfoByUserId, pairedUserIds } = useMemo(() => {
+    const info = new Map(); // user_id -> { partnerName, duplaId }
+    const ids = new Set();
+    for (const g of groups) {
+      for (const d of (g.duplas || [])) {
+        const players = d.players || [];
+        for (const p of players) ids.add(p.id);
+        if (players.length === 2) {
+          info.set(players[0].id, { partnerName: players[1].name, duplaId: d.id });
+          info.set(players[1].id, { partnerName: players[0].name, duplaId: d.id });
+        }
+      }
+    }
+    return { pairedInfoByUserId: info, pairedUserIds: ids };
+  }, [groups]);
 
   // ── estilos ──────────────────────────────────────────────────────────────
   const s = {
@@ -711,17 +781,9 @@ function TournamentManager() {
       <div style={s.header}>
         <h1 style={{ ...theme.text.h1, margin: 0 }}>Birdify Admin</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {/* Onda B · Commit 3.9: torneios doubles mostram atalho pra
-              AdminDuplasManager (rota /admin/torneio/:id/duplas). */}
-          {tournament?.modality === 'doubles' && (
-            <button
-              onClick={() => navigate(`/admin/torneio/${id}/duplas`)}
-              style={{ ...s.backBtn, backgroundColor: theme.accent, color: '#000' }}
-              className="tm-tap"
-            >
-              Gerenciar Duplas
-            </button>
-          )}
+          {/* Onda B · Commit 3.15: fluxo de duplas agora e inline nos cards de
+              grupo. Ex-botao "Gerenciar Duplas" removido — AdminDuplasManager
+              deletado. */}
           <button onClick={() => navigate("/dashboard")} style={s.backBtn} className="tm-tap">
             <LuArrowLeft size={15} />
             Voltar ao Painel
@@ -788,6 +850,13 @@ function TournamentManager() {
                   <div style={s.inscName}>{insc.player_name}</div>
                   {insc.category_name && (
                     <div style={s.inscCategory}>{insc.category_name}</div>
+                  )}
+                  {/* Onda B · Commit 3.15: aprovado ja pareado ganha badge com
+                      o nome do parceiro pra sinalizar rapido "esse ja tem dupla". */}
+                  {isDoubles && insc.status === "APPROVED" && pairedInfoByUserId.has(insc.user_id) && (
+                    <div style={{ ...s.inscCategory, color: theme.accent, marginTop: 2 }}>
+                      Em dupla c/ {pairedInfoByUserId.get(insc.user_id).partnerName}
+                    </div>
                   )}
                 </div>
                 <div style={s.inscActions}>
@@ -936,6 +1005,11 @@ function TournamentManager() {
             const selected = addPlayerByGroup[group.id] || "";
             const groupPlayerIds = new Set((group.players || []).map((p) => p.id));
             const optionsFor = approvedPlayers.filter((i) => !groupPlayerIds.has(i.user_id));
+            // Onda B · Commit 3.15: em doubles, dropdowns oferecem apenas
+            // aprovados que ainda nao estao em nenhuma dupla do torneio.
+            const p1Sel = addDuplaP1ByGroup[group.id] || "";
+            const p2Sel = addDuplaP2ByGroup[group.id] || "";
+            const availableForDupla = approvedPlayers.filter(a => !pairedUserIds.has(a.user_id));
             return (
               <div key={group.id} style={s.groupCard}>
                 {/* Header */}
@@ -989,56 +1063,134 @@ function TournamentManager() {
                   </div>
                 </div>
 
-                {/* Jogadores */}
-                {group.players && group.players.length > 0 ? (
-                  <div>
-                    {group.players.map((p) => (
-                      <div key={p.id} style={s.playerLine}>
-                        <span style={s.playerName}>{p.name}</span>
-                        <button
-                          onClick={() => handleRemovePlayer(group.id, p.id, p.name)}
-                          style={{ ...s.iconBtn, width: 28, height: 28 }}
-                          className="tm-tap"
-                          title="Remover jogador"
-                        >
-                          <LuX size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                {/* Onda B · Commit 3.15: torneio doubles renderiza duplas (do
+                    backend groups[].duplas); individual mantem players como antes. */}
+                {isDoubles ? (
+                  (group.duplas && group.duplas.length > 0) ? (
+                    <div>
+                      {group.duplas.map((d) => {
+                        const label = (d.players || []).map(p => p.name).join(" & ") || d.dupla_name;
+                        return (
+                          <div key={d.id} style={s.playerLine}>
+                            <span style={s.playerName}>{label}</span>
+                            <button
+                              onClick={() => handleRemoveDupla(group.id, d.id, label)}
+                              style={{ ...s.iconBtn, width: 28, height: 28 }}
+                              className="tm-tap"
+                              title="Remover dupla"
+                            >
+                              <LuX size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ ...s.emptyList, padding: theme.space[3], textAlign: "left", fontStyle: "italic" }}>
+                      Nenhuma dupla escalada para este flight.
+                    </div>
+                  )
                 ) : (
-                  <div style={{ ...s.emptyList, padding: theme.space[3], textAlign: "left", fontStyle: "italic" }}>
-                    Nenhum jogador escalado para este flight.
-                  </div>
+                  (group.players && group.players.length > 0) ? (
+                    <div>
+                      {group.players.map((p) => (
+                        <div key={p.id} style={s.playerLine}>
+                          <span style={s.playerName}>{p.name}</span>
+                          <button
+                            onClick={() => handleRemovePlayer(group.id, p.id, p.name)}
+                            style={{ ...s.iconBtn, width: 28, height: 28 }}
+                            className="tm-tap"
+                            title="Remover jogador"
+                          >
+                            <LuX size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ ...s.emptyList, padding: theme.space[3], textAlign: "left", fontStyle: "italic" }}>
+                      Nenhum jogador escalado para este flight.
+                    </div>
+                  )
                 )}
 
-                {/* Adicionar jogador */}
-                <div style={s.addRow}>
-                  <select
-                    style={s.addSelect}
-                    value={selected}
-                    onChange={(e) =>
-                      setAddPlayerByGroup((sMap) => ({ ...sMap, [group.id]: e.target.value }))
-                    }
-                  >
-                    <option value="">Adicionar jogador aprovado…</option>
-                    {optionsFor.map((insc) => (
-                      <option key={insc.user_id} value={insc.user_id}>
-                        {insc.player_name}
-                        {insc.category_name ? ` (${insc.category_name})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => handleAddPlayer(group.id)}
-                    style={s.addBtn}
-                    className="tm-tap"
-                    title="Adicionar ao flight"
-                    disabled={!selected}
-                  >
-                    <LuPlus size={18} />
-                  </button>
-                </div>
+                {/* Adicionar — bifurca por modality.
+                    Individual: 1 select + botao (fluxo antigo).
+                    Doubles: 2 selects (jogador + parceiro) + botao. Ao confirmar,
+                    cria a dupla no torneio (POST /tournament-duplas) e escala no
+                    grupo (POST /groups/add-dupla) numa unica acao. */}
+                {isDoubles ? (
+                  <div style={{ ...s.addRow, flexWrap: "wrap" }}>
+                    <select
+                      style={{ ...s.addSelect, minWidth: 140 }}
+                      value={p1Sel}
+                      onChange={(e) =>
+                        setAddDuplaP1ByGroup((sMap) => ({ ...sMap, [group.id]: e.target.value }))
+                      }
+                    >
+                      <option value="">Selecionar jogador…</option>
+                      {availableForDupla
+                        .filter(a => String(a.user_id) !== p2Sel)
+                        .map((insc) => (
+                          <option key={insc.user_id} value={insc.user_id}>
+                            {insc.player_name}
+                          </option>
+                        ))}
+                    </select>
+                    <select
+                      style={{ ...s.addSelect, minWidth: 140 }}
+                      value={p2Sel}
+                      onChange={(e) =>
+                        setAddDuplaP2ByGroup((sMap) => ({ ...sMap, [group.id]: e.target.value }))
+                      }
+                    >
+                      <option value="">Selecionar parceiro…</option>
+                      {availableForDupla
+                        .filter(a => String(a.user_id) !== p1Sel)
+                        .map((insc) => (
+                          <option key={insc.user_id} value={insc.user_id}>
+                            {insc.player_name}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      onClick={() => handleCreateAndAddDupla(group.id)}
+                      style={s.addBtn}
+                      className="tm-tap"
+                      title="Criar dupla e escalar no flight"
+                      disabled={!p1Sel || !p2Sel}
+                    >
+                      <LuPlus size={18} />
+                    </button>
+                  </div>
+                ) : (
+                  <div style={s.addRow}>
+                    <select
+                      style={s.addSelect}
+                      value={selected}
+                      onChange={(e) =>
+                        setAddPlayerByGroup((sMap) => ({ ...sMap, [group.id]: e.target.value }))
+                      }
+                    >
+                      <option value="">Adicionar jogador aprovado…</option>
+                      {optionsFor.map((insc) => (
+                        <option key={insc.user_id} value={insc.user_id}>
+                          {insc.player_name}
+                          {insc.category_name ? ` (${insc.category_name})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => handleAddPlayer(group.id)}
+                      style={s.addBtn}
+                      className="tm-tap"
+                      title="Adicionar ao flight"
+                      disabled={!selected}
+                    >
+                      <LuPlus size={18} />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })

@@ -29,7 +29,6 @@ import AdminTeeSettings from './pages/AdminTeeSettings';
 import AdminTeeBookings from './pages/AdminTeeBookings';
 import AdminSponsors from './pages/AdminSponsors';
 import AdminScoreEditor from './pages/AdminScoreEditor';
-import AdminDuplasManager from './pages/AdminDuplasManager';
 import AdminScoreAuditLog from './pages/AdminScoreAuditLog';
 import AdminTrainings from './pages/AdminTrainings';
 import TeeTimes from './pages/TeeTimes';
@@ -306,7 +305,6 @@ function App() {
             <Route path="/admin/tee-bookings" element={<AdminRoute><AdminTeeBookings /></AdminRoute>} />
             <Route path="/admin/patrocinadores" element={<AdminRoute><AdminSponsors /></AdminRoute>} />
             <Route path="/admin/ajustar-scores" element={<AdminRoute><AdminScoreEditor /></AdminRoute>} />
-            <Route path="/admin/torneio/:tournamentId/duplas" element={<AdminRoute><AdminDuplasManager /></AdminRoute>} />
             <Route path="/admin/scores-auditoria" element={<AdminRoute><AdminScoreAuditLog /></AdminRoute>} />
             <Route path="/admin/treinos" element={<AdminRoute><AdminTrainings /></AdminRoute>} />
             <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />

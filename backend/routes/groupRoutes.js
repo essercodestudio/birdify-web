@@ -21,6 +21,9 @@ router.post("/auto-generate",   requireAdmin,    groupController.autoGenerateGro
 router.post("/generate-from-standings", requireAdmin, groupController.generateFromStandings);
 router.post("/add-player",      requireAdmin,    groupController.addPlayerToGroup);
 router.delete('/remove-player/:groupId/:userId', requireAdmin, groupController.removePlayer);
+// Onda B · Commit 3.15: fluxo inline de doubles no TournamentManager.
+router.post("/add-dupla",       requireAdmin,    groupController.addDuplaToGroup);
+router.delete('/remove-dupla/:groupId/:duplaId', requireAdmin, groupController.removeDuplaFromGroup);
 router.delete("/delete/:id",    requireAdmin,    groupController.deleteGroup);
 router.post("/generate-code",   requireAdmin,    groupController.generateCode);
 router.post('/join',            blockAdmin,      groupController.joinGroup);

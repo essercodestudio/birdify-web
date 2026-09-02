@@ -548,6 +548,107 @@ exports.joinGroup = async (req, res) => {
   }
 };
 
+// Onda B · Commit 3.15: liga uma dupla existente a um grupo (fluxo inline no
+// TournamentManager, sem passar pelo auto-generate). Espelha addPlayerToGroup:
+// valida tenant + rodada, rejeita duplicata na MESMA rodada, insere em group_duplas.
+// Body: { group_id, dupla_id }.
+exports.addDuplaToGroup = async (req, res) => {
+  try {
+    const { group_id, dupla_id } = req.body;
+    if (!group_id || !dupla_id) {
+      return res.status(400).json({ message: "group_id e dupla_id obrigatórios." });
+    }
+
+    // 1. Grupo pertence a torneio doubles do clube?
+    const [groupResults] = await db.execute(
+      `SELECT tg.tournament_id, tg.round_number, t.modality
+         FROM tournament_groups tg
+         JOIN tournaments t ON tg.tournament_id = t.id
+        WHERE tg.id = ? AND t.club_id = ?`,
+      [group_id, req.club.id]
+    );
+    if (groupResults.length === 0) {
+      return res.status(404).json({ message: "Grupo não encontrado ou acesso negado." });
+    }
+    if (groupResults[0].modality !== 'doubles') {
+      return res.status(400).json({ message: "Grupo não pertence a torneio doubles." });
+    }
+    const { tournament_id: tournamentId, round_number: roundNumber } = groupResults[0];
+
+    // 2. Dupla pertence ao mesmo torneio?
+    const [duplaCheck] = await db.execute(
+      `SELECT id FROM tournament_duplas WHERE id = ? AND tournament_id = ?`,
+      [dupla_id, tournamentId]
+    );
+    if (duplaCheck.length === 0) {
+      return res.status(400).json({ message: "Dupla não pertence a este torneio." });
+    }
+
+    // 3. Duplicata na mesma rodada — 1 dupla só pode estar em 1 grupo por rodada.
+    const [conflict] = await db.execute(
+      `SELECT gd.dupla_id
+         FROM group_duplas gd
+         JOIN tournament_groups tg ON gd.group_id = tg.id
+        WHERE tg.tournament_id = ? AND tg.round_number = ? AND gd.dupla_id = ?`,
+      [tournamentId, roundNumber, dupla_id]
+    );
+    if (conflict.length > 0) {
+      return res.status(400).json({
+        message: `Esta dupla já está em outro flight da R${roundNumber} deste torneio.`
+      });
+    }
+
+    // 4. Insere
+    await db.execute(
+      "INSERT INTO group_duplas (group_id, dupla_id) VALUES (?, ?)",
+      [group_id, dupla_id]
+    );
+    res.status(200).json({ message: "Dupla adicionada com sucesso!" });
+  } catch (error) {
+    console.error('Erro ao adicionar dupla ao grupo:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+};
+
+// Onda B · Commit 3.15: remove uma dupla de um grupo. Multi-tenant via JOIN.
+// Também apaga scores da rodada pra evitar cartão fantasma da dupla removida.
+exports.removeDuplaFromGroup = async (req, res) => {
+  try {
+    const { groupId, duplaId } = req.params;
+    if (!groupId || !duplaId) {
+      return res.status(400).json({ error: "ID do grupo ou da dupla não informados." });
+    }
+
+    const [tResults] = await db.execute(
+      `SELECT tg.tournament_id, tg.round_number
+         FROM tournament_groups tg
+         JOIN tournaments t ON tg.tournament_id = t.id
+        WHERE tg.id = ? AND t.club_id = ?`,
+      [groupId, req.club.id]
+    );
+    if (tResults.length === 0) {
+      return res.status(404).json({ error: "Grupo não encontrado ou acesso negado." });
+    }
+    const tId = tResults[0].tournament_id;
+    const round = tResults[0].round_number;
+
+    await db.execute(
+      "DELETE FROM group_duplas WHERE group_id = ? AND dupla_id = ?",
+      [groupId, duplaId]
+    );
+    if (tId) {
+      await db.execute(
+        "DELETE FROM scores WHERE tournament_id = ? AND dupla_id = ? AND round_number = ?",
+        [tId, duplaId, round]
+      );
+    }
+    res.status(200).json({ message: "Dupla removida do grupo!" });
+  } catch (error) {
+    console.error('Erro ao remover dupla:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+};
+
 // Onda B · Commit 3.10: salva handicap de duplas no lobby (group_duplas.handicap).
 // Body: { group_id, duplas_data: [{ dupla_id, handicap }] }. Multi-tenant via
 // JOIN tournament_groups + tournaments. Nao verifica se a dupla esta no grupo —
