@@ -41,20 +41,29 @@ exports.getTournamentLeaderboard = async (req, res) => {
     if (modality === 'doubles') {
       const scoreRoundFilterD = filterRound !== null ? 'AND s.round_number = ?' : '';
       const scoreRoundParamsD = filterRound !== null ? [filterRound] : [];
+      // Bug fix: se juntassemos tournament_dupla_players + scores no mesmo
+      // GROUP BY, cada score seria contado N vezes (N = players por dupla, sempre 2).
+      // Subquery `pl` agrega players_names/gender FORA do JOIN com scores.
       const [rows] = await db.execute(
         `SELECT
            d.id AS dupla_id,
            d.dupla_name,
            d.handicap,
-           GROUP_CONCAT(u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
-           GROUP_CONCAT(u.gender ORDER BY u.name SEPARATOR '') AS gender_concat,
+           pl.players_names,
+           pl.gender_concat,
            COALESCE(SUM(s.strokes), 0) AS total_strokes,
            COALESCE(COUNT(s.hole_number), 0) AS holes_played,
            COALESCE(SUM(s.strokes - COALESCE(h.par, ch.par, hf.par, chf.par, 4)), 0) AS score_to_par,
            COALESCE(SUM(trp.points), 0) AS total_points
          FROM tournament_duplas d
-         LEFT JOIN tournament_dupla_players tdp ON tdp.dupla_id = d.id
-         LEFT JOIN users u ON u.id = tdp.user_id
+         LEFT JOIN (
+           SELECT tdp.dupla_id,
+                  GROUP_CONCAT(u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
+                  GROUP_CONCAT(u.gender ORDER BY u.name SEPARATOR '') AS gender_concat
+             FROM tournament_dupla_players tdp
+             JOIN users u ON u.id = tdp.user_id
+            GROUP BY tdp.dupla_id
+         ) pl ON pl.dupla_id = d.id
          LEFT JOIN scores s
                 ON s.dupla_id = d.id AND s.tournament_id = d.tournament_id
                 ${scoreRoundFilterD}
@@ -68,7 +77,7 @@ exports.getTournamentLeaderboard = async (req, res) => {
          LEFT JOIN tournament_result_points trp
                 ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
          WHERE d.tournament_id = ?
-         GROUP BY d.id, d.dupla_name, d.handicap`,
+         GROUP BY d.id, d.dupla_name, d.handicap, pl.players_names, pl.gender_concat`,
         [...scoreRoundParamsD, tournamentId]
       );
       // Deriva categoria a partir de gender_concat ('MM','FF','MF','FM','M','F',null).
