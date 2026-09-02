@@ -151,15 +151,16 @@ exports.getGroupsByTournament = async (req, res) => {
       return res.status(400).json({ error: 'round invalido.' });
     }
 
-    // Verifica se o torneio pertence ao clube
+    // Verifica se o torneio pertence ao clube + pega modality
     const [tournamentCheck] = await db.execute(
-      'SELECT id FROM tournaments WHERE id = ? AND club_id = ?',
+      'SELECT id, modality FROM tournaments WHERE id = ? AND club_id = ?',
       [tournamentId, req.club.id]
     );
 
     if (tournamentCheck.length === 0) {
       return res.status(403).json({ error: 'Torneio não encontrado ou acesso negado.' });
     }
+    const modality = tournamentCheck[0].modality || 'individual';
 
     const params = [tournamentId];
     let roundWhere = '';
@@ -197,7 +198,8 @@ exports.getGroupsByTournament = async (req, res) => {
           access_code: row.access_code,
           starting_hole: row.starting_hole,
           tee_time: row.tee_time ? String(row.tee_time).slice(0, 5) : null,
-          players: []
+          players: [],
+          duplas: []
         };
       }
 
@@ -212,6 +214,48 @@ exports.getGroupsByTournament = async (req, res) => {
         });
       }
     });
+
+    // Onda B · Commit 3.5: torneio doubles carrega tambem group_duplas +
+    // jogadores agrupados por dupla_id, retornado em groups[i].duplas.
+    // groups[i].players continua vazio em doubles (score eh por dupla, nao por
+    // player individual — apesar dos 2 users da dupla existirem).
+    if (modality === 'doubles' && Object.keys(groupsMap).length > 0) {
+      const groupIds = Object.keys(groupsMap);
+      const placeholders = groupIds.map(() => '?').join(',');
+      const [duplaRows] = await db.execute(
+        `SELECT gd.group_id, gd.handicap AS group_handicap,
+                d.id AS dupla_id, d.dupla_name, d.handicap AS dupla_handicap,
+                u.id AS user_id, u.name AS user_name
+           FROM group_duplas gd
+           JOIN tournament_duplas d ON d.id = gd.dupla_id
+           LEFT JOIN tournament_dupla_players tdp ON tdp.dupla_id = d.id
+           LEFT JOIN users u ON u.id = tdp.user_id
+          WHERE gd.group_id IN (${placeholders})
+          ORDER BY d.dupla_name`,
+        groupIds
+      );
+      const duplasByGroup = {};
+      for (const r of duplaRows) {
+        const gid = r.group_id;
+        if (!duplasByGroup[gid]) duplasByGroup[gid] = {};
+        if (!duplasByGroup[gid][r.dupla_id]) {
+          duplasByGroup[gid][r.dupla_id] = {
+            id: r.dupla_id,
+            dupla_name: r.dupla_name,
+            handicap: r.group_handicap ?? r.dupla_handicap,
+            players: []
+          };
+        }
+        if (r.user_id) {
+          duplasByGroup[gid][r.dupla_id].players.push({ id: r.user_id, name: r.user_name });
+        }
+      }
+      for (const gid of groupIds) {
+        if (duplasByGroup[gid]) {
+          groupsMap[gid].duplas = Object.values(duplasByGroup[gid]);
+        }
+      }
+    }
 
     res.json(Object.values(groupsMap));
   } catch (error) {
@@ -541,9 +585,9 @@ exports.autoGenerateGroups = async (req, res) => {
       return res.status(400).json({ error: "tournament_id obrigatório." });
     }
 
-    // 1. Torneio pertence ao clube? (pega format + start_date + total_rounds)
+    // 1. Torneio pertence ao clube? (pega format + start_date + total_rounds + modality)
     const [tCheck] = await db.execute(
-      "SELECT id, format, start_date, total_rounds FROM tournaments WHERE id = ? AND club_id = ?",
+      "SELECT id, format, start_date, total_rounds, modality FROM tournaments WHERE id = ? AND club_id = ?",
       [tournament_id, req.club.id]
     );
     if (tCheck.length === 0) {
@@ -552,6 +596,7 @@ exports.autoGenerateGroups = async (req, res) => {
     const format = tCheck[0].format || 'shotgun';
     const startDate = tCheck[0].start_date; // Date ou string
     const totalRounds = Number(tCheck[0].total_rounds) || 1;
+    const modality = tCheck[0].modality || 'individual';
 
     if (!Number.isInteger(roundNumber) || roundNumber < 1 || roundNumber > totalRounds) {
       return res.status(400).json({
@@ -568,48 +613,80 @@ exports.autoGenerateGroups = async (req, res) => {
       intervalMin = raw;
     }
 
-    // 2. Pegar aprovados
-    const [approved] = await db.execute(
-      `SELECT user_id FROM inscriptions
-       WHERE tournament_id = ? AND status = 'APPROVED'`,
-      [tournament_id]
-    );
-    if (approved.length === 0) {
-      return res.status(400).json({ error: "Não há inscritos aprovados para sortear." });
+    // 2. Pegar unidades a distribuir (usuarios em individual, duplas em doubles).
+    // Doubles: so duplas COMPLETAS (2 jogadores) sao elegiveis pra flight —
+    // dupla com 1 so player fica de fora (admin ainda nao terminou de cadastrar).
+    let units; // array de ids (userId ou duplaId)
+    if (modality === 'doubles') {
+      const [duplasAprovadas] = await db.execute(
+        `SELECT d.id
+           FROM tournament_duplas d
+          WHERE d.tournament_id = ?
+            AND (SELECT COUNT(*) FROM tournament_dupla_players tdp WHERE tdp.dupla_id = d.id) = 2`,
+        [tournament_id]
+      );
+      if (duplasAprovadas.length === 0) {
+        return res.status(400).json({ error: "Nenhuma dupla completa (2 jogadores) para sortear." });
+      }
+      units = duplasAprovadas.map(d => d.id);
+    } else {
+      const [approved] = await db.execute(
+        `SELECT user_id FROM inscriptions
+         WHERE tournament_id = ? AND status = 'APPROVED'`,
+        [tournament_id]
+      );
+      if (approved.length === 0) {
+        return res.status(400).json({ error: "Não há inscritos aprovados para sortear." });
+      }
+      units = approved.map((a) => a.user_id);
     }
 
-    // 3. Limpar scores DA RODADA especificada, so pros jogadores escalados nela.
-    // Isso preserva scores de outras rodadas (R2 auto-generate nao apaga R1).
-    await db.execute(
-      `DELETE s FROM scores s
-         JOIN group_players gp ON gp.user_id = s.user_id
-         JOIN tournament_groups tg ON tg.id = gp.group_id
-        WHERE tg.tournament_id = ?
-          AND tg.round_number = ?
-          AND s.tournament_id = ?
-          AND s.round_number = ?`,
-      [tournament_id, roundNumber, tournament_id, roundNumber]
-    );
+    // 3. Limpar scores DA RODADA especificada. Filtro por user_id em individual,
+    // por dupla_id em doubles — os scores dessas duplas ligados a grupos dessa
+    // rodada sao apagados antes de recriar os flights.
+    if (modality === 'doubles') {
+      await db.execute(
+        `DELETE s FROM scores s
+           JOIN group_duplas gd ON gd.dupla_id = s.dupla_id
+           JOIN tournament_groups tg ON tg.id = gd.group_id
+          WHERE tg.tournament_id = ?
+            AND tg.round_number = ?
+            AND s.tournament_id = ?
+            AND s.round_number = ?`,
+        [tournament_id, roundNumber, tournament_id, roundNumber]
+      );
+    } else {
+      await db.execute(
+        `DELETE s FROM scores s
+           JOIN group_players gp ON gp.user_id = s.user_id
+           JOIN tournament_groups tg ON tg.id = gp.group_id
+          WHERE tg.tournament_id = ?
+            AND tg.round_number = ?
+            AND s.tournament_id = ?
+            AND s.round_number = ?`,
+        [tournament_id, roundNumber, tournament_id, roundNumber]
+      );
+    }
 
-    // 4. Apagar grupos existentes DESSA RODADA (FK group_players CASCADE)
+    // 4. Apagar grupos existentes DESSA RODADA (FK group_players + group_duplas CASCADE)
     await db.execute(
       "DELETE FROM tournament_groups WHERE tournament_id = ? AND round_number = ?",
       [tournament_id, roundNumber]
     );
 
     // 5. Shuffle Fisher-Yates com crypto (mesmo RNG do generateAccessCode)
-    const userIds = approved.map((a) => a.user_id);
-    for (let i = userIds.length - 1; i > 0; i--) {
+    for (let i = units.length - 1; i > 0; i--) {
       const j = crypto.randomInt(i + 1);
-      [userIds[i], userIds[j]] = [userIds[j], userIds[i]];
+      [units[i], units[j]] = [units[j], units[i]];
     }
 
-    // 6. Distribuir round-robin
-    const FLIGHT_SIZE = 4;
-    const nFlights = Math.ceil(userIds.length / FLIGHT_SIZE);
+    // 6. Distribuir round-robin. Individual: 4 usuarios/flight. Doubles: 2
+    // duplas/flight (= 4 jogadores — decisao 8 da Onda B).
+    const UNITS_PER_FLIGHT = modality === 'doubles' ? 2 : 4;
+    const nFlights = Math.ceil(units.length / UNITS_PER_FLIGHT);
     const flights = Array.from({ length: nFlights }, () => []);
-    userIds.forEach((uid, idx) => {
-      flights[idx % nFlights].push(uid);
+    units.forEach((id, idx) => {
+      flights[idx % nFlights].push(id);
     });
 
     // 6.5. Pré-calcular hora inicial pro modo tee_time (BRT, sem lib externa)
@@ -667,18 +744,29 @@ exports.autoGenerateGroups = async (req, res) => {
 
       if (flights[i].length > 0) {
         const placeholders = flights[i].map(() => "(?, ?)").join(", ");
-        const values = flights[i].flatMap((uid) => [groupId, uid]);
-        await db.execute(
-          `INSERT INTO group_players (group_id, user_id) VALUES ${placeholders}`,
-          values
-        );
+        const values = flights[i].flatMap((id) => [groupId, id]);
+        // Onda B · Commit 3.5: doubles escala pelas group_duplas em vez de
+        // group_players. Os jogadores individuais continuam na dupla, mas o
+        // vinculo com o grupo eh via dupla_id.
+        if (modality === 'doubles') {
+          await db.execute(
+            `INSERT INTO group_duplas (group_id, dupla_id) VALUES ${placeholders}`,
+            values
+          );
+        } else {
+          await db.execute(
+            `INSERT INTO group_players (group_id, user_id) VALUES ${placeholders}`,
+            values
+          );
+        }
       }
     }
 
     res.json({
       message: "Flights gerados com sucesso!",
       groupsCreated: nFlights,
-      playersDistributed: userIds.length,
+      playersDistributed: modality === 'doubles' ? units.length * 2 : units.length,
+      duplasDistributed: modality === 'doubles' ? units.length : undefined,
       round_number: roundNumber,
     });
   } catch (error) {
