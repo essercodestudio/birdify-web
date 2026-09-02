@@ -96,9 +96,13 @@ exports.getTournamentMatrix = async (req, res) => {
     // Onda B · Commit 3.12: matriz bifurca por modality. Doubles retorna
     // groups[].duplas (id, name = dupla_name) em vez de players[]; scores
     // trazem dupla_id no lugar de user_id.
+    // Commit 3.16: name passa a ser o formato compacto ("J. Silva / P. Santos")
+    // computado a partir dos jogadores da dupla, nao mais dupla_name livre.
     const groups = [];
     const gmap = new Map();
     if (modalityMat === 'doubles') {
+      const { formatDuplaFromPlayers } = require('../utils/duplaName');
+      // 1. Coleta grupos + duplas escaladas
       const [groupRows] = await db.execute(
         `SELECT tg.id AS group_id, tg.group_name, tg.starting_hole, tg.tee_time,
                 d.id AS dupla_id, d.dupla_name
@@ -109,6 +113,24 @@ exports.getTournamentMatrix = async (req, res) => {
           ORDER BY tg.id ASC, d.dupla_name ASC`,
         [tournamentId]
       );
+      // 2. Coleta players das duplas envolvidas (2 nomes por dupla)
+      const duplaIdsMat = [...new Set(groupRows.filter(r => r.dupla_id).map(r => r.dupla_id))];
+      const playersByDuplaMat = new Map();
+      if (duplaIdsMat.length > 0) {
+        const placeholdersMat = duplaIdsMat.map(() => '?').join(',');
+        const [pRowsMat] = await db.execute(
+          `SELECT tdp.dupla_id, u.name
+             FROM tournament_dupla_players tdp
+             JOIN users u ON u.id = tdp.user_id
+            WHERE tdp.dupla_id IN (${placeholdersMat})
+            ORDER BY u.name`,
+          duplaIdsMat
+        );
+        for (const p of pRowsMat) {
+          if (!playersByDuplaMat.has(p.dupla_id)) playersByDuplaMat.set(p.dupla_id, []);
+          playersByDuplaMat.get(p.dupla_id).push({ name: p.name });
+        }
+      }
       for (const r of groupRows) {
         if (!gmap.has(r.group_id)) {
           const g = {
@@ -120,8 +142,11 @@ exports.getTournamentMatrix = async (req, res) => {
           groups.push(g);
         }
         if (r.dupla_id) {
-          // Reusa o campo "players" pra frontend que ja itera nele
-          gmap.get(r.group_id).players.push({ id: r.dupla_id, name: r.dupla_name, is_dupla: true });
+          const players = playersByDuplaMat.get(r.dupla_id) || [];
+          const shortName = formatDuplaFromPlayers(players) || r.dupla_name;
+          gmap.get(r.group_id).players.push({
+            id: r.dupla_id, name: shortName, is_dupla: true, players,
+          });
         }
       }
     } else {

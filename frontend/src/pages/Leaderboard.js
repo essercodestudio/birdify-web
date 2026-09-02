@@ -93,9 +93,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
         : `/leaderboard/${tournamentId}?round=${activeRound}`;
       const res = await api.get(path);
       // Onda B · Commit 3.12: em doubles cada row vem com dupla_id + dupla_name +
-      // players_names + category. Normaliza pra { id, name, category, ... }
-      // reusando os mesmos campos que a UI de individual espera (name, handicap,
-      // score_to_par, etc).
+      // category. Commit 3.16: dupla_name ja chega no formato compacto
+      // ("J. Silva / P. Santos"); subtitulo com nomes completos foi removido
+      // pra evitar redundancia.
       setRanking(res.data.map(p => {
         const norm = {
           ...p,
@@ -110,11 +110,7 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
           gross_to_par:  parseInt(p.score_to_par  || 0),
           net_to_par:    parseInt(p.score_to_par  || 0) - parseFloat(p.handicap || 0),
         };
-        // Doubles: preserva players_names + category pro render bifurcado
-        if (p.dupla_id) {
-          norm.is_dupla = true;
-          norm.players_names = p.players_names || '';
-        }
+        if (p.dupla_id) norm.is_dupla = true;
         return norm;
       }));
     } catch (e) { console.error("Leaderboard fetchRanking:", e); }
@@ -319,12 +315,6 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
                   {row.name}
                   {net && <span style={{ fontSize: "10px", color: theme.textMuted, marginLeft: "5px" }}>(HC {row.handicap})</span>}
                 </div>
-                {/* Onda B · Commit 3.12: subtitulo com nomes dos 2 jogadores da dupla */}
-                {row.is_dupla && row.players_names && (
-                  <div style={{ fontSize: "11px", color: theme.textMuted, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                    {row.players_names}
-                  </div>
-                )}
               </div>
               <div style={{ textAlign: "center", fontSize: "13px", color: theme.textMuted }}>{row.holes_played || 0}</div>
               <div style={{ textAlign: "center", fontSize: "14px", fontWeight: "bold", color: theme.textMain }}>{row.holes_played ? row.total_strokes : "--"}</div>

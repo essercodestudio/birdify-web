@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import api from "../services/api";
 import syncService from "../services/syncService";
 import { getIncompleteEntries, formatIncompleteSummary } from "../utils/scoreCompleteness";
+import { formatDuplaFromPlayers } from "../utils/duplaName";
 import { useParams, useNavigate } from "react-router-dom";
 import { LuClipboardList, LuCheck, LuPencil, LuTrophy } from "react-icons/lu";
 import HolePhotoBadge from "../components/HolePhotoBadge";
@@ -273,15 +274,15 @@ function Scorecard() {
       // Onda B · Commit 3.11: torneio doubles carrega duplas como "players" —
       // cada dupla vira 1 entidade scoreable (mesma forma {id, name, handicap}
       // que a UI de scorecard consome). Individual: comportamento antigo.
+      // Commit 3.16: name formatado como "J. Silva / P. Santos" via util.
       const groupModality = myGroupData?.duplas && myGroupData.duplas.length > 0
         ? 'doubles' : 'individual';
       if (groupModality === 'doubles') {
         setPlayers((myGroupData.duplas || []).map(d => ({
           id: d.id,
-          name: d.dupla_name,
+          name: formatDuplaFromPlayers(d.players) || d.dupla_name,
           handicap: d.handicap,
           _isDupla: true,
-          _playerNames: (d.players || []).map(p => p.name).join(' & '),
         })));
       } else if (myGroupData && myGroupData.players) {
         setPlayers(myGroupData.players);
@@ -1080,7 +1081,7 @@ function Scorecard() {
                 <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
                 {p._isDupla ? (
                   <div style={{ marginTop: 4, fontSize: 11, color: theme.textMuted }}>
-                    {p._playerNames} • HDCP {p.handicap ?? 0}
+                    HDCP {p.handicap ?? 0}
                   </div>
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>

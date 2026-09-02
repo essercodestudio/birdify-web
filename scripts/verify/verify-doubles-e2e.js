@@ -213,8 +213,8 @@ async function main() {
       if (!dupA) fail('DupA ausente no leaderboard');
       else if (Number(dupA.total_strokes) !== 4) fail(`DupA total_strokes esperado 4, veio ${dupA.total_strokes}`);
       else if (dupA.category !== 'Masculina') fail(`DupA (2M) categoria esperada Masculina, veio ${dupA.category}`);
-      else if (!dupA.players_names || !dupA.players_names.includes('&')) fail(`DupA players_names sem "&"`);
-      else pass(`leaderboard agrega por dupla: DupA total=4, category=Masculina, players="${dupA.players_names}"`);
+      else if (!Array.isArray(dupA.players) || dupA.players.length !== 2) fail(`DupA players[] esperado 2, veio ${JSON.stringify(dupA.players)}`);
+      else pass(`leaderboard agrega por dupla: DupA total=4, category=Masculina, players=[${dupA.players.map(p => p.name).join(', ')}]`);
 
       const dupB = lbRes.body.find(r => Number(r.dupla_id) === dupla2);
       if (dupB && dupB.category !== 'Feminina') fail(`DupB (2F) categoria esperada Feminina, veio ${dupB.category}`);

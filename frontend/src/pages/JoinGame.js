@@ -8,6 +8,7 @@ import logoImg from '../assets/logo_birdify.png';
 import { ThemeContext } from '../App';
 import { mediaUrl } from '../services/media';
 import TeeSuggestionChip from '../components/TeeSuggestionChip';
+import { formatDuplaFromPlayers } from '../utils/duplaName';
 
 function JoinGame() {
   const [accessCode, setAccessCode] = useState('');
@@ -139,7 +140,7 @@ function JoinGame() {
     }
     for (const d of groupDuplas) {
       if (duplaHandicaps[d.id] === '' || duplaHandicaps[d.id] === undefined) {
-        alert(`Insira o handicap da dupla ${d.dupla_name}`);
+        alert(`Insira o handicap da dupla ${formatDuplaFromPlayers(d.players) || d.dupla_name}`);
         return;
       }
     }
@@ -274,9 +275,9 @@ function JoinGame() {
             {modality === 'doubles' ? groupDuplas.map(d => (
               <div key={d.id} style={styles.playerRow}>
                 <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{d.dupla_name}</div>
-                  <div style={{ fontSize: '12px', color: theme.textMuted }}>
-                    {(d.players || []).map(p => p.name).join(' & ')}
+                  {/* Onda B · Commit 3.16: nome compacto substitui dupla_name + subtitulo redundante. */}
+                  <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                    {formatDuplaFromPlayers(d.players) || d.dupla_name}
                   </div>
                 </div>
                 <input

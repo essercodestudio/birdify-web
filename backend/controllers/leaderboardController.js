@@ -1,5 +1,6 @@
 // backend/controllers/leaderboardController.js
 const db = require("../db");
+const { formatDuplaFromPlayers } = require("../utils/duplaName");
 
 /// 1. LISTA GERAL (Ranking Automático Birdify com Par Dinâmico REAL e Matemática Exata)
 // Item 5 · commit 2 (2026-08-28): aceita query param ?round=all|1|2|3 pra multi-rodada.
@@ -41,15 +42,15 @@ exports.getTournamentLeaderboard = async (req, res) => {
     if (modality === 'doubles') {
       const scoreRoundFilterD = filterRound !== null ? 'AND s.round_number = ?' : '';
       const scoreRoundParamsD = filterRound !== null ? [filterRound] : [];
-      // Bug fix: se juntassemos tournament_dupla_players + scores no mesmo
-      // GROUP BY, cada score seria contado N vezes (N = players por dupla, sempre 2).
-      // Subquery `pl` agrega players_names/gender FORA do JOIN com scores.
+      // Onda B · Commit 3.16: em vez de GROUP_CONCAT ' & ', devolve players[]
+      // estruturado ({id, name, gender}) — evita parsing fragil no frontend
+      // e permite formatar como "J. Silva / P. Santos" via util compartilhado.
+      // A subquery pl continua agregando gender_concat pra derivar categoria.
       const [rows] = await db.execute(
         `SELECT
            d.id AS dupla_id,
            d.dupla_name,
            d.handicap,
-           pl.players_names,
            pl.gender_concat,
            COALESCE(SUM(s.strokes), 0) AS total_strokes,
            COALESCE(COUNT(s.hole_number), 0) AS holes_played,
@@ -58,7 +59,6 @@ exports.getTournamentLeaderboard = async (req, res) => {
          FROM tournament_duplas d
          LEFT JOIN (
            SELECT tdp.dupla_id,
-                  GROUP_CONCAT(u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
                   GROUP_CONCAT(u.gender ORDER BY u.name SEPARATOR '') AS gender_concat
              FROM tournament_dupla_players tdp
              JOIN users u ON u.id = tdp.user_id
@@ -77,18 +77,44 @@ exports.getTournamentLeaderboard = async (req, res) => {
          LEFT JOIN tournament_result_points trp
                 ON trp.tournament_id = s.tournament_id AND trp.result_kind = s.result_kind
          WHERE d.tournament_id = ?
-         GROUP BY d.id, d.dupla_name, d.handicap, pl.players_names, pl.gender_concat`,
+         GROUP BY d.id, d.dupla_name, d.handicap, pl.gender_concat`,
         [...scoreRoundParamsD, tournamentId]
       );
-      // Deriva categoria a partir de gender_concat ('MM','FF','MF','FM','M','F',null).
+      // Anexa players[] em uma unica query separada — evita explosao de linhas
+      // no GROUP BY principal (score seria duplicado por N players).
+      const duplaIdsLB = rows.map(r => r.dupla_id);
+      const playersByDupla = new Map();
+      if (duplaIdsLB.length > 0) {
+        const placeholdersLB = duplaIdsLB.map(() => '?').join(',');
+        const [pRows] = await db.execute(
+          `SELECT tdp.dupla_id, u.id, u.name, u.gender
+             FROM tournament_dupla_players tdp
+             JOIN users u ON u.id = tdp.user_id
+            WHERE tdp.dupla_id IN (${placeholdersLB})
+            ORDER BY u.name`,
+          duplaIdsLB
+        );
+        for (const p of pRows) {
+          if (!playersByDupla.has(p.dupla_id)) playersByDupla.set(p.dupla_id, []);
+          playersByDupla.get(p.dupla_id).push({ id: p.id, name: p.name, gender: p.gender });
+        }
+      }
       const withCategory = rows.map(r => {
         const g = (r.gender_concat || '').toUpperCase();
         let category = 'Livre';
         if (g === 'MM') category = 'Masculina';
         else if (g === 'FF') category = 'Feminina';
         else if (g === 'MF' || g === 'FM') category = 'Mista';
-        // Dupla incompleta (1 player só) fica em Livre.
-        return { ...r, category };
+        const players = playersByDupla.get(r.dupla_id) || [];
+        // dupla_name devolvido eh o formato compacto computado. Legado no banco
+        // fica preservado no registro, mas o response entrega sempre o formato
+        // padronizado ("J. Silva / P. Santos").
+        return {
+          ...r,
+          players,
+          dupla_name: formatDuplaFromPlayers(players) || r.dupla_name,
+          category,
+        };
       });
       return res.json(withCategory);
     }

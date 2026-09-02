@@ -4,6 +4,7 @@ import api from "../services/api";
 import { useParams, useNavigate } from "react-router-dom";
 import { downloadFile } from "../services/download";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
+import { formatDuplaFromPlayers, formatPlayerShort } from "../utils/duplaName";
 import {
   LuArrowLeft,
   LuClipboardList,
@@ -184,7 +185,10 @@ function TournamentManager() {
     }
     const p1Name = approvedPlayers.find(a => String(a.user_id) === String(p1))?.player_name || `#${p1}`;
     const p2Name = approvedPlayers.find(a => String(a.user_id) === String(p2))?.player_name || `#${p2}`;
-    const autoName = `${p1Name} & ${p2Name}`.substring(0, 100);
+    // Onda B · Commit 3.16: dupla_name gravado no banco ja usa o formato
+    // compacto padronizado — response de listagem re-formata mesmo assim,
+    // mas gravar padronizado facilita audit no banco.
+    const autoName = `${formatPlayerShort(p1Name)} / ${formatPlayerShort(p2Name)}`.substring(0, 100);
     try {
       const createRes = await api.post("/tournament-duplas", {
         tournament_id: Number(id),
@@ -1069,7 +1073,7 @@ function TournamentManager() {
                   (group.duplas && group.duplas.length > 0) ? (
                     <div>
                       {group.duplas.map((d) => {
-                        const label = (d.players || []).map(p => p.name).join(" & ") || d.dupla_name;
+                        const label = formatDuplaFromPlayers(d.players) || d.dupla_name;
                         return (
                           <div key={d.id} style={s.playerLine}>
                             <span style={s.playerName}>{label}</span>

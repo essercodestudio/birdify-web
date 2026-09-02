@@ -1,6 +1,7 @@
 // backend/controllers/exportController.js
 const db = require("../db");
 const ExcelJS = require("exceljs");
+const { formatDuplaFromPlayers } = require("../utils/duplaName");
 
 exports.exportTournamentToExcel = async (req, res) => {
   const { tournamentId } = req.params;
@@ -384,22 +385,41 @@ async function exportDoublesTournament(req, res, tournament) {
   }
   if (parOut === 0 && parIn === 0) { parOut = 36; parIn = 36; }
 
-  // Duplas + players + handicap. Prefere handicap de group_duplas (por rodada)
-  // sobre tournament_duplas (default do cadastro). Usa MAX pra colapsar N linhas
-  // (dupla pode estar em varios grupos em torneio multi-rodada).
+  // Onda B · Commit 3.16: em vez de players_names concatenado, carrega
+  // players[] estruturado numa query separada e monta dupla_name computado
+  // ("J. Silva / P. Santos") via util compartilhado. gender_concat continua
+  // pra categorizacao.
   const [duplaRows] = await db.execute(
     `SELECT d.id AS dupla_id, d.dupla_name,
             COALESCE(MAX(gd.handicap), MAX(d.handicap), 0) AS handicap,
-            GROUP_CONCAT(DISTINCT u.name ORDER BY u.name SEPARATOR ' & ') AS players_names,
-            GROUP_CONCAT(DISTINCT u.gender ORDER BY u.name SEPARATOR '') AS gender_concat
+            (SELECT GROUP_CONCAT(u2.gender ORDER BY u2.name SEPARATOR '')
+               FROM tournament_dupla_players tdp2
+               JOIN users u2 ON u2.id = tdp2.user_id
+              WHERE tdp2.dupla_id = d.id) AS gender_concat
        FROM tournament_duplas d
-       LEFT JOIN tournament_dupla_players tdp ON tdp.dupla_id = d.id
-       LEFT JOIN users u ON u.id = tdp.user_id
        LEFT JOIN group_duplas gd ON gd.dupla_id = d.id
       WHERE d.tournament_id = ?
       GROUP BY d.id, d.dupla_name`,
     [tournamentId]
   );
+
+  const duplaIdsExp = duplaRows.map(d => d.dupla_id);
+  const playersByDuplaExp = new Map();
+  if (duplaIdsExp.length > 0) {
+    const placeholdersExp = duplaIdsExp.map(() => '?').join(',');
+    const [pRows] = await db.execute(
+      `SELECT tdp.dupla_id, u.name
+         FROM tournament_dupla_players tdp
+         JOIN users u ON u.id = tdp.user_id
+        WHERE tdp.dupla_id IN (${placeholdersExp})
+        ORDER BY u.name`,
+      duplaIdsExp
+    );
+    for (const p of pRows) {
+      if (!playersByDuplaExp.has(p.dupla_id)) playersByDuplaExp.set(p.dupla_id, []);
+      playersByDuplaExp.get(p.dupla_id).push({ name: p.name });
+    }
+  }
 
   const [scoresRows] = await db.execute(
     "SELECT dupla_id, hole_number, strokes FROM scores WHERE tournament_id = ? AND dupla_id IS NOT NULL",
@@ -421,10 +441,13 @@ async function exportDoublesTournament(req, res, tournament) {
     if (g === 'MM') category = 'Masculina';
     else if (g === 'FF') category = 'Feminina';
     else if (g === 'MF' || g === 'FM') category = 'Mista';
+    const players = playersByDuplaExp.get(d.dupla_id) || [];
+    const shortName = formatDuplaFromPlayers(players) || d.dupla_name;
+    const playersNamesFull = players.map(p => p.name).join(' & ');
     return {
       dupla_id: d.dupla_id,
-      dupla_name: d.dupla_name,
-      players_names: d.players_names || '',
+      dupla_name: shortName,
+      players_names: playersNamesFull,
       handicap: hc,
       scores, gross, net: gross - hc,
       category,
