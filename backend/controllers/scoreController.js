@@ -123,9 +123,12 @@ exports.saveScore = async (req, res) => {
     }
 
     // Autorização de posse — caller precisa estar escalado num grupo da rodada.
-    // Individual: via group_players. Doubles: via tournament_dupla_players +
-    // group_duplas — caller precisa pertencer à MESMA dupla que ele está tentando
-    // marcar (não pode marcar por dupla que não é a sua).
+    // Individual: via group_players. Doubles: caller precisa pertencer a
+    // ALGUMA dupla escalada no MESMO grupo da dupla-alvo (marcador único do
+    // grupo — qualquer jogador do grupo pode marcar por qualquer dupla do
+    // grupo, igual ao individual). Antes exigia caller ∈ dupla-alvo, o que
+    // impedia jogar 2 duplas no mesmo grupo com um marcador só (bug relatado
+    // 2026-09-02: "marco a outra dupla e fica sincronizando pra sempre").
     //
     // Bloco D · hotfix 2026-08-29: membership inclui tg.round_number. Um jogador
     // do grupo de R1 nao pode gravar em R2 (mesmo com curl direto).
@@ -133,15 +136,17 @@ exports.saveScore = async (req, res) => {
     let membership;
     if (modality === 'doubles') {
       [membership] = await db.execute(
-        `SELECT 1 FROM tournament_dupla_players tdp
-           JOIN group_duplas gd ON gd.dupla_id = tdp.dupla_id
-           JOIN tournament_groups tg ON tg.id = gd.group_id
+        `SELECT 1
+           FROM group_duplas gd_caller
+           JOIN tournament_dupla_players tdp_caller ON tdp_caller.dupla_id = gd_caller.dupla_id
+           JOIN group_duplas gd_target ON gd_target.group_id = gd_caller.group_id
+           JOIN tournament_groups tg ON tg.id = gd_caller.group_id
           WHERE tg.tournament_id = ?
-            AND tdp.user_id = ?
-            AND tdp.dupla_id = ?
             AND tg.round_number = ?
+            AND tdp_caller.user_id = ?
+            AND gd_target.dupla_id = ?
           LIMIT 1`,
-        [tournament_id, caller_id, ownerDuplaId, round_number]
+        [tournament_id, round_number, caller_id, ownerDuplaId]
       );
     } else {
       [membership] = await db.execute(
@@ -155,7 +160,7 @@ exports.saveScore = async (req, res) => {
     if (membership.length === 0) {
       return res.status(403).json({
         error: modality === 'doubles'
-          ? `Acesso negado. Você não pertence à dupla escalada nesta rodada.`
+          ? `Acesso negado. Você não pertence ao grupo desta dupla na rodada ${round_number}.`
           : `Acesso negado. Você não pertence a um grupo da rodada ${round_number} deste torneio.`,
       });
     }

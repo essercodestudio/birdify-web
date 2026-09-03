@@ -87,10 +87,14 @@ async function main() {
     const p2 = await ensureUser(conn, 'verify.doubles.p2@test.local', 'Duplas P2', 'M', 'PLAYER');
     const p3 = await ensureUser(conn, 'verify.doubles.p3@test.local', 'Duplas P3', 'F', 'PLAYER');
     const p4 = await ensureUser(conn, 'verify.doubles.p4@test.local', 'Duplas P4', 'F', 'PLAYER');
-    cleanupUserIds.push(adminId, p1, p2, p3, p4);
+    // p5 fica FORA do torneio (sem inscription, sem dupla) — usado no teste negativo
+    // que valida que quem nao esta em nenhum grupo do torneio nao pode marcar (403).
+    const p5 = await ensureUser(conn, 'verify.doubles.p5@test.local', 'Duplas P5 (externo)', 'M', 'PLAYER');
+    cleanupUserIds.push(adminId, p1, p2, p3, p4, p5);
 
     const ADMIN_TOKEN = jwt.sign({ id: adminId, role: 'ADMIN' }, process.env.JWT_SECRET, { expiresIn: '1h' });
     const P1_TOKEN = jwt.sign({ id: p1, role: 'PLAYER' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const P5_TOKEN = jwt.sign({ id: p5, role: 'PLAYER' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     // 2. Cria torneio doubles via HTTP (exercita createTournament com modality)
     const [[course]] = await conn.query('SELECT id FROM courses WHERE club_id=1 LIMIT 1');
@@ -169,19 +173,29 @@ async function main() {
     }
 
     // 7. saveScore com dupla_id
-    // P1 pertence a DupA — pode marcar por DupA
+    // P1 pertence a DupA — pode marcar por DupA (200)
     const s1 = await req('POST', '/api/scores/save', P1_TOKEN, {
       tournament_id: cleanupTid, dupla_id: dupla1, hole_number: 1, round_number: 1, strokes: 4,
     });
     if (s1.status !== 200) fail(`saveScore dupla1: ${s1.status} ${JSON.stringify(s1.body)}`);
     else pass('P1 salva score da propria dupla (DupA) OK');
 
-    // P1 NAO pertence a DupB — deve rejeitar 403
+    // P1 pertence a DupA, DupB esta no MESMO grupo — marcador unico do grupo:
+    // P1 pode marcar por DupB (200). Fix 2026-09-02: antes exigia caller ∈ dupla-alvo
+    // e devolvia 403, bloqueando 2 duplas jogarem no mesmo grupo com marcador comum.
     const s2 = await req('POST', '/api/scores/save', P1_TOKEN, {
       tournament_id: cleanupTid, dupla_id: dupla2, hole_number: 1, round_number: 1, strokes: 5,
     });
-    if (s2.status === 403) pass('P1 rejeitado ao tentar marcar por dupla que nao eh a sua (403)');
-    else fail(`membership check falhou: ${s2.status} ${JSON.stringify(s2.body)}`);
+    if (s2.status === 200) pass('P1 marca por DupB (mesmo grupo, marcador unico) OK');
+    else fail(`marcador unico do grupo falhou: ${s2.status} ${JSON.stringify(s2.body)}`);
+
+    // Teste negativo: P5 nao esta em nenhum grupo do torneio → deve 403.
+    // Garante que o membership check afrouxado (grupo-wide) nao virou "qualquer um marca".
+    const s2neg = await req('POST', '/api/scores/save', P5_TOKEN, {
+      tournament_id: cleanupTid, dupla_id: dupla1, hole_number: 2, round_number: 1, strokes: 4,
+    });
+    if (s2neg.status === 403) pass('P5 (fora do grupo) rejeitado ao tentar marcar (403)');
+    else fail(`membership check nao rejeitou user externo: ${s2neg.status} ${JSON.stringify(s2neg.body)}`);
 
     // 8. Confere que INSERT gravou dupla_id + entity_ref = -dupla_id + user_id NULL
     const [[scoreRow]] = await conn.query(
@@ -217,8 +231,15 @@ async function main() {
       else pass(`leaderboard agrega por dupla: DupA total=4, category=Masculina, players=[${dupA.players.map(p => p.name).join(', ')}]`);
 
       const dupB = lbRes.body.find(r => Number(r.dupla_id) === dupla2);
-      if (dupB && dupB.category !== 'Feminina') fail(`DupB (2F) categoria esperada Feminina, veio ${dupB.category}`);
-      else if (dupB) pass('DupB categorizada como Feminina (2 mulheres)');
+      if (!dupB) fail('DupB ausente no leaderboard');
+      else {
+        if (dupB.category !== 'Feminina') fail(`DupB (2F) categoria esperada Feminina, veio ${dupB.category}`);
+        else pass('DupB categorizada como Feminina (2 mulheres)');
+        // Confirma que o score de DupB marcado pelo P1 (dupla adversaria no mesmo
+        // grupo) chegou no leaderboard — prova end-to-end do marcador unico.
+        if (Number(dupB.total_strokes) !== 5) fail(`DupB total_strokes esperado 5 (marcado por P1), veio ${dupB.total_strokes}`);
+        else pass('DupB total_strokes=5 no leaderboard (marcado pelo P1 da dupla adversaria)');
+      }
     }
 
     // 11. Meu Desempenho exclui torneios doubles
