@@ -24,6 +24,15 @@ function normalizeModality(raw) {
   return raw === 'doubles' ? 'doubles' : 'individual';
 }
 
+// Fase 2 · Commit 2.2 (2026-09-09): normaliza ask_handicap. Default seguro 1
+// (pede handicap = comportamento historico). Aceita 0/1, "0"/"1", true/false,
+// undefined/null → 1. Qualquer outra coisa cai no default 1.
+function normalizeAskHandicap(raw) {
+  if (raw === 0 || raw === '0' || raw === false) return 0;
+  if (raw === 1 || raw === '1' || raw === true)  return 1;
+  return 1;
+}
+
 // Normaliza flag enabled do payload. Aceita true/false, 1/0, undefined → 1 (default).
 function normalizeEnabled(raw) {
   if (raw === undefined || raw === null) return 1;
@@ -281,6 +290,8 @@ exports.createTournament = async (req, res) => {
         const scoring_type = normalizeScoringType(req.body.scoring_type);
         // Onda B · Commit 3.8: modality ('individual' | 'doubles'). Ortogonal ao scoring_type.
         const modality = normalizeModality(req.body.modality);
+        // Fase 2 · Commit 2.2: ask_handicap (0|1). Default 1 = comportamento historico.
+        const ask_handicap = normalizeAskHandicap(req.body.ask_handicap);
         const rpParse = scoring_type === 'result_points'
             ? buildResultPointsMap(req.body.result_points)
             : { pointsMap: null, enabledMap: null };
@@ -338,9 +349,9 @@ exports.createTournament = async (req, res) => {
         const nn = (v) => (v === undefined || v === '' ? null : v);
         const [result] = await conn.execute(
             `INSERT INTO tournaments
-             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, modality, club_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, req.club.id]
+             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, modality, ask_handicap, club_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap, req.club.id]
         );
         const tournamentId = result.insertId;
 
@@ -375,7 +386,7 @@ exports.createTournament = async (req, res) => {
         }
 
         await conn.commit();
-        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds, scoring_type, modality });
+        res.json({ message: 'Torneio criado!', id: tournamentId, total_rounds, scoring_type, modality, ask_handicap });
     } catch (error) {
         try { await conn.rollback(); } catch (_) {}
         console.error('Erro ao criar torneio:', error);
@@ -423,7 +434,7 @@ exports.updateTournament = async (req, res) => {
 
         // Escopo do clube + estado atual
         const [tRows] = await conn.execute(
-            'SELECT id, total_rounds, scoring_type, modality FROM tournaments WHERE id = ? AND club_id = ?',
+            'SELECT id, total_rounds, scoring_type, modality, ask_handicap FROM tournaments WHERE id = ? AND club_id = ?',
             [id, req.club.id]
         );
         if (tRows.length === 0) {
@@ -436,6 +447,11 @@ exports.updateTournament = async (req, res) => {
         // Onda B · Commit 3.8: modality efetivo — mesma logica.
         const modality_input = req.body.modality !== undefined ? normalizeModality(req.body.modality) : undefined;
         const modality = modality_input !== undefined ? modality_input : (tRows[0].modality || 'individual');
+        // Fase 2 · Commit 2.2: ask_handicap efetivo — mesma logica. Se veio no body,
+        // respeita; senao mantem o atual. Evita flipar acidentalmente quando admin
+        // edita so o nome do torneio (payload antigo sem o campo → mantem estado).
+        const ask_handicap_input = req.body.ask_handicap !== undefined ? normalizeAskHandicap(req.body.ask_handicap) : undefined;
+        const ask_handicap = ask_handicap_input !== undefined ? ask_handicap_input : Number(tRows[0].ask_handicap ?? 1);
         // Onda A · commit 2: interpreta result_points condicionalmente.
         //   - scoring_type efetivo é 'result_points':
         //       - se rawRP veio, valida e usa pra REPLACE
@@ -490,10 +506,10 @@ exports.updateTournament = async (req, res) => {
         await conn.execute(
             `UPDATE tournaments SET
              name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?,
-             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?, modality=?
+             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?, modality=?, ask_handicap=?
              WHERE id=? AND club_id=?`,
             [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type),
-             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, id, req.club.id]
+             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap, id, req.club.id]
         );
 
         // Onda A · commit 2 + Bloco 2 · Commit 2.2: replace atômico da config de
@@ -548,7 +564,7 @@ exports.updateTournament = async (req, res) => {
         }
 
         await conn.commit();
-        res.json({ message: 'Torneio atualizado com sucesso!', total_rounds, scoring_type });
+        res.json({ message: 'Torneio atualizado com sucesso!', total_rounds, scoring_type, ask_handicap });
     } catch (error) {
         try { await conn.rollback(); } catch (_) {}
         console.error('Erro ao atualizar torneio:', error);
