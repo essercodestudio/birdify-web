@@ -128,6 +128,11 @@ function Dashboard() {
   // Onda B · Commit 3.8: modality — ortogonal ao scoring_type. Individual (default)
   // preserva 100% do fluxo antigo. Doubles ativa cadastro de duplas + score por dupla.
   const [modality, setModality] = useState('individual');
+  // Fase 2 · Commit 2.3 (2026-09-09): toggle "pedir handicap ao entrar no grupo".
+  // Default true = comportamento historico (modal HANDICAPS abre em JoinGame.js).
+  // false = pula modal, entra direto no scorecard, Leaderboard/Scorecard escondem
+  // Net (implementacao nos commits 2.4 + 2.5).
+  const [askHandicap, setAskHandicap] = useState(true);
   const [resultPoints, setResultPoints] = useState({ ...DEFAULT_RESULT_POINTS });
   // Bloco 2 · Commit 2.3 (2026-09-01): admin pode ligar/desligar cada kind.
   // Default = todos habilitados. Kind desabilitado NÃO aparece no ResultPicker
@@ -337,6 +342,7 @@ function Dashboard() {
       total_rounds: totalRoundsPayload,
       scoring_type: scoringType,
       modality,
+      ask_handicap: askHandicap ? 1 : 0,
       ...(roundsPayload ? { rounds: roundsPayload } : {}),
       ...(resultPointsPayload ? { result_points: resultPointsPayload } : {}),
     };
@@ -385,6 +391,10 @@ function Dashboard() {
       setScoringType(st);
       // Onda B · Commit 3.8: hidrata modality. Default 'individual' preserva comportamento antigo.
       setModality(t.modality === 'doubles' ? 'doubles' : 'individual');
+      // Fase 2 · Commit 2.3: hidrata ask_handicap. Torneios pre-existentes ao
+      // deploy vem sem o campo no response — Number(undefined ?? 1)===1 preserva
+      // o padrao "pede handicap". Backend garante DEFAULT 1 pra novos.
+      setAskHandicap(Number(t.ask_handicap ?? 1) === 1);
       if (st === 'result_points' && Array.isArray(t.result_points) && t.result_points.length > 0) {
         const map = { ...DEFAULT_RESULT_POINTS };
         // Bloco 2 · Commit 2.3: hidrata enabled (default true se backend ainda
@@ -415,6 +425,7 @@ function Dashboard() {
     setScoringType('strokes'); setResultPoints({ ...DEFAULT_RESULT_POINTS });
     setResultKindEnabled({ ...DEFAULT_ENABLED });
     setModality('individual');
+    setAskHandicap(true);
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -666,6 +677,43 @@ function Dashboard() {
             {modality === 'doubles' && (
               <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, backgroundColor: theme.card, color: theme.textMuted, fontSize: 12 }}>
                 Depois de criar o torneio, cadastre as duplas na tela <strong style={{ color: theme.textMain }}>Duplas</strong> do menu admin do torneio. Auto-gerar flights vai distribuir 2 duplas por grupo (=4 jogadores).
+              </div>
+            )}
+          </div>
+
+          {/* Fase 2 · commit 2.3 — HANDICAP (pedir handicap ao entrar no grupo?) */}
+          <div style={{ marginTop: '20px', padding: '14px', border: `1px solid ${theme.cardLight}`, borderRadius: '10px', backgroundColor: theme.bg }}>
+            <label style={styles.label}>HANDICAP</label>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: 8 }}>
+              {[
+                { value: true,  label: 'Pedir handicap',    hint: 'Modal abre no lobby, jogador confirma handicap antes do scorecard. Habilita Net Score.' },
+                { value: false, label: 'Nao pedir handicap', hint: 'Jogador entra direto no scorecard. Torneio so por Gross — sem ranking Net.' },
+              ].map(opt => {
+                const active = askHandicap === opt.value;
+                return (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    onClick={() => setAskHandicap(opt.value)}
+                    style={{
+                      flex: 1, minWidth: 200,
+                      padding: '14px', borderRadius: 8,
+                      border: `1px solid ${active ? theme.accent : theme.cardLight}`,
+                      backgroundColor: active ? theme.accent : theme.bg,
+                      color: active ? '#000' : theme.textMuted,
+                      cursor: 'pointer', textAlign: 'left',
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  >
+                    <div style={{ fontSize: 14 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, opacity: 0.85, marginTop: 4, fontWeight: 600 }}>{opt.hint}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {!askHandicap && (
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, backgroundColor: theme.card, color: theme.textMuted, fontSize: 12 }}>
+                Sem handicap, o Leaderboard esconde as abas Net e ranqueia so por Gross. A sugestao de tee por handicap tambem some do lobby.
               </div>
             )}
           </div>
