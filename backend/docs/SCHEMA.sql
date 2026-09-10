@@ -197,6 +197,13 @@ CREATE TABLE IF NOT EXISTS tournaments (
   -- 'doubles' = 2 jogadores compartilham 1 scorecard e 1 resultado por buraco.
   -- Combina com qualquer scoring_type (strokes ou result_points).
   modality               ENUM('individual','doubles') NOT NULL DEFAULT 'individual',
+  -- ask_handicap: adicionado em 2026_09_09 (Fase 2 · Mudança 2). Toggle "pedir
+  -- handicap ao entrar no grupo". Default 1 = comportamento historico (modal
+  -- de handicap abre em JoinGame.js). 0 = pula modal, entra direto no Scorecard,
+  -- Leaderboard/Scorecard escondem Net. Combina com qualquer scoring_type +
+  -- modality — result_points ja ignora handicap pro ranking; doubles com
+  -- ask_handicap=0 pula o modal de handicap por dupla.
+  ask_handicap           TINYINT(1) NOT NULL DEFAULT 1,
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
