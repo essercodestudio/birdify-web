@@ -231,10 +231,16 @@ function PlayerHome() {
       });
 
       const group = res.data.group;
+      // Fase 2 · Commit 2.4: ask_handicap=0 pula o modal HANDICAPS e vai direto
+      // pro Scorecard. Default seguro Number(undefined ?? 1)===1 preserva o
+      // comportamento historico se o backend nao injetar o campo (rollback do
+      // commit 2.2, deploy fora de ordem, etc). Fluxo doubles ainda nao passa
+      // por aqui — PlayerHome so trata individual hoje.
+      const askHandicap = Number(group.ask_handicap ?? 1) === 1;
       const listRes = await api.get(`/groups/list/${group.tournament_id}`);
       const myGroup = listRes.data.find((g) => g.id === group.id) || group;
 
-      if (myGroup.players && myGroup.players.length > 0) {
+      if (askHandicap && myGroup.players && myGroup.players.length > 0) {
         setPendingGroup(group);
         setGroupPlayers(myGroup.players);
 

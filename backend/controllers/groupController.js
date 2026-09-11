@@ -509,8 +509,13 @@ exports.joinGroup = async (req, res) => {
     // Onda B · Commit 3.10: valida membership por group_players (individual)
     // OU group_duplas + tournament_dupla_players (doubles). Em doubles, tambem
     // resolve dupla_id do caller e injeta no response.
-    const [tRow] = await db.execute('SELECT modality FROM tournaments WHERE id = ?', [group.tournament_id]);
+    // Fase 2 · Commit 2.4: mesma query traz ask_handicap — JoinGame usa pra
+    // decidir se abre o modal HANDICAPS ou vai direto pro Scorecard. Default
+    // seguro 1 preserva comportamento historico se o campo vier NULL/undefined
+    // (nao deveria — coluna NOT NULL DEFAULT 1, mas cinto e suspensorio).
+    const [tRow] = await db.execute('SELECT modality, ask_handicap FROM tournaments WHERE id = ?', [group.tournament_id]);
     const modality = tRow[0]?.modality || 'individual';
+    const ask_handicap = Number(tRow[0]?.ask_handicap ?? 1) === 0 ? 0 : 1;
 
     let callerDuplaId = null;
     if (modality === 'doubles') {
@@ -540,7 +545,7 @@ exports.joinGroup = async (req, res) => {
       }
     }
 
-    res.json({ group: { ...group, modality, caller_dupla_id: callerDuplaId } });
+    res.json({ group: { ...group, modality, ask_handicap, caller_dupla_id: callerDuplaId } });
     
   } catch (error) {
     console.error('Erro ao entrar no grupo:', error);
