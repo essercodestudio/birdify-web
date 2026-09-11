@@ -137,6 +137,11 @@ function Scorecard() {
   // Onda B · Commit 3.11: ownerKind agora usado em enqueueScore + UI (linhas
   // de score mostram "Joao & Pedro" abaixo do nome da dupla).
   const [ownerKind, setOwnerKind] = useState('user');
+  // Fase 2 · Commit 2.5: askHandicap controla exibicao de HDCP/NET/TEE no
+  // Scorecard. Default true preserva o comportamento historico enquanto o
+  // torneio nao vem com ask_handicap explicito (hidratacao acontece no
+  // fetchData a partir de tourRes.data.ask_handicap ?? 1).
+  const [askHandicap, setAskHandicap] = useState(true);
   const [resultPointsMap, setResultPointsMap] = useState({}); // {kind: points}
   // Bloco 2 · Commit 2.3 (2026-09-01): {kind: true|false} — kinds desativados
   // sao filtrados do ResultPicker. Vazio = tudo ativo (torneio strokes ou pre-2.2).
@@ -300,6 +305,10 @@ function Scorecard() {
       setInputMode(st);
       // ownerKind: sempre 'user' na Onda A. Quando Onda B chegar, deriva de tourRes.data.modality.
       setOwnerKind(tourRes.data.modality === 'doubles' ? 'dupla' : 'user');
+      // Fase 2 · Commit 2.5: hidrata askHandicap. Default seguro
+      // Number(undefined ?? 1)===1 preserva comportamento historico quando o
+      // torneio pre-existe ao deploy (sem coluna ou sem valor).
+      setAskHandicap(Number(tourRes.data.ask_handicap ?? 1) === 1);
       if (st === 'result' && Array.isArray(tourRes.data.result_points)) {
         const rpMap = {};
         // Bloco 2 · Commit 2.3: mapa de enabled (default true se backend antigo).
@@ -875,7 +884,9 @@ function Scorecard() {
           <LuClipboardList size={20} />
           Conferência Final
         </h2>
-        <p style={{ color: theme.textMuted }}>Net Score (Relação ao Par - Handicap)</p>
+        {askHandicap && (
+          <p style={{ color: theme.textMuted }}>Net Score (Relação ao Par - Handicap)</p>
+        )}
         <div style={styles.summaryCard}>
           {players.map((p) => {
             const totals = calculateTotal(p.id, p.handicap);
@@ -883,7 +894,10 @@ function Scorecard() {
               <div key={p.id} style={styles.summaryRow}>
                 <span>
                   <div style={{ fontWeight: "bold" }}>{p.name}</div>
-                  <div style={{ fontSize: "12px", color: theme.textMuted }}>HDCP: {p.handicap || 0}</div>
+                  {/* Fase 2 · Commit 2.5: HDCP so aparece se o torneio pede handicap. */}
+                  {askHandicap && (
+                    <div style={{ fontSize: "12px", color: theme.textMuted }}>HDCP: {p.handicap || 0}</div>
+                  )}
                 </span>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ ...styles.totalScore, color: "white" }}>
@@ -893,14 +907,14 @@ function Scorecard() {
                     <div style={{ fontSize: "14px", fontWeight: "bold", color: theme.gold }}>
                       {totals.points} ponto{totals.points === 1 ? '' : 's'}
                     </div>
-                  ) : (
+                  ) : askHandicap ? (
                     <div style={{
                       fontSize: "14px", fontWeight: "bold",
                       color: totals.netVsPar.toString().includes("-") ? theme.accent : (totals.netVsPar === "E" ? theme.textMuted : theme.danger)
                     }}>
                       NET: {totals.netVsPar}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -1079,11 +1093,16 @@ function Scorecard() {
             <div key={p.id} style={cardStyle}>
               <div style={styles.playerName}>
                 <div style={{ fontSize: "16px", color: "#fff" }}>{p.name}</div>
-                {p._isDupla ? (
+                {/* Fase 2 · Commit 2.5: linha secundaria (HDCP dupla ou
+                    TEE/M/HDCP individual) so aparece se o torneio pede
+                    handicap. Sem askHandicap, calcularPerfilGolfista cairia em
+                    "Preto/M1/HDCP 0" visualmente errado — esconder eh mais
+                    honesto que mostrar valor derivado de handicap=NULL. */}
+                {askHandicap && p._isDupla ? (
                   <div style={{ marginTop: 4, fontSize: 11, color: theme.textMuted }}>
                     HDCP {p.handicap ?? 0}
                   </div>
-                ) : (
+                ) : askHandicap && !p._isDupla ? (
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", fontSize: "11px", color: theme.textMuted }}>
                     <span style={{
                       width: "10px", height: "10px", borderRadius: "50%",
@@ -1092,7 +1111,7 @@ function Scorecard() {
                     }}></span>
                     TEE {perfil.tee.nome.toUpperCase()} • {perfil.cat} • HDCP {p.handicap || 0}
                   </div>
-                )}
+                ) : null}
               </div>
 
               {inputMode === 'strokes' ? (

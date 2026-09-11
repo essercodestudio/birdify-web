@@ -58,6 +58,12 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   // Onda B · Commit 3.12: modality do torneio. 'doubles' altera tabs (Livre/
   // Masc/Fem/Mista), colunas (Dupla + Jogadores) e endpoint de detalhes.
   const [modality,            setModality]            = useState('individual');
+  // Fase 2 · Commit 2.5 (2026-09-10): ask_handicap do torneio. false forca
+  // net=false (mesmo se a aba for Net) e por consequencia esconde o "(HC XX)"
+  // ao lado do nome. Ranking cai em gross. Categorias/tabs nao mudam — se o
+  // admin deixou uma categoria Net por engano num torneio ask_handicap=0, a
+  // aba aparece mas o ranking usa gross (mesma pattern do result_points).
+  const [askHandicap,         setAskHandicap]         = useState(true);
 
   const fetchInfo = useCallback(async () => {
     if (!tournamentId) return;
@@ -75,6 +81,9 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
       // Onda B · Commit 3.12: modality do torneio
       const mod = res.data.modality === 'doubles' ? 'doubles' : 'individual';
       setModality(mod);
+      // Fase 2 · Commit 2.5: hidrata askHandicap. Default Number(??1)===1
+      // preserva historico se o torneio pre-existe ao deploy.
+      setAskHandicap(Number(res.data.ask_handicap ?? 1) === 1);
       let cats = res.data.categories;
       if (typeof cats === "string") { try { cats = JSON.parse(cats); } catch { cats = []; } }
       cats = Array.isArray(cats) ? cats : [];
@@ -155,7 +164,10 @@ export function LeaderboardView({ tournamentId, isPublic = false, onBack, embedd
   // handicap — ignora o filtro Net do nome da categoria (não existe "net por
   // pontos" nesta versão). Em strokes, comportamento antigo preservado.
   const isResultPoints = scoringType === 'result_points';
-  const net = !isResultPoints && isNet(activeTab);
+  // Fase 2 · Commit 2.5: askHandicap=false forca gross-only. Mesma pattern do
+  // result_points — ranking derivado de gross_to_par, "(HC XX)" nao aparece
+  // (o {net && <span...>} ja faz o skip automatico).
+  const net = !isResultPoints && askHandicap && isNet(activeTab);
   const filtered = applyFilter(ranking, activeTab).sort((a, b) => {
     const ha = a.holes_played, hb = b.holes_played;
     if (!ha && !hb) return a.name.localeCompare(b.name);
