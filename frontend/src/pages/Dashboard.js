@@ -713,7 +713,7 @@ function Dashboard() {
             </div>
             {!askHandicap && (
               <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, backgroundColor: theme.card, color: theme.textMuted, fontSize: 12 }}>
-                Sem handicap, o Leaderboard esconde as abas Net e ranqueia so por Gross. A sugestao de tee por handicap tambem some do lobby.
+                Sem handicap, o Leaderboard ranqueia so por Gross (abas Net podem aparecer se voce marcar categorias Net, mas o ranking usa gross e o "(HC XX)" some). A sugestao de tee por handicap tambem some do lobby.
               </div>
             )}
           </div>
