@@ -13,10 +13,6 @@ import {
   LuClipboardList,
   LuLandPlot,
   LuPlay,
-  LuMapPin,
-  LuClock,
-  LuCopy,
-  LuCheck,
   LuUser,
   LuArrowRight,
   LuX,
@@ -44,15 +40,6 @@ function PlayerHome() {
   // este cache sincronizado.
   const [profileOpen, setProfileOpen] = useState(false);
   const [profile, setProfile] = useState(null);
-
-  // ── Torneios (ex-PlayerDashboard) ──────────────────────────────────────────
-  const [tournaments, setTournaments] = useState([]);
-  const [activeTab, setActiveTab] = useState("ativos");
-  const [selectedTournament, setSelectedTournament] = useState(null);
-  const [isSubscribed, setIsSubscribed] = useState(false);
-  const [whatsappLink, setWhatsappLink] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [currentSponsorIndex, setCurrentSponsorIndex] = useState(0);
 
   // ── Entrar na partida por código (ex-JoinGame) ─────────────────────────────
   const [joinOpen, setJoinOpen] = useState(false);
@@ -86,15 +73,6 @@ function PlayerHome() {
     }
   }, []);
 
-  const fetchTournaments = useCallback(async (userId) => {
-    try {
-      const res = await api.get(`/tournaments/list?user_id=${userId}`);
-      setTournaments(res.data);
-    } catch (error) {
-      console.error("Erro ao buscar torneios Birdify", error);
-    }
-  }, []);
-
   useEffect(() => {
     const parsedUser = getUser();
     if (!parsedUser) {
@@ -102,7 +80,6 @@ function PlayerHome() {
       return;
     }
     setUser(parsedUser);
-    fetchTournaments(parsedUser.id);
 
     // Perfil (foto no header). O modal faz seu próprio fetch quando abre.
     api.get("/users/me/profile")
@@ -164,27 +141,10 @@ function PlayerHome() {
         }
       }
     })();
-  }, [navigate, fetchTournaments, clearMatchSession]);
+  }, [navigate, clearMatchSession]);
 
-  // Carrossel de patrocinadores
-  useEffect(() => {
-    let interval;
-    if (
-      selectedTournament &&
-      selectedTournament.sponsors &&
-      selectedTournament.sponsors.length > 1
-    ) {
-      interval = setInterval(() => {
-        setCurrentSponsorIndex((prev) =>
-          prev === selectedTournament.sponsors.length - 1 ? 0 : prev + 1,
-        );
-      }, 8000);
-    }
-    return () => clearInterval(interval);
-  }, [selectedTournament]);
-
-  const activeTournaments = tournaments.filter((t) => t.status === "OPEN");
-  const pastTournaments = tournaments.filter((t) => t.status === "concluido");
+  // Torneios (lista + detalhe + modal) migraram pra PlayerTournaments.js e
+  // TournamentDetail.js (Onda C · Fase C.4). Home nao carrega mais /tournaments/list.
 
   // ── Lógica intacta: entrar no grupo por código ─────────────────────────────
   const handleJoinGroup = async (e) => {
@@ -280,92 +240,8 @@ function PlayerHome() {
     }
   };
 
-  // ── Lógica intacta: detalhes / inscrição no torneio ────────────────────────
-  const openDetails = async (t) => {
-    try {
-      const res = await api.get(`/inscriptions/tournament/${t.id}`);
-
-      const fullTournamentData = {
-        ...res.data,
-        course_name: t.course_name,
-        course_city: t.course_city,
-        course_state: t.course_state,
-        pix_key_type: t.pix_key_type,
-        fee: t.fee,
-      };
-
-      setSelectedTournament(fullTournamentData);
-
-      const alreadySubscribed = t.is_subscribed > 0;
-      setIsSubscribed(alreadySubscribed);
-
-      if (alreadySubscribed && fullTournamentData.whatsapp_contact) {
-        const message = `Olá! Sou o jogador *${user.name}*. \n\nSegue o meu comprovante de pagamento referente ao torneio *${fullTournamentData.name}*:`;
-        const encodedMessage = encodeURIComponent(message);
-        const cleanNumber = fullTournamentData.whatsapp_contact.replace(/\D/g, "");
-        setWhatsappLink(`https://wa.me/${cleanNumber}?text=${encodedMessage}`);
-      } else {
-        setWhatsappLink("");
-      }
-
-      setCopied(false);
-      setCurrentSponsorIndex(0);
-    } catch (error) {
-      alert("Erro ao carregar detalhes do evento Birdify.");
-    }
-  };
-
-  const closeModal = () => setSelectedTournament(null);
-
-  const handleInscription = async () => {
-    try {
-      await api.post("/inscriptions/create", {
-        tournament_id: selectedTournament.id,
-        user_id: user.id,
-        category_id: null,
-      });
-
-      const message = `Olá! Acabei de me inscrever no torneio *${selectedTournament.name}*. \n\n*Jogador:* ${user.name} \n\nSegue o meu comprovante de pagamento:`;
-      const encodedMessage = encodeURIComponent(message);
-
-      const cleanNumber = selectedTournament.whatsapp_contact
-        ? selectedTournament.whatsapp_contact.replace(/\D/g, "")
-        : "";
-
-      setWhatsappLink(`https://wa.me/${cleanNumber}?text=${encodedMessage}`);
-      setIsSubscribed(true);
-
-      fetchTournaments(user.id);
-    } catch (error) {
-      if (error.response && error.response.status === 400) {
-        alert("Você já está inscrito! Aguarde a aprovação do organizador.");
-      } else {
-        alert("Erro ao realizar inscrição.");
-      }
-    }
-  };
-
-  const handleCopyPix = () => {
-    if (selectedTournament && selectedTournament.payment_info) {
-      navigator.clipboard.writeText(selectedTournament.payment_info);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const formatDateTime = (dateString) => {
-    if (!dateString) return "--";
-    const date = new Date(dateString);
-    return date
-      .toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-      .replace(",", " às");
-  };
+  // Lógica de detalhes/inscrição/PIX/formatDateTime migrou pra
+  // TournamentDetail.js e PlayerTournaments.js (Onda C · Fase C.4).
 
   // Logout foi movido pra aba "Mais" (Onda C · Fase C.2 — PlayerMore.js);
   // a limpeza de activeGroup vive lá agora (auto-suficiente, lê o localStorage).
@@ -432,50 +308,6 @@ function PlayerHome() {
       color: theme.textMain,
     },
     shortcutLabel: { ...text.caption, fontWeight: 700 },
-    tabsRow: {
-      display: "flex",
-      gap: space[5],
-      borderBottom: `1px solid ${theme.border}`,
-      marginBottom: space[4],
-    },
-    tab: (active) => ({
-      background: "none",
-      border: "none",
-      padding: `${space[3]}px 0`,
-      marginBottom: -1,
-      cursor: "pointer",
-      fontWeight: 700,
-      fontSize: 14,
-      color: active ? theme.textMain : theme.textMuted,
-      borderBottom: `2px solid ${active ? theme.accent : "transparent"}`,
-      transition: "color 0.2s",
-    }),
-    tournamentCard: {
-      backgroundColor: theme.card,
-      border: `1px solid ${theme.border}`,
-      borderRadius: radius.md,
-      boxShadow: shadow.sm,
-      padding: space[4],
-      marginBottom: space[3],
-      cursor: "pointer",
-    },
-    metaRow: {
-      display: "flex",
-      alignItems: "center",
-      gap: space[2],
-      ...text.caption,
-      color: theme.textMuted,
-    },
-    badge: {
-      backgroundColor: theme.accentSoft,
-      color: theme.accent,
-      padding: `${space[1]}px ${space[2]}px`,
-      borderRadius: radius.sm,
-      fontSize: 11,
-      fontWeight: 700,
-      border: `1px solid ${theme.accent}`,
-      whiteSpace: "nowrap",
-    },
     modalOverlay: {
       position: "fixed",
       top: 0,
@@ -502,13 +334,6 @@ function PlayerHome() {
       overflowY: "auto",
       border: `1px solid ${theme.border}`,
       boxShadow: shadow.lg,
-    },
-    infoBox: {
-      backgroundColor: theme.bg,
-      padding: space[4],
-      borderRadius: radius.md,
-      marginBottom: space[4],
-      border: `1px solid ${theme.border}`,
     },
     codeInput: {
       padding: space[4],
@@ -545,21 +370,6 @@ function PlayerHome() {
       borderRadius: radius.md,
       cursor: "pointer",
       fontWeight: 700,
-    },
-    whatsappBtn: {
-      display: "block",
-      width: "100%",
-      padding: space[4],
-      backgroundColor: theme.whatsapp,
-      color: "#fff",
-      fontSize: 14,
-      fontWeight: 700,
-      border: "none",
-      borderRadius: radius.md,
-      textAlign: "center",
-      textDecoration: "none",
-      boxSizing: "border-box",
-      marginTop: space[4],
     },
     playerRow: {
       display: "flex",
@@ -710,94 +520,9 @@ function PlayerHome() {
         ))}
       </div>
 
-      {/* ── Tabs de torneios ── */}
-      <div style={styles.tabsRow}>
-        <button style={styles.tab(activeTab === "ativos")} onClick={() => setActiveTab("ativos")}>
-          Abertos
-        </button>
-        <button style={styles.tab(activeTab === "concluidos")} onClick={() => setActiveTab("concluidos")}>
-          Concluídos
-        </button>
-      </div>
-
-      {/* ── Lista de torneios ── */}
-      {activeTab === "ativos" ? (
-        <div>
-          {activeTournaments.length === 0 ? (
-            <div style={{ textAlign: "center", padding: space[6], color: theme.textMuted, ...text.body }}>
-              Nenhum torneio aberto no momento.
-            </div>
-          ) : (
-            activeTournaments.map((t) => (
-              <div key={t.id} style={styles.tournamentCard} onClick={() => openDetails(t)}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: space[3], marginBottom: space[2] }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: space[2], flexWrap: "wrap" }}>
-                    <h3 style={{ margin: 0, ...text.h3, color: theme.textMain }}>{t.name}</h3>
-                    {/* Onda B · Commit 3.13: badge DUPLAS distingue rapido
-                        torneios doubles na lista do jogador. */}
-                    {t.modality === 'doubles' && (
-                      <span style={{ ...styles.badge, backgroundColor: theme.gold, color: '#000' }}>DUPLAS</span>
-                    )}
-                  </div>
-                  {t.is_subscribed > 0 && <span style={styles.badge}>INSCRITO</span>}
-                </div>
-
-                <div style={{ ...styles.metaRow, marginBottom: space[2] }}>
-                  <LuMapPin size={14} />
-                  <span>
-                    {t.course_name || "Local a definir"}
-                    {t.course_city ? ` - ${t.course_city}/${t.course_state}` : ""}
-                  </span>
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: space[1] }}>
-                  <div style={styles.metaRow}>
-                    <LuCalendarDays size={14} />
-                    <span>
-                      Início: <strong style={{ color: theme.textMain }}>{formatDateTime(t.start_date)}</strong>
-                    </span>
-                  </div>
-                  <div style={styles.metaRow}>
-                    <LuClock size={14} />
-                    <span>
-                      Inscrições até: <strong style={{ color: theme.danger }}>{formatDateTime(t.registration_deadline)}</strong>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      ) : (
-        <div>
-          {pastTournaments.length === 0 ? (
-            <div style={{ textAlign: "center", padding: space[6], color: theme.textMuted, ...text.body }}>
-              Nenhum torneio concluído ainda.
-            </div>
-          ) : (
-            pastTournaments.map((t) => {
-              const slug = t.name
-                .toLowerCase()
-                .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "")
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/(^-|-$)+/g, "");
-              return (
-                <div
-                  key={t.id}
-                  style={{ ...styles.tournamentCard, opacity: 0.85 }}
-                  onClick={() => navigate(`/leaderboard/${t.id}-${slug}`)}
-                >
-                  <h3 style={{ margin: `0 0 ${space[1]}px 0`, ...text.h3, color: theme.textMain }}>{t.name}</h3>
-                  <p style={{ margin: 0, ...text.caption, color: theme.textMuted }}>
-                    Toque para ver o Hall da Fama e resultados.
-                  </p>
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
+      {/* Lista de torneios + tabs Abertos/Concluídos migraram pra
+          PlayerTournaments.js (aba TORNEIOS, /torneios). Detalhe/inscrição
+          agora é tela cheia em /torneios/:id (TournamentDetail.js). */}
 
       {/* ── Modal: Meu Perfil (componente extraído — Onda C · Fase C.2) ── */}
       <ProfileModal
@@ -879,152 +604,6 @@ function PlayerHome() {
         </div>
       )}
 
-      {/* ── Modal: detalhes / inscrição do torneio ── */}
-      {selectedTournament && (
-        <div style={styles.modalOverlay} onClick={closeModal}>
-          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: space[4] }}>
-              <h2 style={{ margin: 0, ...text.h2, color: theme.textMain }}>
-                {selectedTournament.name}
-              </h2>
-              <button
-                onClick={closeModal}
-                style={{ background: "none", border: "none", color: theme.textMuted, fontSize: 24, cursor: "pointer", lineHeight: 1 }}
-                aria-label="Fechar"
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={styles.infoBox}>
-              <p style={{ ...text.overline, color: theme.textMuted, margin: `0 0 ${space[2]}px 0` }}>
-                Sobre o evento
-              </p>
-              <p style={{ margin: `0 0 ${space[4]}px 0`, ...text.body, whiteSpace: "pre-wrap" }}>
-                {selectedTournament.description}
-              </p>
-
-              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: space[3], display: "flex", flexDirection: "column", gap: space[1] }}>
-                <div style={styles.metaRow}>
-                  <LuCalendarDays size={14} />
-                  <span>
-                    <strong>Início:</strong> {formatDateTime(selectedTournament.start_date)}
-                  </span>
-                </div>
-                <div style={{ ...styles.metaRow, color: theme.danger }}>
-                  <LuClock size={14} />
-                  <span>
-                    <strong>Prazo final:</strong> {formatDateTime(selectedTournament.registration_deadline)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Pagamento (valor + PIX) */}
-            {selectedTournament.payment_info && (
-              <div style={{ ...styles.infoBox, borderLeft: `4px solid ${theme.whatsapp}` }}>
-                {selectedTournament.fee && (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space[3], paddingBottom: space[3], borderBottom: `1px solid ${theme.border}` }}>
-                    <span style={{ ...text.overline, color: theme.textMuted }}>
-                      Valor da inscrição
-                    </span>
-                    <span style={{ fontSize: 15, color: theme.gold, fontWeight: 800 }}>
-                      {selectedTournament.fee}
-                    </span>
-                  </div>
-                )}
-
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space[2] }}>
-                  <p style={{ ...text.caption, color: theme.whatsapp, margin: 0, fontWeight: 700 }}>
-                    PIX ({selectedTournament.pix_key_type || "Chave Aleatória"})
-                  </p>
-                  <button
-                    onClick={handleCopyPix}
-                    style={{
-                      backgroundColor: copied ? theme.whatsapp : "transparent",
-                      color: copied ? "#000" : theme.whatsapp,
-                      border: `1px solid ${theme.whatsapp}`,
-                      padding: `${space[1]}px ${space[3]}px`,
-                      borderRadius: radius.sm,
-                      fontSize: 11,
-                      cursor: "pointer",
-                      fontWeight: 700,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: space[1],
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    {copied ? <LuCheck size={13} /> : <LuCopy size={13} />}
-                    {copied ? "COPIADO!" : "COPIAR CHAVE"}
-                  </button>
-                </div>
-                <p style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
-                  {selectedTournament.payment_info}
-                </p>
-              </div>
-            )}
-
-            {!isSubscribed ? (
-              <button style={styles.primaryBtn} onClick={handleInscription}>
-                CONFIRMAR MINHA VAGA
-              </button>
-            ) : (
-              <div style={{ textAlign: "center", padding: space[4], backgroundColor: theme.accentSofter, borderRadius: radius.md, border: `1px solid ${theme.accent}` }}>
-                <LuCheck size={28} color={theme.accent} style={{ marginBottom: space[1] }} />
-                <h3 style={{ margin: `0 0 ${space[1]}px 0`, ...text.h3, color: theme.accent }}>
-                  Você já está inscrito!
-                </h3>
-                <p style={{ ...text.caption, color: theme.textMain, margin: `0 0 ${space[4]}px 0` }}>
-                  Efetue o pagamento na chave PIX acima e envie o comprovante para garantir sua vaga.
-                </p>
-                {whatsappLink && (
-                  <a href={whatsappLink} target="_blank" rel="noreferrer" style={styles.whatsappBtn}>
-                    ENVIAR COMPROVANTE VIA WHATSAPP
-                  </a>
-                )}
-              </div>
-            )}
-
-            {/* Patrocinadores */}
-            {selectedTournament.sponsors?.length > 0 && (
-              <div style={{ marginTop: space[5], borderTop: `1px solid ${theme.border}`, paddingTop: space[4], textAlign: "center" }}>
-                <p style={{ ...text.overline, color: theme.textMuted, marginBottom: space[4], letterSpacing: 2 }}>
-                  Patrocínio oficial
-                </p>
-
-                <div style={{ height: 90, display: "flex", justifyContent: "center", alignItems: "center" }}>
-                  <img
-                    key={currentSponsorIndex}
-                    src={mediaUrl(selectedTournament.sponsors[currentSponsorIndex].image_url)}
-                    alt={selectedTournament.sponsors[currentSponsorIndex].name || "Patrocinador"}
-                    style={{ maxHeight: "100%", maxWidth: 250, objectFit: "contain", animation: "fadeIn 0.5s ease-in" }}
-                  />
-                </div>
-
-                {selectedTournament.sponsors.length > 1 && (
-                  <div style={{ display: "flex", justifyContent: "center", gap: space[2], marginTop: space[4] }}>
-                    {selectedTournament.sponsors.map((_, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => setCurrentSponsorIndex(idx)}
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          backgroundColor: currentSponsorIndex === idx ? theme.accent : theme.cardLight,
-                          cursor: "pointer",
-                          transition: "all 0.3s ease",
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

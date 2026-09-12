@@ -2,13 +2,23 @@
 const db = require("../db");
 
 // 1. Buscar detalhes completos do torneio (Categorias, Patrocinadores, etc.)
+// Onda C · Fase C.4: agora devolve tambem course_name/city/state e
+// is_subscribed do req.user, pra que a tela TournamentDetail (acessada
+// por URL direta /torneios/:id) nao precise chamar /tournaments/list em
+// paralelo so pra descobrir se o jogador ja se inscreveu.
 exports.getTournamentDetails = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Busca o torneio (COM VERIFICAÇÃO DE CLUB_ID)
+    // Busca o torneio + curso (COM VERIFICACAO DE CLUB_ID)
     const [tourResults] = await db.execute(
-      "SELECT * FROM tournaments WHERE id = ? AND club_id = ?",
+      `SELECT t.*,
+              c.name  AS course_name,
+              c.city  AS course_city,
+              c.state AS course_state
+         FROM tournaments t
+    LEFT JOIN courses c ON c.id = t.course_id
+        WHERE t.id = ? AND t.club_id = ?`,
       [id, req.club.id],
     );
 
@@ -19,6 +29,15 @@ exports.getTournamentDetails = async (req, res) => {
     }
 
     const tournament = tourResults[0];
+
+    // Status de inscricao do proprio jogador (req.user.id vem do JWT).
+    // 0 = nao inscrito, >0 = ja inscrito. Mesmo formato que /tournaments/list
+    // devolve pra o cartao da lista.
+    const [subCheck] = await db.execute(
+      "SELECT 1 FROM inscriptions WHERE tournament_id = ? AND user_id = ? LIMIT 1",
+      [id, req.user.id],
+    );
+    tournament.is_subscribed = subCheck.length;
 
     // Busca as categorias desse torneio
     const [catResults] = await db.execute(
@@ -34,7 +53,7 @@ exports.getTournamentDetails = async (req, res) => {
     );
     tournament.sponsors = sponResults;
 
-    // Devolve tudo num pacote só para o Frontend
+    // Devolve tudo num pacote so para o Frontend
     res.json(tournament);
   } catch (error) {
     console.error("Erro ao buscar detalhes do torneio:", error);

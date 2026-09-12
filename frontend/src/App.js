@@ -37,6 +37,8 @@ import CoursePreview from './pages/CoursePreview';
 import AdminNoAccess from './pages/AdminNoAccess';
 import PlayerMore from './pages/PlayerMore';
 import PlayerRankings from './pages/PlayerRankings';
+import PlayerTournaments from './pages/PlayerTournaments';
+import TournamentDetail from './pages/TournamentDetail';
 import PlayerShell from './components/PlayerShell';
 
 // Importação da LGPD e Recuperação de Senha
@@ -309,7 +311,8 @@ function App() {
               <Route path="/my-performance" element={<PlayerRoute><MyPerformance /></PlayerRoute>} />
               <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />
               <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
-              <Route path="/torneios" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
+              <Route path="/torneios" element={<PlayerRoute><PlayerTournaments /></PlayerRoute>} />
+              <Route path="/torneios/:id" element={<PlayerRoute><TournamentDetail /></PlayerRoute>} />
               <Route path="/rankings" element={<PlayerRoute><PlayerRankings /></PlayerRoute>} />
               <Route path="/mais" element={<PlayerRoute><PlayerMore /></PlayerRoute>} />
             </Route>
