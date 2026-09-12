@@ -3,32 +3,21 @@
 // Lógica de negócio movida intacta das duas telas; só a apresentação é nova.
 import React, { useState, useEffect, useCallback, useContext } from "react";
 import api from "../services/api";
-import { logout } from "../services/session";
-import { getUser, updateUser } from "../services/authStorage";
+import { getUser } from "../services/authStorage";
 import { useNavigate } from "react-router-dom";
-import { ThemeContext, useAdminMembership } from "../App";
+import { ThemeContext } from "../App";
 import { useBirdifyTheme } from "../hooks/useBirdifyTheme";
-import Cropper from "react-easy-crop";
+import ProfileModal from "../components/ProfileModal";
 import {
   LuCalendarDays,
   LuClipboardList,
-  LuHistory,
   LuLandPlot,
   LuPlay,
-  LuTarget,
-  LuMenu,
   LuMapPin,
   LuClock,
   LuCopy,
   LuCheck,
-  LuLogOut,
-  LuLayoutDashboard,
   LuUser,
-  LuCamera,
-  LuInstagram,
-  LuMessageCircle,
-  LuZoomIn,
-  LuZoomOut,
   LuArrowRight,
   LuX,
 } from "react-icons/lu";
@@ -45,25 +34,16 @@ function PlayerHome() {
   const navigate = useNavigate();
   const club = useContext(ThemeContext) || {};
   const theme = useBirdifyTheme();
-  const { isAdmin: isAdminOfCurrentClub } = useAdminMembership();
 
   const [user, setUser] = useState(null);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Meu Perfil ─────────────────────────────────────────────────────────────
+  // Modal foi extraído pra ProfileModal (Onda C · Fase C.2). Aqui a home só
+  // precisa do profile pra exibir o avatar no header — o resto (form, upload,
+  // crop) fica dentro do próprio modal, que emite onProfileChange pra manter
+  // este cache sincronizado.
   const [profileOpen, setProfileOpen] = useState(false);
-  const [profile, setProfile] = useState(null); // dados vindos do servidor
-  const [profileForm, setProfileForm] = useState({ name: "", bio: "", instagram_handle: "", whatsapp_number: "", golf_motivation: "" });
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [photoUploading, setPhotoUploading] = useState(false);
-  const [profileMsg, setProfileMsg] = useState("");
-
-  // Enquadramento da foto (react-easy-crop): o arquivo escolhido abre num
-  // recorte circular com zoom/arrasto; só o quadro confirmado é enviado.
-  const [cropSrc, setCropSrc] = useState(null);      // dataURL da imagem original
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [cropAreaPx, setCropAreaPx] = useState(null); // região confirmada, em pixels da original
+  const [profile, setProfile] = useState(null);
 
   // ── Torneios (ex-PlayerDashboard) ──────────────────────────────────────────
   const [tournaments, setTournaments] = useState([]);
@@ -124,18 +104,9 @@ function PlayerHome() {
     setUser(parsedUser);
     fetchTournaments(parsedUser.id);
 
-    // Perfil (foto no header + dados do modal)
+    // Perfil (foto no header). O modal faz seu próprio fetch quando abre.
     api.get("/users/me/profile")
-      .then((res) => {
-        setProfile(res.data);
-        setProfileForm({
-          name: res.data.name || "",
-          bio: res.data.bio || "",
-          instagram_handle: res.data.instagram_handle || "",
-          whatsapp_number: res.data.whatsapp_number || "",
-          golf_motivation: res.data.golf_motivation || "",
-        });
-      })
+      .then((res) => setProfile(res.data))
       .catch(() => {}); // perfil é opcional — falha não bloqueia a home
 
     // Continuar Partida: se há activeGroup no localStorage, valida contra o
@@ -396,14 +367,8 @@ function PlayerHome() {
       .replace(",", " às");
   };
 
-  const handleLogout = () => {
-    // Limpa sessão de partida antes de sair — evita que outro usuário que
-    // fizer login no mesmo dispositivo herde o activeGroup do anterior.
-    if (activeSession) {
-      clearMatchSession(activeSession.group.id, activeSession.group.tournament_id);
-    }
-    logout(navigate);
-  };
+  // Logout foi movido pra aba "Mais" (Onda C · Fase C.2 — PlayerMore.js);
+  // a limpeza de activeGroup vive lá agora (auto-suficiente, lê o localStorage).
 
   const handleResumeMatch = () => {
     if (!activeSession) return;
@@ -417,91 +382,11 @@ function PlayerHome() {
     setActiveSession(null);
   };
 
-  // ── Meu Perfil: salvar dados / foto ────────────────────────────────────────
-  const handleSaveProfile = async () => {
-    setProfileSaving(true);
-    setProfileMsg("");
-    try {
-      const res = await api.put("/users/me/profile", profileForm);
-      setProfile((p) => ({ ...p, ...res.data }));
-      // Nome corrigido precisa refletir no header e nas telas que leem o user do localStorage
-      if (res.data.name && res.data.name !== user.name) {
-        const updatedUser = { ...user, name: res.data.name };
-        updateUser(updatedUser);
-        setUser(updatedUser);
-      }
-      // Fecha o modal imediatamente após salvar — sem delay/mensagem intermediária.
-      setProfileMsg("");
-      setProfileOpen(false);
-    } catch (e) {
-      setProfileMsg(e.response?.data?.error || "Erro ao salvar perfil.");
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  // Escolher arquivo NÃO envia mais direto: abre o enquadramento primeiro.
-  const handlePhotoChange = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // permite reescolher o mesmo arquivo
-    if (!file) return;
-    setProfileMsg("");
-    const reader = new FileReader();
-    reader.onload = () => {
-      setCrop({ x: 0, y: 0 });
-      setZoom(1);
-      setCropAreaPx(null);
-      setCropSrc(reader.result);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Recorta a região confirmada num canvas 512x512 e devolve um blob JPEG.
-  const buildCroppedBlob = (src, area) =>
-    new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const size = 512;
-        const canvas = document.createElement("canvas");
-        canvas.width = size;
-        canvas.height = size;
-        canvas
-          .getContext("2d")
-          .drawImage(img, area.x, area.y, area.width, area.height, 0, 0, size, size);
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("Falha ao recortar a imagem."))),
-          "image/jpeg",
-          0.9
-        );
-      };
-      img.onerror = () => reject(new Error("Não foi possível ler a imagem."));
-      img.src = src;
-    });
-
-  const handleConfirmCrop = async () => {
-    if (!cropSrc || !cropAreaPx) return;
-    setPhotoUploading(true);
-    setProfileMsg("");
-    try {
-      const blob = await buildCroppedBlob(cropSrc, cropAreaPx);
-      const fd = new FormData();
-      fd.append("photo", blob, "avatar.jpg");
-      const res = await api.post("/users/me/photo", fd);
-      setProfile((p) => ({ ...p, profile_photo_url: res.data.url }));
-      setCropSrc(null);
-    } catch (err) {
-      setProfileMsg(err.response?.data?.error || err.message || "Erro ao enviar a foto.");
-    } finally {
-      setPhotoUploading(false);
-    }
-  };
-
-  // ── Atalhos do grid (2 colunas) ────────────────────────────────────────────
+  // ── Atalhos do grid (2×2) ──────────────────────────────────────────────────
+  // Histórico e Meu Desempenho migraram pra aba "Mais" (Onda C · Fase C.2).
   const shortcuts = [
     { icon: LuCalendarDays, label: "Reservar", onClick: () => navigate("/tee-times") },
     { icon: LuClipboardList, label: "Minhas Reservas", onClick: () => navigate("/my-bookings") },
-    { icon: LuHistory, label: "Histórico", onClick: () => navigate("/player-history") },
-    { icon: LuTarget, label: "Meu Desempenho", onClick: () => navigate("/my-performance") },
     { icon: LuLandPlot, label: "Treino do dia", onClick: () => navigate("/daily-training") },
     { icon: LuPlay, label: "Entrar na Partida", onClick: () => setJoinOpen(true) },
   ];
@@ -526,41 +411,6 @@ function PlayerHome() {
       paddingBottom: space[4],
       marginBottom: space[5],
       borderBottom: `1px solid ${theme.border}`,
-    },
-    menuBtn: {
-      background: "none",
-      border: `1px solid ${theme.border}`,
-      borderRadius: radius.sm,
-      padding: space[2],
-      color: theme.textMain,
-      cursor: "pointer",
-      display: "flex",
-      alignItems: "center",
-    },
-    dropdown: {
-      position: "absolute",
-      top: "calc(100% + 8px)",
-      right: 0,
-      backgroundColor: theme.card,
-      border: `1px solid ${theme.border}`,
-      borderRadius: radius.md,
-      boxShadow: shadow.lg,
-      minWidth: 220,
-      zIndex: 100,
-      overflow: "hidden",
-    },
-    dropdownItem: {
-      display: "flex",
-      alignItems: "center",
-      gap: space[3],
-      width: "100%",
-      padding: `${space[3]}px ${space[4]}px`,
-      background: "none",
-      border: "none",
-      color: theme.textMain,
-      cursor: "pointer",
-      textAlign: "left",
-      ...text.body,
     },
     grid: {
       display: "grid",
@@ -765,48 +615,8 @@ function PlayerHome() {
           <span style={{ ...text.body, color: theme.textMuted }}>
             {user.name.split(" ")[0]}
           </span>
-          <button
-            onClick={() => setMenuOpen((v) => !v)}
-            style={styles.menuBtn}
-            aria-label="Menu"
-          >
-            <LuMenu size={20} />
-          </button>
-
-          {menuOpen && (
-            <>
-              {/* Overlay invisível pra fechar o menu ao clicar fora */}
-              <div
-                onClick={() => setMenuOpen(false)}
-                style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
-              />
-              <div style={styles.dropdown}>
-                <button
-                  style={styles.dropdownItem}
-                  onClick={() => { setMenuOpen(false); setProfileOpen(true); }}
-                >
-                  <LuUser size={18} color={theme.accent} />
-                  Meu Perfil
-                </button>
-                {isAdminOfCurrentClub && (
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => { setMenuOpen(false); navigate("/dashboard"); }}
-                  >
-                    <LuLayoutDashboard size={18} color={theme.accent} />
-                    Painel do Organizador
-                  </button>
-                )}
-                <button
-                  style={{ ...styles.dropdownItem, color: theme.danger }}
-                  onClick={handleLogout}
-                >
-                  <LuLogOut size={18} />
-                  Sair da Conta
-                </button>
-              </div>
-            </>
-          )}
+          {/* Menu hambúrguer migrou pra aba "Mais" (Onda C · Fase C.2):
+              Meu Perfil, Painel do Organizador e Sair da Conta ficam lá. */}
         </div>
       </div>
 
@@ -989,198 +799,12 @@ function PlayerHome() {
         </div>
       )}
 
-      {/* ── Modal: Meu Perfil ── */}
-      {profileOpen && (
-        <div style={styles.modalOverlay} onClick={() => setProfileOpen(false)}>
-          <div style={{ ...styles.modalContent, maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ margin: `0 0 ${space[5]}px 0`, ...text.h2, color: theme.textMain, textAlign: "center" }}>
-              Meu Perfil
-            </h2>
-
-            {/* Etapa de enquadramento: substitui o conteúdo do modal até confirmar/cancelar */}
-            {cropSrc ? (
-              <div>
-                <p style={{ ...text.caption, color: theme.textMuted, textAlign: "center", margin: `0 0 ${space[3]}px 0` }}>
-                  Arraste para posicionar e use o zoom para enquadrar
-                </p>
-                <div style={{ position: "relative", width: "100%", height: 280, borderRadius: radius.md, overflow: "hidden", backgroundColor: theme.bg }}>
-                  <Cropper
-                    image={cropSrc}
-                    crop={crop}
-                    zoom={zoom}
-                    aspect={1}
-                    cropShape="round"
-                    showGrid={false}
-                    onCropChange={setCrop}
-                    onZoomChange={setZoom}
-                    onCropComplete={(_, areaPixels) => setCropAreaPx(areaPixels)}
-                  />
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: space[3], margin: `${space[4]}px 0` }}>
-                  <LuZoomOut size={16} color={theme.textMuted} />
-                  <input
-                    type="range"
-                    min={1}
-                    max={3}
-                    step={0.05}
-                    value={zoom}
-                    onChange={(e) => setZoom(Number(e.target.value))}
-                    style={{ flex: 1, accentColor: theme.accent }}
-                    aria-label="Zoom da foto"
-                  />
-                  <LuZoomIn size={16} color={theme.textMuted} />
-                </div>
-
-                <div style={{ display: "flex", gap: space[3] }}>
-                  <button
-                    onClick={() => setCropSrc(null)}
-                    disabled={photoUploading}
-                    style={{ ...styles.secondaryBtn, flex: 1 }}
-                  >
-                    CANCELAR
-                  </button>
-                  <button
-                    onClick={handleConfirmCrop}
-                    disabled={photoUploading || !cropAreaPx}
-                    style={{ ...styles.primaryBtn, flex: 2, opacity: photoUploading ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: space[2] }}
-                  >
-                    <LuCheck size={16} />
-                    {photoUploading ? "Enviando..." : "USAR FOTO"}
-                  </button>
-                </div>
-                {profileMsg && (
-                  <div style={{ ...text.caption, color: theme.danger, textAlign: "center", marginTop: space[3] }}>
-                    {profileMsg}
-                  </div>
-                )}
-              </div>
-            ) : (
-            <>
-            {/* Foto */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: space[5] }}>
-              <div style={{ position: "relative", width: 84, height: 84 }}>
-                {profile?.profile_photo_url ? (
-                  <img
-                    src={mediaUrl(profile.profile_photo_url)}
-                    alt="Foto de perfil"
-                    style={{ width: 84, height: 84, borderRadius: "50%", objectFit: "cover", border: `2px solid ${theme.border}` }}
-                  />
-                ) : (
-                  <div style={{ width: 84, height: 84, borderRadius: "50%", backgroundColor: theme.bg, border: `2px dashed ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted }}>
-                    <LuUser size={34} />
-                  </div>
-                )}
-                <label style={{
-                  position: "absolute", bottom: -2, right: -2,
-                  width: 30, height: 30, borderRadius: "50%",
-                  backgroundColor: theme.accent, color: theme.accentContrast,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: photoUploading ? "wait" : "pointer",
-                  border: `2px solid ${theme.card}`,
-                }}>
-                  <LuCamera size={15} />
-                  <input type="file" accept="image/*" onChange={handlePhotoChange} disabled={photoUploading} style={{ display: "none" }} />
-                </label>
-              </div>
-              {photoUploading && (
-                <div style={{ ...text.caption, color: theme.textMuted, marginTop: space[1] }}>Enviando foto...</div>
-              )}
-            </div>
-
-            {/* Nome completo (editável — corrige cadastro errado) */}
-            <label style={{ ...text.overline, color: theme.textMuted, display: "block", marginBottom: space[1] }}>
-              Nome completo
-            </label>
-            <input
-              type="text"
-              value={profileForm.name}
-              onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))}
-              maxLength={100}
-              placeholder="Seu nome completo"
-              style={{ width: "100%", boxSizing: "border-box", padding: space[3], borderRadius: radius.sm, border: `1px solid ${theme.border}`, backgroundColor: theme.bg, color: theme.textMain, fontSize: 14, fontFamily: theme.font, marginBottom: space[4], outline: "none" }}
-            />
-
-            {/* Bio */}
-            <label style={{ ...text.overline, color: theme.textMuted, display: "block", marginBottom: space[1] }}>
-              Bio
-            </label>
-            <textarea
-              value={profileForm.bio}
-              onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.target.value }))}
-              maxLength={150}
-              placeholder="Uma linha sobre você"
-              style={{ width: "100%", boxSizing: "border-box", padding: space[3], borderRadius: radius.sm, border: `1px solid ${theme.border}`, backgroundColor: theme.bg, color: theme.textMain, minHeight: 56, resize: "vertical", fontFamily: theme.font, fontSize: 14 }}
-            />
-            <div style={{ ...text.caption, color: theme.textMuted, textAlign: "right", marginBottom: space[4] }}>
-              {profileForm.bio.length}/150
-            </div>
-
-            {/* Redes sociais */}
-            <label style={{ ...text.overline, color: theme.textMuted, display: "block", marginBottom: space[1] }}>
-              Instagram (opcional)
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: space[2], border: `1px solid ${theme.border}`, borderRadius: radius.sm, backgroundColor: theme.bg, padding: `0 ${space[3]}px`, marginBottom: space[4] }}>
-              <LuInstagram size={16} color={theme.textMuted} />
-              <input
-                type="text"
-                value={profileForm.instagram_handle}
-                onChange={(e) => setProfileForm((f) => ({ ...f, instagram_handle: e.target.value }))}
-                maxLength={60}
-                placeholder="seu.usuario"
-                style={{ flex: 1, padding: `${space[3]}px 0`, border: "none", outline: "none", backgroundColor: "transparent", color: theme.textMain, fontSize: 14, fontFamily: theme.font }}
-              />
-            </div>
-
-            <label style={{ ...text.overline, color: theme.textMuted, display: "block", marginBottom: space[1] }}>
-              WhatsApp (opcional)
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: space[2], border: `1px solid ${theme.border}`, borderRadius: radius.sm, backgroundColor: theme.bg, padding: `0 ${space[3]}px`, marginBottom: space[4] }}>
-              <LuMessageCircle size={16} color={theme.textMuted} />
-              <input
-                type="tel"
-                value={profileForm.whatsapp_number}
-                onChange={(e) => setProfileForm((f) => ({ ...f, whatsapp_number: e.target.value }))}
-                maxLength={20}
-                placeholder="5511999998888"
-                style={{ flex: 1, padding: `${space[3]}px 0`, border: "none", outline: "none", backgroundColor: "transparent", color: theme.textMain, fontSize: 14, fontFamily: theme.font }}
-              />
-            </div>
-
-            {/* Motivação */}
-            <label style={{ ...text.overline, color: theme.textMuted, display: "block", marginBottom: space[1] }}>
-              O que me motiva no golfe
-            </label>
-            <textarea
-              value={profileForm.golf_motivation}
-              onChange={(e) => setProfileForm((f) => ({ ...f, golf_motivation: e.target.value }))}
-              maxLength={280}
-              placeholder="Ex: superar meu próprio jogo a cada rodada"
-              style={{ width: "100%", boxSizing: "border-box", padding: space[3], borderRadius: radius.sm, border: `1px solid ${theme.border}`, backgroundColor: theme.bg, color: theme.textMain, minHeight: 72, resize: "vertical", fontFamily: theme.font, fontSize: 14 }}
-            />
-            <div style={{ ...text.caption, color: theme.textMuted, textAlign: "right", marginBottom: space[4] }}>
-              {profileForm.golf_motivation.length}/280
-            </div>
-
-            {profileMsg && (
-              <div style={{ ...text.caption, color: profileMsg === "Perfil salvo!" ? theme.accent : theme.danger, textAlign: "center", marginBottom: space[3] }}>
-                {profileMsg}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: space[3] }}>
-              <button onClick={() => setProfileOpen(false)} style={{ ...styles.secondaryBtn, flex: 1 }}>
-                FECHAR
-              </button>
-              <button onClick={handleSaveProfile} disabled={profileSaving} style={{ ...styles.primaryBtn, flex: 2, opacity: profileSaving ? 0.7 : 1 }}>
-                {profileSaving ? "Salvando..." : "SALVAR PERFIL"}
-              </button>
-            </div>
-            </>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ── Modal: Meu Perfil (componente extraído — Onda C · Fase C.2) ── */}
+      <ProfileModal
+        isOpen={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        onProfileChange={(next) => setProfile(next)}
+      />
 
       {/* ── Modal: entrar na partida por código ── */}
       {joinOpen && (

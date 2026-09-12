@@ -35,6 +35,7 @@ import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
 import AdminNoAccess from './pages/AdminNoAccess';
+import PlayerMore from './pages/PlayerMore';
 import PlayerShell from './components/PlayerShell';
 
 // Importação da LGPD e Recuperação de Senha
@@ -309,7 +310,7 @@ function App() {
               <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
               <Route path="/torneios" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
               <Route path="/rankings" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
-              <Route path="/mais" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
+              <Route path="/mais" element={<PlayerRoute><PlayerMore /></PlayerRoute>} />
             </Route>
 
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
