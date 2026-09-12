@@ -204,6 +204,19 @@ CREATE TABLE IF NOT EXISTS tournaments (
   -- modality — result_points ja ignora handicap pro ranking; doubles com
   -- ask_handicap=0 pula o modal de handicap por dupla.
   ask_handicap           TINYINT(1) NOT NULL DEFAULT 1,
+  -- cover_image_path/event_summary/*_content: adicionados em 2026_09_12
+  -- (Onda C · Fase C.5) para a tela rica de detalhe do torneio do jogador.
+  -- Path relativo (/uploads/tournaments/{clubId}/{id}.ext) — mesmo padrao
+  -- dos sponsors. event_summary e' o "Sobre o evento" curto (cartao); os
+  -- *_content sao textos livres exibidos em secoes expansiveis. Todos
+  -- opcionais — torneios legados ficam com todos NULL e as secoes vazias
+  -- somem da UI (fallback documentado na Fase C.6).
+  cover_image_path       VARCHAR(500)  DEFAULT NULL,
+  event_summary          VARCHAR(500)  DEFAULT NULL,
+  info_content           TEXT          DEFAULT NULL,
+  schedule_content       TEXT          DEFAULT NULL,
+  prizes_content         TEXT          DEFAULT NULL,
+  rules_content          TEXT          DEFAULT NULL,
   categories             TEXT          DEFAULT NULL,
   created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_tourn_club   FOREIGN KEY (club_id)   REFERENCES clubs(id)   ON DELETE CASCADE,
