@@ -35,6 +35,7 @@ import TeeTimes from './pages/TeeTimes';
 import MyBookings from './pages/MyBookings';
 import CoursePreview from './pages/CoursePreview';
 import AdminNoAccess from './pages/AdminNoAccess';
+import PlayerShell from './components/PlayerShell';
 
 // Importação da LGPD e Recuperação de Senha
 import LGPDBanner from "./pages/LGPDBanner";
@@ -136,12 +137,14 @@ const AdminRoute = ({ children }) => {
 
 // Item 6 (2026-08-28): rota "/" decide destino conforme papel + vinculo.
 //   - sem token         → /login
-//   - PLAYER            → PlayerHome (como sempre)
+//   - PLAYER            → PlayerHome envolto em PlayerShell (bottom nav)
 //   - ADMIN + vinculo   → /dashboard (nunca ve tela de jogador)
 //   - ADMIN sem vinculo → AdminNoAccess (com links pros clubes que administra)
 // Sem este wrapper, admin sem vinculo caia em PlayerHome se comportando como
 // jogador comum — exatamente o que a regra de produto quer proibir.
-const RootRoute = () => {
+// Onda C · C.1 (2026-09-12): PlayerHome ganha PlayerShell (bottom nav).
+// AdminNoAccess NÃO recebe o shell — é tela de "não pertence aqui".
+const RootRoute = ({ hasSponsorBar }) => {
   const { loading, isAdmin, adminOf } = useAdminMembership();
   const token = getToken();
   if (!token) return <Navigate to="/login" replace />;
@@ -160,7 +163,11 @@ const RootRoute = () => {
     // Renderiza AdminNoAccess (tela com lista de dominios corretos + Sair).
     return <AdminNoAccess />;
   }
-  return <PlayerHome />;
+  return (
+    <PlayerShell hasSponsorBar={hasSponsorBar}>
+      <PlayerHome />
+    </PlayerShell>
+  );
 };
 
 // PlayerRoute: rotas de fluxo de jogador (scorecard, treino, tee time, etc.).
@@ -267,7 +274,7 @@ function App() {
 
         <div style={{ paddingBottom: showSponsorBar ? "65px" : 0 }}>
           <Routes>
-            <Route path="/" element={<RootRoute />} />
+            <Route path="/" element={<RootRoute hasSponsorBar={showSponsorBar} />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -279,15 +286,32 @@ function App() {
                 dados do clube errado (fix 2026-08-27). */}
             <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
             <Route path="/tournament/:id" element={<AdminRoute><TournamentManager /></AdminRoute>} />
+
+            {/* FULL-SCREEN: cartão imersivo do torneio/treino — SEM bottom nav
+                do jogador (a nav atrapalharia o fluxo de marcação). */}
             <Route path="/scorecard/:groupId" element={<PlayerRoute><Scorecard /></PlayerRoute>} />
+            <Route path="/training-scorecard/:groupId" element={<PlayerRoute><TrainingScorecard /></PlayerRoute>} />
+
             <Route path="/leaderboard/:tournamentId" element={<Leaderboard />} />
             <Route path="/courses" element={<AdminRoute><CourseManager /></AdminRoute>} />
             {/* Rota legada: PlayerDashboard foi unificado com JoinGame em PlayerHome ("/") */}
             <Route path="/player" element={<Navigate to="/" replace />} />
 
-            {/* ROTAS DE TREINO — sao fluxo de jogador, admin nao entra */}
-            <Route path="/daily-training" element={<PlayerRoute><DailyTraining /></PlayerRoute>} />
-            <Route path="/training-scorecard/:groupId" element={<PlayerRoute><TrainingScorecard /></PlayerRoute>} />
+            {/* ROTAS DE JOGADOR COM BOTTOM NAV (Onda C · Fase C.1):
+                envoltas por PlayerShell — nav aparece embaixo em todas.
+                Placeholders /torneios /rankings /mais renderizam PlayerHome
+                temporariamente; ganham conteúdo próprio nas fases C.2/C.3/C.4. */}
+            <Route element={<PlayerShell hasSponsorBar={showSponsorBar} />}>
+              <Route path="/daily-training" element={<PlayerRoute><DailyTraining /></PlayerRoute>} />
+              <Route path="/player-history" element={<PlayerRoute><PlayerHistory /></PlayerRoute>} />
+              <Route path="/my-performance" element={<PlayerRoute><MyPerformance /></PlayerRoute>} />
+              <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />
+              <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
+              <Route path="/torneios" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
+              <Route path="/rankings" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
+              <Route path="/mais" element={<PlayerRoute><PlayerHome /></PlayerRoute>} />
+            </Route>
+
             {/* Ranking do dia é PÚBLICO — compartilhável sem exigir login. */}
             <Route path="/training-leaderboard" element={<TrainingLeaderboard />} />
             <Route path="/treino/:groupId/ranking" element={<TrainingRankingPublic />} />
@@ -295,8 +319,6 @@ function App() {
                 Usada como fallback do botão de share quando o usuário não veio
                 do próprio scorecard (não tem returnGroupId no state). */}
             <Route path="/ranking/dia" element={<TrainingRankingPublic />} />
-            <Route path="/player-history" element={<PlayerRoute><PlayerHistory /></PlayerRoute>} />
-            <Route path="/my-performance" element={<PlayerRoute><MyPerformance /></PlayerRoute>} />
             <Route path="/circuits" element={<AdminRoute><CircuitManagement /></AdminRoute>} />
             <Route path="/ranking/:circuitId" element={<CircuitRankingPublic />} />
             <Route path="/admin/kpis" element={<AdminRoute><AdminKPIs /></AdminRoute>} />
@@ -307,8 +329,6 @@ function App() {
             <Route path="/admin/ajustar-scores" element={<AdminRoute><AdminScoreEditor /></AdminRoute>} />
             <Route path="/admin/scores-auditoria" element={<AdminRoute><AdminScoreAuditLog /></AdminRoute>} />
             <Route path="/admin/treinos" element={<AdminRoute><AdminTrainings /></AdminRoute>} />
-            <Route path="/tee-times" element={<PlayerRoute><TeeTimes /></PlayerRoute>} />
-            <Route path="/my-bookings" element={<PlayerRoute><MyBookings /></PlayerRoute>} />
             <Route path="/campo/:courseId" element={<CoursePreview />} />
 
             <Route path="/privacidade" element={<Privacidade />} />
