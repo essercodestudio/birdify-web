@@ -1,5 +1,15 @@
 // backend/controllers/tournamentController.js
 const db = require('../db');
+const fs = require('fs');
+const path = require('path');
+
+// Onda C · Fase C.5: helpers de path da capa do torneio.
+// Mesmo padrao do uploadHoleImage — path fisico agrupado por clube pra
+// isolamento; path relativo salvo no banco comeca com /uploads/.
+const TOURNAMENT_COVERS_ROOT = path.join(__dirname, '..', 'public', 'uploads', 'tournaments');
+function relativeCoverPath(clubId, tournamentId, ext) {
+    return `/uploads/tournaments/${clubId}/${tournamentId}${ext}`;
+}
 
 // ─── Pontuação por Resultado (Onda A · Commit 2 · 2026-08-31) ────────────────
 // Lista canônica dos resultados aceitos, na ordem "melhor → pior" (útil pra UI).
@@ -282,7 +292,11 @@ exports.createTournament = async (req, res) => {
     try {
         const {
             name, start_date, course_id, description, fee, payment_info, pix_key_type,
-            whatsapp_contact, registration_deadline, categories, sponsors, format, rounds
+            whatsapp_contact, registration_deadline, categories, sponsors, format, rounds,
+            // Onda C · Fase C.5: conteudo rico do torneio (tela de detalhe do jogador).
+            // cover_image_path NAO vem por aqui — vai por POST /:id/cover (upload multer),
+            // pra evitar path forjado no body e centralizar validacao no handler de upload.
+            event_summary, info_content, schedule_content, prizes_content, rules_content
         } = req.body;
         const total_rounds = normalizeTotalRounds(req.body.total_rounds);
         // Onda A · commit 2: scoring_type ('strokes' | 'result_points') + result_points[]
@@ -349,9 +363,9 @@ exports.createTournament = async (req, res) => {
         const nn = (v) => (v === undefined || v === '' ? null : v);
         const [result] = await conn.execute(
             `INSERT INTO tournaments
-             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, modality, ask_handicap, club_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap, req.club.id]
+             (name, start_date, course_id, description, fee, payment_info, pix_key_type, whatsapp_contact, registration_deadline, format, total_rounds, scoring_type, modality, ask_handicap, event_summary, info_content, schedule_content, prizes_content, rules_content, club_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type), nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap, nn(event_summary), nn(info_content), nn(schedule_content), nn(prizes_content), nn(rules_content), req.club.id]
         );
         const tournamentId = result.insertId;
 
@@ -403,7 +417,10 @@ exports.updateTournament = async (req, res) => {
         const { id } = req.params;
         const {
             name, start_date, course_id, description, fee, payment_info, pix_key_type,
-            whatsapp_contact, registration_deadline, categories, sponsors, format, rounds
+            whatsapp_contact, registration_deadline, categories, sponsors, format, rounds,
+            // Onda C · Fase C.5: conteudo rico. cover_image_path segue por rota
+            // separada (POST /:id/cover), nao passa por update de body.
+            event_summary, info_content, schedule_content, prizes_content, rules_content
         } = req.body;
         // Se veio total_rounds no body, respeita; senão mantém o atual (não sobrescreve
         // torneio multi-rodada existente por acidente quando o admin só edita descrição).
@@ -506,10 +523,13 @@ exports.updateTournament = async (req, res) => {
         await conn.execute(
             `UPDATE tournaments SET
              name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?,
-             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?, modality=?, ask_handicap=?
+             whatsapp_contact=?, registration_deadline=?, format=?, total_rounds=?, scoring_type=?, modality=?, ask_handicap=?,
+             event_summary=?, info_content=?, schedule_content=?, prizes_content=?, rules_content=?
              WHERE id=? AND club_id=?`,
             [name, start_date, course_id, nn(description), nn(fee), nn(payment_info), nn(pix_key_type),
-             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap, id, req.club.id]
+             nn(whatsapp_contact), nn(registration_deadline), fmt, total_rounds, scoring_type, modality, ask_handicap,
+             nn(event_summary), nn(info_content), nn(schedule_content), nn(prizes_content), nn(rules_content),
+             id, req.club.id]
         );
 
         // Onda A · commit 2 + Bloco 2 · Commit 2.2: replace atômico da config de
@@ -652,8 +672,59 @@ exports.toggleStatus = async (req, res) => {
         
     } catch (error) {
         console.error('Erro ao alterar status do torneio:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Erro interno no servidor.'
         });
+    }
+};
+
+// 8. UPLOAD DE CAPA DO TORNEIO (Onda C · Fase C.5)
+// Espelha o padrao de uploadHoleImage (courseController.js): valida tenant
+// via club_id, remove imagem antiga se extensao mudou, faz UPDATE em
+// cover_image_path e retorna o path relativo pronto pra mediaUrl().
+// Multer (config no tournamentRoutes.js) ja salvou o arquivo em
+// public/uploads/tournaments/{clubId}/{tournamentId}.{ext} — aqui so
+// higienizamos e gravamos.
+exports.uploadTournamentCover = async (req, res) => {
+    try {
+        const tournamentId = Number(req.params.id);
+        if (!tournamentId) return res.status(400).json({ error: 'Parametro invalido.' });
+        if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+
+        // Multi-tenant: torneio precisa pertencer ao clube do dominio atual.
+        const [tRows] = await db.execute(
+            'SELECT id, cover_image_path FROM tournaments WHERE id = ? AND club_id = ?',
+            [tournamentId, req.club.id]
+        );
+        if (tRows.length === 0) {
+            // Arquivo ja foi salvo pelo multer — remove pra nao deixar lixo em disco.
+            try { fs.unlinkSync(req.file.path); } catch (_) {}
+            return res.status(404).json({ error: 'Torneio nao encontrado.' });
+        }
+
+        // Se a capa antiga existir e tiver extensao diferente da nova, apaga
+        // (senao o disco fica com dois arquivos — o filename e' deterministico
+        // pelo id, so muda a extensao). Se for a mesma extensao, multer ja
+        // sobrescreveu no lugar.
+        const oldPath = tRows[0].cover_image_path;
+        if (oldPath) {
+            const oldAbs = path.join(__dirname, '..', 'public', oldPath.replace(/^\/+/, ''));
+            if (oldAbs !== req.file.path) {
+                try { fs.unlinkSync(oldAbs); } catch (_) {}
+            }
+        }
+
+        const ext = path.extname(req.file.filename).toLowerCase();
+        const imagePath = relativeCoverPath(req.club.id, tournamentId, ext);
+
+        await db.execute(
+            'UPDATE tournaments SET cover_image_path = ? WHERE id = ? AND club_id = ?',
+            [imagePath, tournamentId, req.club.id]
+        );
+
+        res.json({ cover_image_path: imagePath });
+    } catch (err) {
+        console.error('Erro no upload de capa do torneio:', err);
+        res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 };
