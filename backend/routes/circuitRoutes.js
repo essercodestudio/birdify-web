@@ -2,7 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const c       = require('../controllers/circuitController');
-const { requireAdmin } = require('../middlewares/authMiddleware');
+const { requireAuth, requireAdmin } = require('../middlewares/authMiddleware');
 
 // ── Sponsors globais (clube) — ANTES de /:id para evitar conflito de rota ─────
 router.get('/club-sponsors',          c.listSponsorsPublic);         // público
@@ -15,6 +15,10 @@ router.delete('/sponsors/:sponsorId', requireAdmin, c.deleteSponsor);
 // são páginas do CircuitManagement (admin) — sobem pra requireAdmin. Ranking
 // segue público pra CircuitRankingPublic (rota /ranking/:circuitId sem login).
 router.get('/',             requireAdmin, c.listCircuits);
+// Onda C · Fase C.3: listagem enxuta pra aba RANKINGS do jogador.
+// ANTES de /:id senão o Express casaria com id="public". requireAuth
+// (não requireAdmin) porque o jogador precisa ver os circuitos do clube dele.
+router.get('/public',       requireAuth,  c.listCircuitsPublic);
 router.get('/:id',          requireAdmin, c.getCircuit);
 router.get('/:id/ranking',  c.getCircuitRanking);
 router.get('/:id/sponsors', requireAdmin, c.getCircuitSponsors);

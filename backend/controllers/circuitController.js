@@ -17,6 +17,27 @@ exports.listCircuits = async (req, res) => {
   }
 };
 
+// Onda C · Fase C.3: endpoint enxuto pra aba RANKINGS do jogador.
+// requireAuth (sem requireAdmin) porque a nav do player pede acesso — mas
+// só devolve campos que fazem sentido pro jogador ver (não expõe metadados
+// internos do admin, ex: created_at, campos futuros). Multi-tenant via
+// req.club.id, mesmo padrao do listCircuits.
+exports.listCircuitsPublic = async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, name, description, total_stages, num_discards
+         FROM circuits
+        WHERE club_id = ?
+        ORDER BY created_at DESC`,
+      [req.club.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Erro ao listar circuitos (public):', err);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+};
+
 exports.getCircuit = async (req, res) => {
   try {
     const { id } = req.params;
