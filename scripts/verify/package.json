@@ -13,7 +13,8 @@
     "course-tees-multitenant": "node course_tees_multitenant.js",
     "round-boundary": "node verify-round-boundary.js",
     "leaderboard-multi-round-count": "node verify-leaderboard-multi-round-count.js",
-    "admin-trainings-by-date": "node verify-admin-trainings-by-date.js"
+    "admin-trainings-by-date": "node verify-admin-trainings-by-date.js",
+    "player-nav-onda-c": "node verify-player-nav-onda-c.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
