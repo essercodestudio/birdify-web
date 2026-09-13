@@ -519,7 +519,11 @@ exports.updateTournament = async (req, res) => {
 
         await conn.beginTransaction();
 
-        const nn = (v) => (v === undefined ? null : v);
+        // Simetria com createTournament: undefined OU '' -> NULL. Antes,
+        // updateTournament so tratava undefined, o que quebrava 500 quando
+        // UI mandava registration_deadline='' (coluna datetime nao aceita
+        // string vazia). Bug listado em project_todo_update_tournament_nn_empty_string.
+        const nn = (v) => (v === undefined || v === '' ? null : v);
         await conn.execute(
             `UPDATE tournaments SET
              name=?, start_date=?, course_id=?, description=?, fee=?, payment_info=?, pix_key_type=?,

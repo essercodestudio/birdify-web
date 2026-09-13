@@ -106,6 +106,18 @@ function Dashboard() {
   const [sponsorLogo, setSponsorLogo] = useState('');
   const [sponsorUploading, setSponsorUploading] = useState(false);
 
+  // Onda C · Fase C.5 · commit 3/3: conteudo rico do torneio.
+  // cover_image_path e' upload dedicado (POST /:id/cover) — so disponivel
+  // em modo edicao, porque precisa do id. Em modo criacao, admin salva
+  // primeiro, edita depois pra adicionar capa.
+  const [coverImagePath, setCoverImagePath] = useState('');
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [eventSummary, setEventSummary] = useState('');
+  const [infoContent, setInfoContent] = useState('');
+  const [scheduleContent, setScheduleContent] = useState('');
+  const [prizesContent, setPrizesContent] = useState('');
+  const [rulesContent, setRulesContent] = useState('');
+
   // Fonte única das categorias — utils/categories.js (compartilhada com os leaderboards)
   const defaultCategories = TOURNAMENT_CATEGORIES;
   const [selectedCategories, setSelectedCategories] = useState([]);
@@ -190,6 +202,31 @@ function Dashboard() {
     if(sponsorName) {
         setSponsors([...sponsors, { name: sponsorName, image_url: sponsorLogo }]);
         setSponsorName(''); setSponsorLogo('');
+    }
+  };
+
+  // Onda C · Fase C.5 · commit 3/3: upload da capa do torneio.
+  // Rota dedicada POST /tournaments/:id/cover (multer + tenant path).
+  // Handler so e' chamado em modo edicao (editTournamentId presente) —
+  // em modo criacao o input nem aparece (msg orienta salvar antes).
+  // Cache-bust com ?t=Date.now() porque o filename e' deterministico.
+  const handleCoverUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !editTournamentId) return;
+    if (file.size > 3 * 1024 * 1024) { alert('Capa deve ter ate 3MB.'); return; }
+    setCoverUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('cover', file);
+      const res = await api.post(`/tournaments/${editTournamentId}/cover`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setCoverImagePath(`${res.data.cover_image_path}?t=${Date.now()}`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Falha no upload da capa.');
+    } finally {
+      setCoverUploading(false);
     }
   };
 
@@ -343,6 +380,13 @@ function Dashboard() {
       scoring_type: scoringType,
       modality,
       ask_handicap: askHandicap ? 1 : 0,
+      // Onda C · Fase C.5 · commit 3/3: conteudo rico (cover_image_path
+      // NAO vai no body — vem por rota separada POST /:id/cover).
+      event_summary: eventSummary,
+      info_content: infoContent,
+      schedule_content: scheduleContent,
+      prizes_content: prizesContent,
+      rules_content: rulesContent,
       ...(roundsPayload ? { rounds: roundsPayload } : {}),
       ...(resultPointsPayload ? { result_points: resultPointsPayload } : {}),
     };
@@ -371,6 +415,14 @@ function Dashboard() {
       setSponsors(t.sponsors || []);
       setPixKeyType(t.pix_key_type || 'Chave Aleatória');
       setFormat(t.format === 'tee_time' ? 'tee_time' : 'shotgun');
+      // Onda C · Fase C.5 · commit 3/3: hidrata conteudo rico. Cover
+      // ganha cache-bust pra forcar reload se foi trocada em outra sessao.
+      setCoverImagePath(t.cover_image_path ? `${t.cover_image_path}?t=${Date.now()}` : '');
+      setEventSummary(t.event_summary || '');
+      setInfoContent(t.info_content || '');
+      setScheduleContent(t.schedule_content || '');
+      setPrizesContent(t.prizes_content || '');
+      setRulesContent(t.rules_content || '');
       // Item 5 · commit 3: hidrata estado multi-rodada quando o torneio tem >1 round
       const tr = Number(t.total_rounds || 1);
       if (tr > 1 && Array.isArray(t.rounds)) {
@@ -426,6 +478,9 @@ function Dashboard() {
     setResultKindEnabled({ ...DEFAULT_ENABLED });
     setModality('individual');
     setAskHandicap(true);
+    // Onda C · Fase C.5 · commit 3/3: reseta conteudo rico.
+    setCoverImagePath(''); setEventSummary(''); setInfoContent('');
+    setScheduleContent(''); setPrizesContent(''); setRulesContent('');
     setIsEditing(false); setEditTournamentId(null);
   };
 
@@ -926,6 +981,73 @@ function Dashboard() {
               ))}
             </div>
           )}
+
+          {/* ── 5. CONTEÚDO DO EVENTO (Onda C · Fase C.5 · commit 3/3) ────────────
+              Alimenta a tela rica do jogador (Fase C.6): capa + eventSummary
+              como header, e 4 textareas viram accordions colapsáveis. Todos
+              opcionais — quando NULL/vazio a seção correspondente some da UI. */}
+          <div style={{...styles.sectionTitle, marginTop: '30px'}}>5. CONTEÚDO DO EVENTO</div>
+
+          {/* Capa: só disponível em edição — precisa de tournament id pro upload */}
+          <div style={{...styles.inputGroup, marginBottom: 20}}>
+            <label style={styles.label}>IMAGEM DE CAPA (JPG/PNG/WebP até 3MB)</label>
+            {isEditing ? (
+              <div style={{display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap'}}>
+                <label style={{display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 14px', backgroundColor: theme.cardLight, color: theme.textMain, border: `1px solid ${theme.cardLight}`, borderRadius: 8, cursor: coverUploading ? 'wait' : 'pointer', fontWeight: 700, fontSize: 12}}>
+                  <LuUpload size={13} />
+                  {coverUploading ? 'Enviando...' : (coverImagePath ? 'Trocar capa' : 'Escolher capa')}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleCoverUpload} disabled={coverUploading} style={{display: 'none'}} />
+                </label>
+                {coverImagePath && (
+                  <div style={{padding: 4, backgroundColor: '#fff', borderRadius: 6, display: 'inline-flex'}}>
+                    <img src={mediaUrl(coverImagePath)} alt="Capa do torneio" style={{maxHeight: 80, maxWidth: 200, objectFit: 'contain'}} />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{padding: 12, backgroundColor: theme.bg, border: `1px dashed ${theme.cardLight}`, borderRadius: 8, color: theme.textMuted, fontSize: 12}}>
+                Salve o torneio primeiro; depois edite pra adicionar a capa.
+              </div>
+            )}
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>SOBRE O EVENTO — subtítulo curto (max 500 chars)</label>
+            <textarea style={{...styles.input, minHeight: 60, resize: 'vertical', fontFamily: 'inherit'}}
+              maxLength={500} placeholder="Ex.: 3 dias de golfe no litoral norte, formato Shotgun com net e gross."
+              value={eventSummary} onChange={e => setEventSummary(e.target.value)} />
+            <div style={{textAlign: 'right', fontSize: 11, color: theme.textMuted, marginTop: 4}}>
+              {eventSummary.length}/500
+            </div>
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>INFORMAÇÕES DO TORNEIO</label>
+            <textarea style={{...styles.input, minHeight: 90, resize: 'vertical', fontFamily: 'inherit'}}
+              placeholder="Ex.: modalidade, tees, formato, dress code..."
+              value={infoContent} onChange={e => setInfoContent(e.target.value)} />
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>PROGRAMAÇÃO</label>
+            <textarea style={{...styles.input, minHeight: 90, resize: 'vertical', fontFamily: 'inherit'}}
+              placeholder={"Ex.:\nSexta 08h — Prática\nSábado 07h — R1 shotgun\nDomingo 07h — R2 + premiação"}
+              value={scheduleContent} onChange={e => setScheduleContent(e.target.value)} />
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>PREMIAÇÃO</label>
+            <textarea style={{...styles.input, minHeight: 90, resize: 'vertical', fontFamily: 'inherit'}}
+              placeholder="Ex.: 1º lugar R$500 + troféu · 2º R$300 · Longest Drive · Nearest to Pin..."
+              value={prizesContent} onChange={e => setPrizesContent(e.target.value)} />
+          </div>
+
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>REGULAMENTO</label>
+            <textarea style={{...styles.input, minHeight: 120, resize: 'vertical', fontFamily: 'inherit'}}
+              placeholder="Regras específicas do torneio, critério de desempate, etc."
+              value={rulesContent} onChange={e => setRulesContent(e.target.value)} />
+          </div>
 
           <button type="submit" style={{...styles.btnPrimary, width: '100%', backgroundColor: isEditing ? theme.info : theme.accent}}>
             {isEditing ? 'SALVAR ALTERAÇÕES' : 'PUBLICAR TORNEIO'}
