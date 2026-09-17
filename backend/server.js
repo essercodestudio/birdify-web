@@ -146,7 +146,16 @@ const registerLimiter = rateLimit({
 app.use(async (req, res, next) => {
   try {
     let domain = req.hostname;
-    if (req.headers.origin) {
+    // Em produção o tenant é resolvido SÓ pelo host real da requisição
+    // (o Nginx garante isso via server_name) — nunca pelo header Origin,
+    // que é declarado pelo cliente e forjável por qualquer requisição
+    // fora de um navegador (curl, script, app). Achado crítico da
+    // auditoria de segurança 2026-09-17: vazamento cross-tenant.
+    // Fora de produção, scripts/verify/*multitenant.js dependem desse
+    // override pra simular 2 clubes contra um único backend local sem
+    // precisar de DNS/hosts reais — por isso o gate por NODE_ENV, não
+    // remoção total.
+    if (process.env.NODE_ENV !== "production" && req.headers.origin) {
       const url = new URL(req.headers.origin);
       domain = url.hostname;
     }
